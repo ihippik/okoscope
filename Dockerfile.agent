@@ -1,11 +1,26 @@
-FROM rust:1.91-bookworm AS userspace
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.91-bookworm AS chef
+RUN rustup toolchain install 1.91.0 --profile minimal
+ENV RUSTUP_TOOLCHAIN=1.91.0
+RUN cargo install cargo-chef --locked --version 0.1.73
 WORKDIR /src
+
+FROM chef AS planner
 COPY . .
-RUN cargo build --release -p agent
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS userspace
+COPY --from=planner /src/recipe.json recipe.json
+RUN cargo chef cook --locked --release -p agent --recipe-path recipe.json
+COPY . .
+RUN cargo build --locked --release -p agent \
+    && cp /src/target/release/agent /tmp/okoscope-agent
 
 FROM rust:1.91-bookworm AS ebpf
 ARG TARGETARCH
 RUN rustup toolchain install nightly --profile minimal --component rust-src
+ENV RUSTUP_TOOLCHAIN=nightly
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl zstd \
     && case "$TARGETARCH" in \
@@ -20,9 +35,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-RUN cargo +nightly build -p agent-ebpf --release --target bpfel-unknown-none -Z build-std=core
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo build --locked -p agent-ebpf --release --target bpfel-unknown-none -Z build-std=core \
+    && cp /src/target/bpfel-unknown-none/release/agent-ebpf /tmp/agent-ebpf
 
 FROM debian:bookworm-slim
-COPY --from=userspace /src/target/release/agent /usr/local/bin/okoscope-agent
-COPY --from=ebpf /src/target/bpfel-unknown-none/release/agent-ebpf /opt/okoscope/agent-ebpf
+COPY --from=userspace /tmp/okoscope-agent /usr/local/bin/okoscope-agent
+COPY --from=ebpf /tmp/agent-ebpf /opt/okoscope/agent-ebpf
 ENTRYPOINT ["/usr/local/bin/okoscope-agent"]
