@@ -8,6 +8,8 @@ use server::{
     bootstrap::{BootstrapConfig, bootstrap},
     database::{MIGRATOR, verify_schema},
     health,
+    notification::NotificationService,
+    notification_config::NotificationArgs,
     session::AgentSessionService,
     transport::TransportSecurity,
 };
@@ -15,6 +17,93 @@ use sqlx::postgres::PgPoolOptions;
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
+
+async fn wait_for_shutdown(mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    while !*shutdown.borrow() {
+        if shutdown.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ServerOptions {
+    grpc_addr: SocketAddr,
+    health_addr: SocketAddr,
+    development_plaintext: bool,
+    tls_certificate: Option<PathBuf>,
+    tls_private_key: Option<PathBuf>,
+}
+
+async fn serve(
+    options: ServerOptions,
+    pool: sqlx::PgPool,
+    notifications: Option<NotificationService>,
+    notification_ready: bool,
+) -> Result<()> {
+    let security = if options.development_plaintext {
+        TransportSecurity::DevelopmentPlaintext
+    } else {
+        TransportSecurity::Tls {
+            certificate: options
+                .tls_certificate
+                .context("--tls-certificate is required outside development mode")?,
+            private_key: options
+                .tls_private_key
+                .context("--tls-private-key is required outside development mode")?,
+        }
+    };
+    let mut grpc = Server::builder();
+    if let Some(tls) = security.tls_config().await? {
+        grpc = grpc.tls_config(tls)?;
+    }
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::watch::channel(false);
+    let signal_sender = shutdown_sender.clone();
+    let signal_task = tokio::spawn(async move {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::error!(error=%error, "failed to listen for shutdown signal");
+        }
+        let _ = signal_sender.send(true);
+    });
+    let worker_task = notifications
+        .as_ref()
+        .filter(|service| service.config.enabled)
+        .map(|service| {
+            tokio::spawn(server::notification::worker::run(
+                service.clone(),
+                shutdown_receiver.clone(),
+            ))
+        });
+    let grpc_server = grpc
+        .add_service(AgentServiceServer::new(AgentSessionService::new(
+            pool.clone(),
+        )))
+        .serve_with_shutdown(
+            options.grpc_addr,
+            wait_for_shutdown(shutdown_receiver.clone()),
+        );
+    let listener = tokio::net::TcpListener::bind(options.health_addr).await?;
+    let health_server = axum::serve(
+        listener,
+        health::router(pool, notification_ready, notifications.clone()),
+    )
+    .with_graceful_shutdown(wait_for_shutdown(shutdown_receiver));
+    tracing::info!(grpc_addr = %options.grpc_addr, health_addr = %options.health_addr, "okoscope server started");
+    tokio::try_join!(async { grpc_server.await.context("gRPC server") }, async {
+        health_server.await.context("health server")
+    })?;
+    let _ = shutdown_sender.send(true);
+    signal_task.abort();
+    if let Some(worker_task) = worker_task {
+        let drain = notifications.map_or(std::time::Duration::from_secs(15), |service| {
+            service.config.request_timeout + std::time::Duration::from_secs(5)
+        });
+        if tokio::time::timeout(drain, worker_task).await.is_err() {
+            tracing::warn!("notification worker drain timed out");
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -52,6 +141,8 @@ struct Args {
     cluster_credential: Option<String>,
     #[arg(long, env = "OKOSCOPE_API_CREDENTIAL")]
     api_credential: Option<String>,
+    #[command(flatten)]
+    notification: NotificationArgs,
     #[command(subcommand)]
     command: Option<Command>,
     #[arg(
@@ -130,11 +221,26 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
     let args = Args::parse();
+    let server_options = ServerOptions {
+        grpc_addr: args.grpc_addr,
+        health_addr: args.health_addr,
+        development_plaintext: args.development_plaintext,
+        tls_certificate: args.tls_certificate.clone(),
+        tls_private_key: args.tls_private_key.clone(),
+    };
+    let notification_config = args.notification.build(args.development_plaintext);
+    let notification_ready = notification_config.is_ok();
+    if let Err(error) = &notification_config {
+        tracing::error!(error=%error, "notification delivery configuration is invalid");
+    }
     let pool = PgPoolOptions::new()
         .max_connections(20)
         .connect(&args.database_url)
         .await
         .context("connect PostgreSQL")?;
+    let notifications = notification_config
+        .ok()
+        .and_then(|config| NotificationService::new(pool.clone(), config));
     if args.migrate {
         MIGRATOR
             .run(&pool)
@@ -180,32 +286,5 @@ async fn main() -> Result<()> {
         "bootstrap identities ready"
     );
 
-    let security = if args.development_plaintext {
-        TransportSecurity::DevelopmentPlaintext
-    } else {
-        TransportSecurity::Tls {
-            certificate: args
-                .tls_certificate
-                .context("--tls-certificate is required outside development mode")?,
-            private_key: args
-                .tls_private_key
-                .context("--tls-private-key is required outside development mode")?,
-        }
-    };
-    let mut grpc = Server::builder();
-    if let Some(tls) = security.tls_config().await? {
-        grpc = grpc.tls_config(tls)?;
-    }
-    let grpc_server = grpc
-        .add_service(AgentServiceServer::new(AgentSessionService::new(
-            pool.clone(),
-        )))
-        .serve(args.grpc_addr);
-    let listener = tokio::net::TcpListener::bind(args.health_addr).await?;
-    let health_server = axum::serve(listener, health::router(pool));
-    tracing::info!(grpc_addr = %args.grpc_addr, health_addr = %args.health_addr, "okoscope server started");
-    tokio::try_join!(async { grpc_server.await.context("gRPC server") }, async {
-        health_server.await.context("health server")
-    },)?;
-    Ok(())
+    serve(server_options, pool, notifications, notification_ready).await
 }

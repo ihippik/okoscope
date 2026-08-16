@@ -2,7 +2,7 @@ use sqlx::{PgPool, Row};
 use thiserror::Error;
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
-pub const REQUIRED_MIGRATION: i64 = 3;
+pub const REQUIRED_MIGRATION: i64 = 4;
 
 #[derive(Debug, Error)]
 pub enum ReadinessError {

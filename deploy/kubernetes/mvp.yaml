@@ -14,6 +14,7 @@ stringData:
   postgres-password: okoscope
   cluster-credential: replace-this-development-credential
   api-credential: replace-this-development-api-credential
+  webhook-encryption-key: 0000000000000000000000000000000000000000000000000000000000000000
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -77,6 +78,11 @@ spec:
               valueFrom: {secretKeyRef: {name: okoscope-secrets, key: cluster-credential}}
             - name: OKOSCOPE_API_CREDENTIAL
               valueFrom: {secretKeyRef: {name: okoscope-secrets, key: api-credential}}
+            - name: OKOSCOPE_WEBHOOK_ENCRYPTION_KEY
+              valueFrom: {secretKeyRef: {name: okoscope-secrets, key: webhook-encryption-key}}
+            - {name: OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED, value: "false"}
+            - {name: OKOSCOPE_NOTIFICATION_CONCURRENCY, value: "8"}
+            - {name: OKOSCOPE_WEBHOOK_TIMEOUT_SECONDS, value: "10"}
             - {name: OKOSCOPE_MIGRATE, value: "true"}
             - {name: OKOSCOPE_DEVELOPMENT_PLAINTEXT, value: "true"}
             - {name: RUST_LOG, value: info}

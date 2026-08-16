@@ -7,6 +7,8 @@ pub mod grouping;
 pub mod health;
 pub mod ingestion;
 pub mod metrics;
+pub mod notification;
+pub mod notification_config;
 pub mod repository;
 pub mod session;
 pub mod transport;

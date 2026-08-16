@@ -1,0 +1,615 @@
+use std::{collections::VecDeque, sync::Arc};
+
+use axum::{
+    Router,
+    body::{Body, Bytes, to_bytes},
+    extract::State,
+    http::{HeaderMap, Request, StatusCode, header::AUTHORIZATION},
+    routing::post,
+};
+use chrono::Utc;
+use event_model::{
+    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, ProcessExec, ProcessIdentity,
+    RuntimeEvent, SyscallEvent,
+};
+use server::{
+    auth::SessionScope,
+    bootstrap::{BootstrapConfig, bootstrap},
+    ingestion::{IngestionContext, persist_batch},
+    notification::{
+        NotificationService,
+        webhook::{WebhookEnvelope, signature},
+        worker::{claim_due, materialize_once, process_claim, test_destination},
+    },
+    notification_config::NotificationArgs,
+};
+use tokio::sync::Mutex;
+use tower::ServiceExt;
+use uuid::Uuid;
+
+#[derive(Clone, Debug)]
+struct CapturedRequest {
+    headers: HeaderMap,
+    body: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct ReceiverState {
+    responses: Arc<Mutex<VecDeque<StatusCode>>>,
+    requests: Arc<Mutex<Vec<CapturedRequest>>>,
+}
+
+async fn receiver(
+    State(state): State<ReceiverState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> StatusCode {
+    state.requests.lock().await.push(CapturedRequest {
+        headers,
+        body: body.to_vec(),
+    });
+    state
+        .responses
+        .lock()
+        .await
+        .pop_front()
+        .unwrap_or(StatusCode::OK)
+}
+
+async fn spawn_receiver(
+    responses: Vec<StatusCode>,
+) -> (String, ReceiverState, tokio::task::JoinHandle<()>) {
+    let state = ReceiverState {
+        responses: Arc::new(Mutex::new(responses.into())),
+        requests: Arc::new(Mutex::new(Vec::new())),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route("/hook", post(receiver))
+        .with_state(state.clone());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{address}/hook"), state, task)
+}
+
+fn config(name: &str) -> BootstrapConfig {
+    BootstrapConfig {
+        organization_id: Uuid::new_v4(),
+        project_id: Uuid::new_v4(),
+        cluster_id: Uuid::new_v4(),
+        application_id: Uuid::new_v4(),
+        organization_slug: name.into(),
+        organization_name: name.into(),
+        project_slug: "payments".into(),
+        project_name: "Payments".into(),
+        cluster_external_id: "local".into(),
+        cluster_name: "Local".into(),
+        application_slug: "payment-api".into(),
+        application_name: "Payment API".into(),
+        cluster_credential: format!("cluster-{name}"),
+        api_credential: format!("api-{name}"),
+    }
+}
+
+fn service(pool: sqlx::PgPool) -> NotificationService {
+    let args = NotificationArgs {
+        enabled: true,
+        encryption_key: Some(hex::encode([9_u8; 32])),
+        poll_ms: 50,
+        claim_size: 10,
+        concurrency: 2,
+        lease_seconds: 5,
+        request_timeout_seconds: 2,
+        max_attempts: 3,
+        backoff_min_seconds: 1,
+        backoff_max_seconds: 2,
+        max_response_bytes: 1024,
+        allow_http: true,
+        allow_private_ips: true,
+    };
+    NotificationService::new(pool, args.build(true).unwrap()).unwrap()
+}
+
+fn event(project_id: Uuid, application_id: Uuid, payload: EventPayload) -> RuntimeEvent {
+    RuntimeEvent {
+        id: Uuid::new_v4(),
+        observed_at: Utc::now(),
+        schema_version: EVENT_SCHEMA_VERSION,
+        attribution: KubernetesAttribution {
+            project_id,
+            application_id,
+            node_name: "node-1".into(),
+            namespace: "production".into(),
+            pod_uid: "pod-uid".into(),
+            pod_name: "payment-api-1".into(),
+            container_id: "container".into(),
+            container_name: "payment-api".into(),
+            workload_uid: "workload".into(),
+            workload_kind: "Deployment".into(),
+            workload_name: "payment-api".into(),
+        },
+        process: ProcessIdentity {
+            cgroup_id: 1,
+            pid: 10,
+            tgid: 10,
+            command: "sh".into(),
+        },
+        payload,
+    }
+}
+
+async fn tenant(
+    pool: &sqlx::PgPool,
+    name: &str,
+) -> (server::bootstrap::BootstrapIds, IngestionContext) {
+    let ids = bootstrap(pool, &config(name)).await.unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents (id,organization_id,cluster_id,node_name,agent_version) VALUES ($1,$2,$3,'node-1','test')")
+        .bind(agent_id).bind(ids.organization_id).bind(ids.cluster_id).execute(pool).await.unwrap();
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id,
+    };
+    (ids, context)
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn destination_schema_lifecycle_and_tenant_ownership(pool: sqlx::PgPool) {
+    let (first, context) = tenant(&pool, "notify-first").await;
+    let (second, _) = tenant(&pool, "notify-second").await;
+    let service = service(pool.clone());
+    let (destination, secret) = service
+        .destinations
+        .create(
+            first.organization_id,
+            first.project_id,
+            "primary",
+            "http://127.0.0.1:12345/hook",
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(secret.len(), 64);
+    assert_eq!(
+        service
+            .destinations
+            .list(first.organization_id, first.project_id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        service
+            .destinations
+            .get(second.organization_id, second.project_id, destination.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let conflict = service
+        .destinations
+        .update(
+            first.organization_id,
+            first.project_id,
+            destination.id,
+            server::notification::repository::DestinationUpdate {
+                name: Some("renamed"),
+                url: None,
+                deliver_backfill: None,
+                enabled: None,
+                expected_revision: 99,
+            },
+        )
+        .await;
+    assert!(matches!(
+        conflict,
+        Err(server::notification::repository::DestinationError::RevisionConflict)
+    ));
+    let (_, rotated) = service
+        .destinations
+        .rotate_secret(first.organization_id, first.project_id, destination.id)
+        .await
+        .unwrap();
+    assert_ne!(*secret, *rotated);
+    let disabled = service
+        .destinations
+        .disable(first.organization_id, first.project_id, destination.id)
+        .await
+        .unwrap();
+    assert!(!disabled.enabled);
+    persist_batch(
+        &pool,
+        context,
+        &[event(
+            first.project_id,
+            first.application_id,
+            EventPayload::ProcessExec(ProcessExec {
+                executable: "/bin/echo".into(),
+                parent_command: None,
+            }),
+        )],
+    )
+    .await
+    .unwrap();
+    assert_eq!(materialize_once(&service).await.unwrap().no_destinations, 1);
+    let ownership_error = sqlx::query("INSERT INTO webhook_destinations (id,organization_id,project_id,name,url,encrypted_secret,secret_nonce) VALUES ($1,$2,$3,'bad','https://example.com',decode('00','hex'),decode(repeat('00',24),'hex'))")
+        .bind(Uuid::new_v4()).bind(first.organization_id).bind(second.project_id).execute(&pool).await;
+    assert!(ownership_error.is_err());
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn live_delivery_is_signed_idempotent_and_completes_outbox(pool: sqlx::PgPool) {
+    let (url, receiver, task) = spawn_receiver(vec![StatusCode::OK]).await;
+    let (ids, context) = tenant(&pool, "notify-live").await;
+    let service = service(pool.clone());
+    let (_destination, secret) = service
+        .destinations
+        .create(ids.organization_id, ids.project_id, "primary", &url, false)
+        .await
+        .unwrap();
+    persist_batch(
+        &pool,
+        context,
+        &[event(
+            ids.project_id,
+            ids.application_id,
+            EventPayload::ProcessExec(ProcessExec {
+                executable: "/bin/sh".into(),
+                parent_command: None,
+            }),
+        )],
+    )
+    .await
+    .unwrap();
+    let (first, second) = tokio::join!(materialize_once(&service), materialize_once(&service));
+    assert_eq!(first.unwrap().deliveries + second.unwrap().deliveries, 1);
+    let claims = claim_due(&service).await.unwrap();
+    assert_eq!(claims.len(), 1);
+    sqlx::query(
+        "UPDATE notification_deliveries SET lease_expires_at=now()-interval '1 second' WHERE id=$1",
+    )
+    .bind(claims[0].id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let reclaimed = claim_due(&service).await.unwrap();
+    assert_eq!(reclaimed[0].id, claims[0].id);
+    assert_ne!(reclaimed[0].lease_owner, claims[0].lease_owner);
+    process_claim(&service, reclaimed[0].clone()).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM notification_deliveries WHERE status='succeeded'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM notification_delivery_attempts")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM outbox_messages WHERE processed_at IS NOT NULL"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    let captured = receiver.requests.lock().await;
+    assert_eq!(captured.len(), 1);
+    let envelope: WebhookEnvelope = serde_json::from_slice(&captured[0].body).unwrap();
+    let timestamp = captured[0].headers["okoscope-timestamp"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        captured[0].headers["okoscope-delivery"],
+        envelope.delivery_id.to_string()
+    );
+    assert_eq!(
+        captured[0].headers["okoscope-signature"],
+        signature(secret.as_bytes(), timestamp, &captured[0].body).unwrap()
+    );
+    task.abort();
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn retries_suppresses_backfill_and_test_is_outbox_independent(pool: sqlx::PgPool) {
+    let (url, receiver, task) = spawn_receiver(vec![
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::OK,
+        StatusCode::BAD_REQUEST,
+        StatusCode::OK,
+        StatusCode::OK,
+    ])
+    .await;
+    let (ids, context) = tenant(&pool, "notify-retry").await;
+    let service = service(pool.clone());
+    let (destination, _) = service
+        .destinations
+        .create(ids.organization_id, ids.project_id, "primary", &url, false)
+        .await
+        .unwrap();
+    persist_batch(
+        &pool,
+        context,
+        &[event(
+            ids.project_id,
+            ids.application_id,
+            EventPayload::Syscall(SyscallEvent {
+                name: "ptrace".into(),
+            }),
+        )],
+    )
+    .await
+    .unwrap();
+    materialize_once(&service).await.unwrap();
+    process_claim(&service, claim_due(&service).await.unwrap().remove(0))
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM notification_deliveries")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "pending"
+    );
+    sqlx::query("UPDATE notification_deliveries SET available_at=now() WHERE status='pending'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    process_claim(&service, claim_due(&service).await.unwrap().remove(0))
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM notification_delivery_attempts")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2
+    );
+
+    persist_batch(
+        &pool,
+        context,
+        &[event(
+            ids.project_id,
+            ids.application_id,
+            EventPayload::ProcessExec(ProcessExec {
+                executable: "/bin/zsh".into(),
+                parent_command: None,
+            }),
+        )],
+    )
+    .await
+    .unwrap();
+    materialize_once(&service).await.unwrap();
+    process_claim(&service, claim_due(&service).await.unwrap().remove(0))
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM notification_deliveries WHERE status='failed'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+
+    persist_batch(
+        &pool,
+        context,
+        &[event(
+            ids.project_id,
+            ids.application_id,
+            EventPayload::ProcessExec(ProcessExec {
+                executable: "/bin/bash".into(),
+                parent_command: None,
+            }),
+        )],
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE outbox_messages SET source='backfill' WHERE materialized_at IS NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+    materialize_once(&service).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM notification_deliveries WHERE status='suppressed'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    let updated = service
+        .destinations
+        .update(
+            ids.organization_id,
+            ids.project_id,
+            destination.id,
+            server::notification::repository::DestinationUpdate {
+                name: None,
+                url: None,
+                deliver_backfill: Some(true),
+                enabled: None,
+                expected_revision: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(updated.deliver_backfill);
+    persist_batch(
+        &pool,
+        context,
+        &[event(
+            ids.project_id,
+            ids.application_id,
+            EventPayload::ProcessExec(ProcessExec {
+                executable: "/usr/bin/id".into(),
+                parent_command: None,
+            }),
+        )],
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE outbox_messages SET source='backfill' WHERE materialized_at IS NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+    materialize_once(&service).await.unwrap();
+    process_claim(&service, claim_due(&service).await.unwrap().remove(0))
+        .await
+        .unwrap();
+    let outbox_before: i64 = sqlx::query_scalar("SELECT count(*) FROM outbox_messages")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let test = test_destination(
+        &service,
+        ids.organization_id,
+        ids.project_id,
+        destination.id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(test.origin, "test");
+    assert_eq!(test.status, "succeeded");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM outbox_messages")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        outbox_before
+    );
+    assert_eq!(receiver.requests.lock().await.len(), 5);
+    task.abort();
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: sqlx::PgPool) {
+    let (url, _receiver, task) = spawn_receiver(vec![StatusCode::OK]).await;
+    let (first, _) = tenant(&pool, "notify-api-first").await;
+    let (_second, _) = tenant(&pool, "notify-api-second").await;
+    let service = service(pool.clone());
+    let app = server::notification::api::router(pool, service);
+    let create_uri = format!("/api/v1/projects/{}/webhook-destinations", first.project_id);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&create_uri)
+                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"name":"primary","url":url}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let created: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(created["secret"].as_str().unwrap().len(), 64);
+    let destination_id = created["id"].as_str().unwrap();
+
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&create_uri)
+                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let listed_body = to_bytes(listed.into_body(), usize::MAX).await.unwrap();
+    let listed_text = String::from_utf8(listed_body.to_vec()).unwrap();
+    assert!(!listed_text.contains("secret"));
+    assert!(!listed_text.contains("encrypted"));
+
+    let foreign = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&create_uri)
+                .header(AUTHORIZATION, "Bearer api-notify-api-second")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+
+    let detail_uri = format!("{create_uri}/{destination_id}");
+    let conflict = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(&detail_uri)
+                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"changed","revision":99}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+
+    let tested = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("{detail_uri}/test"))
+                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(tested.status(), StatusCode::OK);
+    let deliveries = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/projects/{}/notification-deliveries?origin=test&limit=1",
+                    first.project_id
+                ))
+                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deliveries.status(), StatusCode::OK);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(deliveries.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+    task.abort();
+}

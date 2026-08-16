@@ -3,11 +3,15 @@ use std::sync::Arc;
 use axum::{Router, http::StatusCode, routing::get};
 use sqlx::PgPool;
 
-use crate::{api, database::verify_schema, metrics};
+use crate::{api, database::verify_schema, metrics, notification::NotificationService};
 
-pub fn router(pool: PgPool) -> Router {
+pub fn router(
+    pool: PgPool,
+    notification_ready: bool,
+    notifications: Option<NotificationService>,
+) -> Router {
     let pool = Arc::new(pool);
-    Router::new()
+    let router = Router::new()
         .route("/healthz", get(|| async { StatusCode::OK }))
         .route(
             "/readyz",
@@ -16,7 +20,7 @@ pub fn router(pool: PgPool) -> Router {
                 move || {
                     let pool = pool.clone();
                     async move {
-                        if verify_schema(&pool).await.is_ok() {
+                        if notification_ready && verify_schema(&pool).await.is_ok() {
                             StatusCode::OK
                         } else {
                             StatusCode::SERVICE_UNAVAILABLE
@@ -26,5 +30,13 @@ pub fn router(pool: PgPool) -> Router {
             }),
         )
         .merge(api::router((*pool).clone()))
-        .merge(metrics::router((*pool).clone()))
+        .merge(metrics::router((*pool).clone()));
+    if let Some(notifications) = notifications {
+        router.merge(crate::notification::api::router(
+            (*pool).clone(),
+            notifications,
+        ))
+    } else {
+        router
+    }
 }

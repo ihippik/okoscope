@@ -130,6 +130,39 @@ okoscope-server \
   --throttle-ms 50
 ```
 
-Backfill-created `runtime_group.first_seen` outbox records have `source=backfill`. This release has no outbox delivery worker and sends no external notifications. A future worker must suppress historical messages unless an operator explicitly opts in.
+Backfill-created `runtime_group.first_seen` outbox records have `source=backfill`. Webhook destinations suppress these messages by default and require an explicit `deliver_backfill` opt-in before materialization.
 
 To roll back, deploy the prior server image. The additive grouping tables remain unused and raw-event ingestion continues. Do not reverse or drop migration `0003` during a service rollback. Inspect group totals, ungrouped events, and pending outbox records with `deploy/queries/runtime-groups.sql`.
+
+## Webhook notification delivery
+
+Migration `0004_notification_delivery.sql` is additive. The example manifest supplies a syntactically valid development encryption key but leaves `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=false`. Replace the key with 32 cryptographically random bytes encoded as 64 hexadecimal characters before creating destinations; back it up separately from PostgreSQL. Losing the key makes stored signing secrets undecryptable.
+
+Create a Project destination through the authenticated API:
+
+```sh
+curl -X POST \
+  -H 'Authorization: Bearer <api-credential>' \
+  -H 'Content-Type: application/json' \
+  http://localhost:8080/api/v1/projects/<project-uuid>/webhook-destinations \
+  -d '{"name":"primary","url":"https://receiver.example.com/okoscope","deliver_backfill":false}'
+```
+
+The generated `secret` appears only in this response. Store it in the receiver secret manager. List/get APIs never return plaintext or encrypted secret material. Rotate through `POST .../<destination-id>/rotate-secret`; the response contains the replacement once. Disable with `POST .../<destination-id>/disable`, which also cancels pending work while retaining history.
+
+Test a destination without consuming runtime outbox work:
+
+```sh
+curl -X POST -H 'Authorization: Bearer <api-credential>' \
+  http://localhost:8080/api/v1/projects/<project-uuid>/webhook-destinations/<destination-id>/test
+```
+
+Every request contains `Okoscope-Delivery`, `Okoscope-Event`, `Okoscope-Timestamp`, and `Okoscope-Signature`. Verify the signature as lowercase hex HMAC-SHA256 over `<Okoscope-Timestamp>.<exact-body-bytes>` with the destination secret. Reject stale timestamps and deduplicate by `Okoscope-Delivery`: delivery is at-least-once, so a worker crash after receiver acceptance can repeat the same delivery ID.
+
+Production destinations require HTTPS. Okoscope disables redirects and rejects URL credentials, fragments, and targets resolving to loopback, link-local, private, multicast, unspecified, or carrier-grade NAT addresses. Restrict server egress with a Kubernetes NetworkPolicy or infrastructure firewall. HTTP/private targets require explicit development flags and MUST NOT be enabled in a shared cluster.
+
+After configuring a test destination, enable the worker with `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=true`. Tune polling, claim size, concurrency, leases, request timeout, attempts, backoff, and response limits using the `OKOSCOPE_NOTIFICATION_*` and `OKOSCOPE_WEBHOOK_*` variables documented by `okoscope-server --help`. Keep lease duration longer than request timeout.
+
+Inspect delivery health through `/metrics`, the Project delivery APIs, and `deploy/queries/notification-delivery.sql`. Retryable network/timeouts and HTTP 408/425/429/5xx responses use capped exponential backoff with jitter. Other 4xx and exhausted retries become terminal failures. Response excerpts are truncated and headers are not stored.
+
+To recover from a worker outage, restore outbound connectivity and restart the server; expired leases are reclaimed automatically. To roll back, set delivery enabled to false and deploy the prior image. Pending outbox and delivery rows remain durable. Do not drop migration `0004` during a service rollback.
