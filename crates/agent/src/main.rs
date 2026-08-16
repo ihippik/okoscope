@@ -97,8 +97,10 @@ mod linux {
                 tokio::select! {
                     _ = poll.tick() => {
                         while let Some(kernel) = observer.next_event()? {
-                            let pid = kernel.pid_tgid as u32;
-                            let tgid = (kernel.pid_tgid >> 32) as u32;
+                            let pid = u32::try_from(kernel.pid_tgid & u64::from(u32::MAX))
+                                .expect("PID is encoded in the low 32 bits");
+                            let tgid = u32::try_from(kernel.pid_tgid >> 32)
+                                .expect("TGID is encoded in the high 32 bits");
                             let container = match cgroup_resolver.resolve(pid, kernel.cgroup_id) {
                                 Ok(container) => Some(container),
                                 Err(error) => {
@@ -127,8 +129,8 @@ mod linux {
                         session.sender.send(AgentMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(agent_message::Message::Heartbeat(Heartbeat { sent_at_unix_nanos: Utc::now().timestamp_nanos_opt().unwrap_or_default(), drop_counters: Some(snapshot.into()) })) }).await?;
                     }
                     message = session.incoming.message() => {
-                        match message {
-                            Ok(Some(message)) => match message.message {
+                        if let Ok(Some(message)) = message {
+                            match message.message {
                                 Some(server_message::Message::BatchAcknowledgement(ack)) => { buffer.acknowledge(ack.sequence, &counters); }
                                 Some(server_message::Message::Control(control)) => {
                                     let result = handle_control(control);
@@ -136,8 +138,10 @@ mod linux {
                                 }
                                 Some(server_message::Message::SessionAccepted(accepted)) => tracing::info!(agent_id=%accepted.agent_id, "agent session accepted"),
                                 None => tracing::warn!("unsupported server message"),
-                            },
-                            Ok(None) | Err(_) => { tracing::warn!("agent session disconnected; reconnecting"); break; }
+                            }
+                        } else {
+                            tracing::warn!("agent session disconnected; reconnecting");
+                            break;
                         }
                     }
                     _ = tokio::signal::ctrl_c() => return Ok(()),
