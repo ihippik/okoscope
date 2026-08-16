@@ -1,0 +1,7 @@
+target
+.git
+.idea
+.codex
+.agents
+openspec
+*.log

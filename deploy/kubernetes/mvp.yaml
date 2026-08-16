@@ -1,0 +1,174 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: okoscope
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: okoscope-secrets
+  namespace: okoscope
+type: Opaque
+stringData:
+  database-url: postgres://okoscope:okoscope@postgres:5432/okoscope
+  postgres-password: okoscope
+  cluster-credential: replace-this-development-credential
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: okoscope
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          env:
+            - {name: POSTGRES_USER, value: okoscope}
+            - {name: POSTGRES_DB, value: okoscope}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: okoscope-secrets, key: postgres-password}}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -U, okoscope]}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 2Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: okoscope}
+spec:
+  selector: {app: postgres}
+  ports: [{name: postgres, port: 5432}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: okoscope-server, namespace: okoscope}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: okoscope-server}
+  template:
+    metadata:
+      labels: {app: okoscope-server}
+    spec:
+      containers:
+        - name: server
+          image: okoscope/server:dev
+          env:
+            - name: OKOSCOPE_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: okoscope-secrets, key: database-url}}
+            - name: OKOSCOPE_CLUSTER_CREDENTIAL
+              valueFrom: {secretKeyRef: {name: okoscope-secrets, key: cluster-credential}}
+            - {name: OKOSCOPE_MIGRATE, value: "true"}
+            - {name: OKOSCOPE_DEVELOPMENT_PLAINTEXT, value: "true"}
+            - {name: RUST_LOG, value: info}
+          ports:
+            - {name: grpc, containerPort: 4317}
+            - {name: health, containerPort: 8080}
+          readinessProbe: {httpGet: {path: /readyz, port: health}}
+          livenessProbe: {httpGet: {path: /healthz, port: health}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: okoscope-server, namespace: okoscope}
+spec:
+  selector: {app: okoscope-server}
+  ports:
+    - {name: grpc, port: 4317}
+    - {name: health, port: 8080}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: okoscope-agent, namespace: okoscope}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: okoscope-agent}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [replicasets, deployments]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: okoscope-agent}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: okoscope-agent}
+subjects: [{kind: ServiceAccount, name: okoscope-agent, namespace: okoscope}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: okoscope-agent, namespace: okoscope}
+data:
+  agent.yaml: |
+    apiVersion: okoscope.io/v1alpha1
+    kind: AgentConfiguration
+    server:
+      endpoint: http://okoscope-server.okoscope.svc:4317
+      credentialFile: /var/run/secrets/okoscope/cluster-credential
+      developmentPlaintext: true
+    identity:
+      nodeName: overridden-by-downward-api
+      clusterName: local
+    scope:
+      workloads:
+        - projectId: 018f4f9c-3f9a-7de1-8000-000000000001
+          applicationId: 018f4f9c-3f9a-7de1-8000-000000000002
+          namespace: okoscope-demo
+          kind: Deployment
+          name: payment-api
+          labels: {app: payment-api}
+    observation:
+      processExec: true
+      syscalls: [ptrace, setns]
+    safety: {queueCapacity: 4096, batchSize: 256, maxEventsPerSecond: 10000}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: okoscope-agent, namespace: okoscope}
+spec:
+  selector:
+    matchLabels: {app: okoscope-agent}
+  template:
+    metadata:
+      labels: {app: okoscope-agent}
+    spec:
+      serviceAccountName: okoscope-agent
+      hostPID: true
+      containers:
+        - name: agent
+          image: okoscope/agent:dev
+          securityContext:
+            privileged: true
+            readOnlyRootFilesystem: true
+          env:
+            - name: OKOSCOPE_NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - {name: RUST_LOG, value: info}
+          volumeMounts:
+            - {name: config, mountPath: /etc/okoscope, readOnly: true}
+            - {name: secrets, mountPath: /var/run/secrets/okoscope, readOnly: true}
+            - {name: proc, mountPath: /proc, readOnly: true}
+            - {name: cgroup, mountPath: /sys/fs/cgroup, readOnly: true}
+            - {name: tracing, mountPath: /sys/kernel/tracing}
+      volumes:
+        - {name: config, configMap: {name: okoscope-agent}}
+        - {name: secrets, secret: {secretName: okoscope-secrets, items: [{key: cluster-credential, path: cluster-credential}]}}
+        - {name: proc, hostPath: {path: /proc}}
+        - {name: cgroup, hostPath: {path: /sys/fs/cgroup}}
+        - {name: tracing, hostPath: {path: /sys/kernel/tracing}}

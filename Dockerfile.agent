@@ -1,0 +1,28 @@
+FROM rust:1.91-bookworm AS userspace
+WORKDIR /src
+COPY . .
+RUN cargo build --release -p agent
+
+FROM rust:1.91-bookworm AS ebpf
+ARG TARGETARCH
+RUN rustup toolchain install nightly --profile minimal --component rust-src
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends curl zstd \
+    && case "$TARGETARCH" in \
+         amd64) BPF_LINKER_ARCH=x86_64 ;; \
+         arm64) BPF_LINKER_ARCH=aarch64 ;; \
+         *) echo "unsupported build architecture: $TARGETARCH" >&2; exit 1 ;; \
+       esac \
+    && curl --fail --location --output /tmp/bpf-linker.tar.zst \
+        "https://github.com/aya-rs/bpf-linker/releases/latest/download/bpf-linker-${BPF_LINKER_ARCH}-unknown-linux-musl.tar.zst" \
+    && tar --extract --file /tmp/bpf-linker.tar.zst --directory /usr/local/bin \
+    && rm /tmp/bpf-linker.tar.zst \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN cargo +nightly build -p agent-ebpf --release --target bpfel-unknown-none -Z build-std=core
+
+FROM debian:bookworm-slim
+COPY --from=userspace /src/target/release/agent /usr/local/bin/okoscope-agent
+COPY --from=ebpf /src/target/bpfel-unknown-none/release/agent-ebpf /opt/okoscope/agent-ebpf
+ENTRYPOINT ["/usr/local/bin/okoscope-agent"]

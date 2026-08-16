@@ -1,0 +1,27 @@
+apiVersion: okoscope.io/v1alpha1
+kind: AgentConfiguration
+server:
+  endpoint: http://127.0.0.1:4317
+  credentialFile: /var/run/secrets/okoscope/cluster-credential
+  developmentPlaintext: true
+identity:
+  nodeName: local-node
+  clusterName: local
+scope:
+  workloads:
+    - projectId: 018f4f9c-3f9a-7de1-8000-000000000001
+      applicationId: 018f4f9c-3f9a-7de1-8000-000000000002
+      namespace: okoscope-demo
+      kind: Deployment
+      name: payment-api
+      labels:
+        app: payment-api
+observation:
+  processExec: true
+  syscalls:
+    - ptrace
+    - setns
+safety:
+  queueCapacity: 4096
+  batchSize: 256
+  maxEventsPerSecond: 10000

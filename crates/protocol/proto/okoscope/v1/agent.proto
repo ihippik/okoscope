@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package okoscope.v1;
+
+service AgentService {
+  rpc OpenSession(stream AgentMessage) returns (stream ServerMessage);
+}
+
+message AgentMessage {
+  uint32 protocol_version = 1;
+  oneof message {
+    AgentHello hello = 10;
+    EventBatch event_batch = 11;
+    Heartbeat heartbeat = 12;
+    ControlResult control_result = 13;
+  }
+}
+
+message ServerMessage {
+  uint32 protocol_version = 1;
+  oneof message {
+    SessionAccepted session_accepted = 10;
+    BatchAcknowledgement batch_acknowledgement = 11;
+    ControlMessage control = 12;
+  }
+}
+
+message AgentHello {
+  string agent_version = 1;
+  string node_name = 2;
+  string architecture = 3;
+  string kernel_release = 4;
+  repeated string capabilities = 5;
+  DropCounters drop_counters = 6;
+}
+
+message SessionAccepted {
+  string organization_id = 1;
+  string cluster_id = 2;
+  string agent_id = 3;
+  uint32 negotiated_protocol_version = 4;
+}
+
+message Heartbeat {
+  int64 sent_at_unix_nanos = 1;
+  DropCounters drop_counters = 2;
+}
+
+message EventBatch {
+  uint64 sequence = 1;
+  repeated RuntimeEvent events = 2;
+}
+
+message BatchAcknowledgement {
+  uint64 sequence = 1;
+  uint32 accepted_events = 2;
+}
+
+message RuntimeEvent {
+  string event_id = 1;
+  int64 observed_at_unix_nanos = 2;
+  uint32 schema_version = 3;
+  KubernetesAttribution attribution = 4;
+  ProcessIdentity process = 5;
+  oneof payload {
+    ProcessExec process_exec = 10;
+    Syscall syscall = 11;
+  }
+}
+
+message KubernetesAttribution {
+  string project_id = 1;
+  string application_id = 2;
+  string node_name = 3;
+  string namespace = 4;
+  string pod_uid = 5;
+  string pod_name = 6;
+  string container_id = 7;
+  string container_name = 8;
+  string workload_uid = 9;
+  string workload_kind = 10;
+  string workload_name = 11;
+}
+
+message ProcessIdentity {
+  uint64 cgroup_id = 1;
+  uint32 pid = 2;
+  uint32 tgid = 3;
+  string command = 4;
+}
+
+message ProcessExec {
+  string executable = 1;
+  string parent_command = 2;
+}
+
+message Syscall {
+  string name = 1;
+}
+
+message DropCounters {
+  uint64 filtered = 1;
+  uint64 unattributed = 2;
+  uint64 unsupported = 3;
+  uint64 decode_failed = 4;
+  uint64 capacity = 5;
+  uint64 kernel_lost = 6;
+}
+
+message ControlMessage {
+  string request_id = 1;
+  oneof command {
+    Ping ping = 10;
+  }
+}
+
+message Ping {}
+
+message ControlResult {
+  string request_id = 1;
+  ControlStatus status = 2;
+  string detail = 3;
+}
+
+enum ControlStatus {
+  CONTROL_STATUS_UNSPECIFIED = 0;
+  CONTROL_STATUS_APPLIED = 1;
+  CONTROL_STATUS_UNSUPPORTED = 2;
+  CONTROL_STATUS_REJECTED = 3;
+}
