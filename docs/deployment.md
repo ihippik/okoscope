@@ -85,6 +85,7 @@ Port-forward PostgreSQL and inspect selected events:
 ```sh
 kubectl -n okoscope port-forward service/postgres 5432:5432
 psql postgres://okoscope:okoscope@localhost:5432/okoscope -f deploy/queries/recent-events.sql
+psql postgres://okoscope:okoscope@localhost:5432/okoscope -f deploy/queries/runtime-groups.sql
 ```
 
 The query must show a `process.exec` row with `process_command = 'sh'`, namespace `okoscope-demo`, kind `Deployment`, and workload `payment-api`; it must not show `control-api`. A short-lived executable can disappear from `/proc` before userspace enrichment, so the MVP falls back to the kernel `comm` value (`sh`) instead of promising the original `/bin/sh` path. The agent indexes the host cgroup v2 hierarchy by inode so this race does not lose container attribution.
@@ -97,4 +98,38 @@ Apply additive migrations before or together with a compatible server, then roll
 
 Rollback removes or restores the DaemonSet first, then restores the server image. Do not delete the StatefulSet PVC or run reverse/destructive migrations. Database removal is a separate operator-approved action.
 
-Known MVP limits: one tested Linux profile, Deployment owner chains only, in-memory delivery buffer, no raw-event retention policy, no grouping/findings/releases/UI, shared per-cluster credential, and no enforcement.
+Known limits: one tested Linux profile, Deployment owner chains only, in-memory agent delivery buffer, no raw-event retention policy, no release-aware diffs or UI, shared per-cluster agent credential, and no enforcement or external notification delivery.
+
+## Runtime event grouping upgrade
+
+Migration `0003_runtime_event_groups.sql` is additive and required by server readiness. Before upgrading, back up PostgreSQL and replace both example credentials in `okoscope-secrets`. `cluster-credential` authenticates agents; `api-credential` authenticates the read API and is stored only as a SHA-256 digest in PostgreSQL.
+
+List groups using the Organization-bound credential. Project and Application are explicit filters, while Organization is always derived from the credential:
+
+```sh
+kubectl -n okoscope port-forward service/okoscope-server 8080:8080
+curl -H 'Authorization: Bearer <api-credential>' \
+  'http://localhost:8080/api/v1/runtime-groups?project_id=<project-uuid>&application_id=<application-uuid>'
+curl -H 'Authorization: Bearer <api-credential>' \
+  'http://localhost:8080/api/v1/runtime-groups/<group-uuid>'
+curl http://localhost:8080/metrics
+```
+
+Rotate the API credential by changing the Secret value and restarting the server. Bootstrap replaces the stored digest for the `self-hosted` credential, invalidating the previous value.
+
+Existing raw events are not grouped automatically. Run the explicit, restartable backfill as a one-off server container during a controlled window:
+
+```sh
+okoscope-server \
+  --database-url postgres://okoscope:okoscope@postgres:5432/okoscope \
+  backfill \
+  --organization-id <organization-uuid> \
+  --project-id <project-uuid> \
+  --fingerprint-version 1 \
+  --batch-size 500 \
+  --throttle-ms 50
+```
+
+Backfill-created `runtime_group.first_seen` outbox records have `source=backfill`. This release has no outbox delivery worker and sends no external notifications. A future worker must suppress historical messages unless an operator explicitly opts in.
+
+To roll back, deploy the prior server image. The additive grouping tables remain unused and raw-event ingestion continues. Do not reverse or drop migration `0003` during a service rollback. Inspect group totals, ungrouped events, and pending outbox records with `deploy/queries/runtime-groups.sql`.

@@ -15,6 +15,7 @@ fn config(organization: &str) -> BootstrapConfig {
         application_slug: "payment-api".into(),
         application_name: "Payment API".into(),
         cluster_credential: format!("credential-{organization}"),
+        api_credential: format!("api-credential-{organization}"),
     }
 }
 

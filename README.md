@@ -1,6 +1,6 @@
 # Okoscope
 
-Okoscope is a self-hosted, eBPF-powered runtime observability service for Linux and Kubernetes. The MVP observes process execution and an explicit syscall allowlist for selected Deployments, attributes events to Kubernetes identities, sends them over a bidirectional gRPC session, and stores them in PostgreSQL.
+Okoscope is a self-hosted, eBPF-powered runtime observability service for Linux and Kubernetes. It observes process execution and an explicit syscall allowlist for selected Deployments, attributes events to Kubernetes identities, sends them over a bidirectional gRPC session, stores them in PostgreSQL, and groups repeated behavior into Sentry-like runtime groups.
 
 The repository is a Rust workspace containing the eBPF program, node agent, protocol, event model, and server. The web UI is developed separately.
 

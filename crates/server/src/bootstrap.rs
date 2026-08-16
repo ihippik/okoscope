@@ -17,6 +17,7 @@ pub struct BootstrapConfig {
     pub application_slug: String,
     pub application_name: String,
     pub cluster_credential: String,
+    pub api_credential: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub async fn bootstrap(
         &config.cluster_credential,
     )
     .await?;
+    upsert_api_credential(&mut tx, organization_id, &config.api_credential).await?;
     tx.commit().await?;
     Ok(BootstrapIds {
         organization_id,
@@ -50,6 +52,21 @@ pub async fn bootstrap(
         cluster_id,
         application_id,
     })
+}
+
+async fn upsert_api_credential(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: Uuid,
+    credential: &str,
+) -> Result<(), sqlx::Error> {
+    let hash = Sha256::digest(credential.as_bytes()).to_vec();
+    sqlx::query("INSERT INTO api_credentials (id, organization_id, name, credential_hash) VALUES ($1,$2,'self-hosted',$3) ON CONFLICT (organization_id, name) DO UPDATE SET credential_hash=EXCLUDED.credential_hash, revoked_at=NULL")
+        .bind(Uuid::new_v4())
+        .bind(organization_id)
+        .bind(hash)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 async fn upsert_organization(

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{Router, http::StatusCode, routing::get};
 use sqlx::PgPool;
 
-use crate::database::verify_schema;
+use crate::{api, database::verify_schema, metrics};
 
 pub fn router(pool: PgPool) -> Router {
     let pool = Arc::new(pool);
@@ -25,4 +25,6 @@ pub fn router(pool: PgPool) -> Router {
                 }
             }),
         )
+        .merge(api::router((*pool).clone()))
+        .merge(metrics::router((*pool).clone()))
 }

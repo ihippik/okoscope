@@ -1,9 +1,10 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use protocol::v1::agent_service_server::AgentServiceServer;
 use server::{
+    backfill::{BackfillOptions, run as run_backfill},
     bootstrap::{BootstrapConfig, bootstrap},
     database::{MIGRATOR, verify_schema},
     health,
@@ -48,7 +49,11 @@ struct Args {
     #[arg(long, env = "OKOSCOPE_APPLICATION_NAME", default_value = "Payment API")]
     application_name: String,
     #[arg(long, env = "OKOSCOPE_CLUSTER_CREDENTIAL")]
-    cluster_credential: String,
+    cluster_credential: Option<String>,
+    #[arg(long, env = "OKOSCOPE_API_CREDENTIAL")]
+    api_credential: Option<String>,
+    #[command(subcommand)]
+    command: Option<Command>,
     #[arg(
         long,
         env = "OKOSCOPE_ORGANIZATION_ID",
@@ -75,6 +80,49 @@ struct Args {
     application_id: Uuid,
 }
 
+#[derive(Debug, Subcommand)]
+enum Command {
+    Backfill {
+        #[arg(long)]
+        organization_id: Uuid,
+        #[arg(long)]
+        project_id: Uuid,
+        #[arg(long, default_value_t = 1)]
+        fingerprint_version: i16,
+        #[arg(long, default_value_t = 500)]
+        batch_size: i64,
+        #[arg(long, default_value_t = 0)]
+        throttle_ms: u64,
+    },
+}
+
+async fn run_command(command: Option<Command>, pool: &sqlx::PgPool) -> Result<bool> {
+    let Some(Command::Backfill {
+        organization_id,
+        project_id,
+        fingerprint_version,
+        batch_size,
+        throttle_ms,
+    }) = command
+    else {
+        return Ok(false);
+    };
+    let stats = run_backfill(
+        pool,
+        BackfillOptions {
+            organization_id,
+            project_id,
+            fingerprint_version,
+            batch_size,
+            throttle: std::time::Duration::from_millis(throttle_ms),
+        },
+    )
+    .await
+    .context("backfill runtime event groups")?;
+    tracing::info!(?stats, "runtime event backfill complete");
+    Ok(true)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -96,6 +144,9 @@ async fn main() -> Result<()> {
     verify_schema(&pool)
         .await
         .context("database schema readiness")?;
+    if run_command(args.command, &pool).await? {
+        return Ok(());
+    }
     let ids = bootstrap(
         &pool,
         &BootstrapConfig {
@@ -111,7 +162,12 @@ async fn main() -> Result<()> {
             cluster_name: args.cluster_name,
             application_slug: args.application_slug,
             application_name: args.application_name,
-            cluster_credential: args.cluster_credential,
+            cluster_credential: args
+                .cluster_credential
+                .context("--cluster-credential is required when serving")?,
+            api_credential: args
+                .api_credential
+                .context("--api-credential is required when serving")?,
         },
     )
     .await

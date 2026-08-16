@@ -1,8 +1,12 @@
+pub mod api;
 pub mod auth;
+pub mod backfill;
 pub mod bootstrap;
 pub mod database;
+pub mod grouping;
 pub mod health;
 pub mod ingestion;
+pub mod metrics;
 pub mod repository;
 pub mod session;
 pub mod transport;
