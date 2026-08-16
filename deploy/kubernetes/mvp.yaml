@@ -34,6 +34,7 @@ spec:
           env:
             - {name: POSTGRES_USER, value: okoscope}
             - {name: POSTGRES_DB, value: okoscope}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
             - name: POSTGRES_PASSWORD
               valueFrom: {secretKeyRef: {name: okoscope-secrets, key: postgres-password}}
           ports: [{name: postgres, containerPort: 5432}]
@@ -44,6 +45,7 @@ spec:
     - metadata: {name: data}
       spec:
         accessModes: [ReadWriteOnce]
+        storageClassName: hdd.network-drives.csi.timeweb.cloud
         resources: {requests: {storage: 2Gi}}
 ---
 apiVersion: v1
