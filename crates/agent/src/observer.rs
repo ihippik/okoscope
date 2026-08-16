@@ -47,7 +47,7 @@ impl Observer {
         })
     }
 
-    pub fn next(&mut self) -> Result<Option<agent_ebpf_common::KernelEvent>> {
+    pub fn next_event(&mut self) -> Result<Option<agent_ebpf_common::KernelEvent>> {
         self.events
             .next()
             .map(|item| kernel_event::decode(&item).map_err(Into::into))

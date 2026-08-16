@@ -96,7 +96,7 @@ mod linux {
             loop {
                 tokio::select! {
                     _ = poll.tick() => {
-                        while let Some(kernel) = observer.next()? {
+                        while let Some(kernel) = observer.next_event()? {
                             let pid = kernel.pid_tgid as u32;
                             let tgid = (kernel.pid_tgid >> 32) as u32;
                             let container = match cgroup_resolver.resolve(pid, kernel.cgroup_id) {
