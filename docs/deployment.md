@@ -65,6 +65,18 @@ If attachment succeeds, the agent proceeds to server connection attempts. An `at
 
 For a non-development installation, remove `developmentPlaintext`, issue a server certificate whose SAN contains the service hostname, mount its certificate/key into the server and the CA certificate into agents, and configure `OKOSCOPE_TLS_CERTIFICATE`, `OKOSCOPE_TLS_PRIVATE_KEY`, and `server.caFile`. Rotate the cluster credential stored in the Secret and do not commit its value.
 
+## Web UI API
+
+The versioned browser contract is [`openapi/okoscope-v1.yaml`](../openapi/okoscope-v1.yaml). Generate a client in the separate UI repository with an OpenAPI 3.1-compatible generator; use `GET /api/v1/build-info` without authentication to compare `api_version`, `git_commit`, and `required_database_migration` before loading the UI.
+
+All protected routes currently accept the operator bearer credential. Storing this credential in browser storage gives the browser broad tenant access, so this is an MVP deployment model, not user authentication. Prefer a same-origin reverse proxy that keeps the API and UI behind TLS and injects or brokers credentials server-side. User sessions and scoped RBAC remain future work.
+
+Cross-origin browser access is disabled by default. Set `OKOSCOPE_CORS_ORIGINS` to a comma-separated list of exact `http` or `https` origins (for example `https://okoscope.example.com`); wildcards and URL paths are rejected at startup. Roll out first with an empty value, verify same-origin access, then add only the UI origin and check an authenticated preflight. CORS grants browser permission only—it never replaces bearer authentication.
+
+The server image receives `OKOSCOPE_GIT_COMMIT` as a Docker build argument in GitHub Actions; local builds deterministically report `unknown`. This milestone has no database migration. Rollback consists of deploying the previous server image and removing `OKOSCOPE_CORS_ORIGINS`; stored runtime data is unaffected.
+
+For navigation performance, run [`deploy/queries/navigation.sql`](../deploy/queries/navigation.sql) with tenant IDs from the installation and confirm PostgreSQL uses tenant/ownership indexes rather than unbounded scans.
+
 ## Acceptance checks
 
 Trigger process execution in the selected and control Deployments:

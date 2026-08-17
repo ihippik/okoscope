@@ -11,6 +11,8 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
+ARG OKOSCOPE_GIT_COMMIT=unknown
+ENV OKOSCOPE_GIT_COMMIT=${OKOSCOPE_GIT_COMMIT}
 COPY --from=planner /src/recipe.json recipe.json
 RUN cargo chef cook --locked --release -p server --recipe-path recipe.json
 COPY . .

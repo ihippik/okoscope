@@ -23,6 +23,12 @@ static RELEASE_ABSENT: AtomicU64 = AtomicU64::new(0);
 static RELEASE_UNKNOWN: AtomicU64 = AtomicU64::new(0);
 static RELEASE_SUMMARY_UPDATES: AtomicU64 = AtomicU64::new(0);
 static RELEASE_DIFF_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static NAVIGATION_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static API_ERRORS: AtomicU64 = AtomicU64::new(0);
+static API_CLIENT_ERRORS: AtomicU64 = AtomicU64::new(0);
+static API_SERVER_ERRORS: AtomicU64 = AtomicU64::new(0);
+static CORS_DENIALS: AtomicU64 = AtomicU64::new(0);
+static WEB_API_DURATION_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
 
 pub fn record_grouping(elapsed_micros: u64, group_created: bool) {
     GROUPING_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -75,6 +81,21 @@ pub fn record_release_summary() {
 
 pub fn record_release_diff() {
     RELEASE_DIFF_REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_navigation(_success: bool) {
+    NAVIGATION_REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_web_api(status: u16, elapsed_micros: u64) {
+    API_ERRORS.fetch_add(u64::from(status >= 400), Ordering::Relaxed);
+    API_CLIENT_ERRORS.fetch_add(u64::from((400..500).contains(&status)), Ordering::Relaxed);
+    API_SERVER_ERRORS.fetch_add(u64::from(status >= 500), Ordering::Relaxed);
+    WEB_API_DURATION_MICROSECONDS.fetch_add(elapsed_micros, Ordering::Relaxed);
+}
+
+pub fn record_cors_denial() {
+    CORS_DENIALS.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn router(pool: PgPool) -> Router {
@@ -217,6 +238,30 @@ async fn render(State(pool): State<PgPool>) -> impl IntoResponse {
         (
             "okoscope_release_diff_requests_total",
             RELEASE_DIFF_REQUESTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_navigation_requests_total",
+            NAVIGATION_REQUESTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_api_errors_total",
+            API_ERRORS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_api_client_errors_total",
+            API_CLIENT_ERRORS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_api_server_errors_total",
+            API_SERVER_ERRORS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_cors_denials_total",
+            CORS_DENIALS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_web_api_duration_microseconds_total",
+            WEB_API_DURATION_MICROSECONDS.load(Ordering::Relaxed),
         ),
     ];
     let mut body = String::new();

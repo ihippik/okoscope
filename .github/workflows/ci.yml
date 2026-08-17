@@ -71,6 +71,8 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/${{ matrix.architecture }}
+          build-args: |
+            OKOSCOPE_GIT_COMMIT=${{ github.sha }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ghcr.io/${{ github.repository }}-${{ matrix.component }}:${{ github.sha }}-${{ matrix.architecture }}
           cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.architecture }}

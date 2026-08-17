@@ -3,12 +3,15 @@ use std::sync::Arc;
 use axum::{Router, http::StatusCode, routing::get};
 use sqlx::PgPool;
 
-use crate::{api, database::verify_schema, metrics, notification::NotificationService};
+use crate::{
+    api, database::verify_schema, metrics, notification::NotificationService, web_api::WebApiConfig,
+};
 
 pub fn router(
     pool: PgPool,
     notification_ready: bool,
     notifications: Option<NotificationService>,
+    web_api_config: &WebApiConfig,
 ) -> Router {
     let pool = Arc::new(pool);
     let router = Router::new()
@@ -29,15 +32,17 @@ pub fn router(
                 }
             }),
         )
-        .merge(api::router((*pool).clone()))
-        .merge(crate::releases::router((*pool).clone()))
         .merge(metrics::router((*pool).clone()));
-    if let Some(notifications) = notifications {
-        router.merge(crate::notification::api::router(
+    let api_router = api::router((*pool).clone())
+        .merge(crate::releases::router((*pool).clone()))
+        .merge(crate::navigation::router((*pool).clone()));
+    let api_router = if let Some(notifications) = notifications {
+        api_router.merge(crate::notification::api::router(
             (*pool).clone(),
             notifications,
         ))
     } else {
-        router
-    }
+        api_router
+    };
+    router.merge(crate::web_api::router(api_router, web_api_config))
 }

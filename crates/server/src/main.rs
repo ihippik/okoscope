@@ -12,6 +12,7 @@ use server::{
     notification_config::NotificationArgs,
     session::AgentSessionService,
     transport::TransportSecurity,
+    web_api::WebApiConfig,
 };
 use sqlx::postgres::PgPoolOptions;
 use tonic::transport::Server;
@@ -40,6 +41,7 @@ async fn serve(
     pool: sqlx::PgPool,
     notifications: Option<NotificationService>,
     notification_ready: bool,
+    web_api_config: WebApiConfig,
 ) -> Result<()> {
     let security = if options.development_plaintext {
         TransportSecurity::DevelopmentPlaintext
@@ -85,7 +87,12 @@ async fn serve(
     let listener = tokio::net::TcpListener::bind(options.health_addr).await?;
     let health_server = axum::serve(
         listener,
-        health::router(pool, notification_ready, notifications.clone()),
+        health::router(
+            pool,
+            notification_ready,
+            notifications.clone(),
+            &web_api_config,
+        ),
     )
     .with_graceful_shutdown(wait_for_shutdown(shutdown_receiver));
     tracing::info!(grpc_addr = %options.grpc_addr, health_addr = %options.health_addr, "okoscope server started");
@@ -143,6 +150,8 @@ struct Args {
     api_credential: Option<String>,
     #[command(flatten)]
     notification: NotificationArgs,
+    #[arg(long, env = "OKOSCOPE_CORS_ORIGINS", value_delimiter = ',')]
+    cors_origins: Vec<String>,
     #[command(subcommand)]
     command: Option<Command>,
     #[arg(
@@ -229,6 +238,9 @@ async fn main() -> Result<()> {
         tls_private_key: args.tls_private_key.clone(),
     };
     let notification_config = args.notification.build(args.development_plaintext);
+    let web_api_config = WebApiConfig::new(args.cors_origins.clone())
+        .map_err(anyhow::Error::msg)
+        .context("web API configuration")?;
     let notification_ready = notification_config.is_ok();
     if let Err(error) = &notification_config {
         tracing::error!(error=%error, "notification delivery configuration is invalid");
@@ -286,5 +298,12 @@ async fn main() -> Result<()> {
         "bootstrap identities ready"
     );
 
-    serve(server_options, pool, notifications, notification_ready).await
+    serve(
+        server_options,
+        pool,
+        notifications,
+        notification_ready,
+        web_api_config,
+    )
+    .await
 }

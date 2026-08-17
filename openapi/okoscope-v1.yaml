@@ -1,0 +1,150 @@
+openapi: 3.1.0
+info:
+  title: Okoscope Web API
+  version: 1.0.0
+  description: Stable API contract for the separately deployed Okoscope Web UI. Timestamps are RFC 3339 UTC values.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/build-info:
+    get:
+      operationId: getBuildInfo
+      security: []
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/organization:
+    get:
+      operationId: getCurrentOrganization
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "401": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects:
+    get:
+      operationId: listProjects
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "400": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    get:
+      operationId: getProject
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    get:
+      operationId: listApplications
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications/{application_id}:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
+    get:
+      operationId: getApplication
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/runtime-groups:
+    get:
+      operationId: listRuntimeGroups
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/runtime-groups/{group_id}:
+    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    get:
+      operationId: getRuntimeGroup
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/releases:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
+    get:
+      operationId: listReleases
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+    post:
+      operationId: createRelease
+      requestBody: {$ref: '#/components/requestBodies/JsonBody'}
+      responses: {"201": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/releases/{release_id}:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/ReleaseId'}]
+    get:
+      operationId: getRelease
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/TargetId'}]
+    get:
+      operationId: getRuntimeDiff
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/webhook-destinations:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    get:
+      operationId: listWebhookDestinations
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+    post:
+      operationId: createWebhookDestination
+      requestBody: {$ref: '#/components/requestBodies/JsonBody'}
+      responses: {"201": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/webhook-destinations/{destination_id}:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
+    get:
+      operationId: getWebhookDestination
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+    patch:
+      operationId: updateWebhookDestination
+      requestBody: {$ref: '#/components/requestBodies/JsonBody'}
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/webhook-destinations/{destination_id}/disable:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
+    post:
+      operationId: disableWebhookDestination
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/webhook-destinations/{destination_id}/rotate-secret:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
+    post:
+      operationId: rotateWebhookSecret
+      requestBody: {$ref: '#/components/requestBodies/JsonBody'}
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/webhook-destinations/{destination_id}/test:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
+    post:
+      operationId: testWebhookDestination
+      responses: {"202": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/notification-deliveries:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    get:
+      operationId: listNotificationDeliveries
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+  /api/v1/projects/{project_id}/notification-deliveries/{delivery_id}:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DeliveryId'}]
+    get:
+      operationId: getNotificationDelivery
+      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+  parameters:
+    Cursor: {name: cursor, in: query, schema: {type: string, format: uuid}, description: Opaque cursor scoped to the authenticated collection.}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+    ProjectId: {name: project_id, in: path, required: true, schema: {type: string, format: uuid}}
+    ApplicationId: {name: application_id, in: path, required: true, schema: {type: string, format: uuid}}
+    GroupId: {name: group_id, in: path, required: true, schema: {type: string, format: uuid}}
+    ReleaseId: {name: release_id, in: path, required: true, schema: {type: string, format: uuid}}
+    TargetId: {name: target_id, in: path, required: true, schema: {type: string, format: uuid}}
+    DestinationId: {name: destination_id, in: path, required: true, schema: {type: string, format: uuid}}
+    DeliveryId: {name: delivery_id, in: path, required: true, schema: {type: string, format: uuid}}
+  headers:
+    RequestId: {schema: {type: string}, description: Correlation identifier for the request.}
+  schemas:
+    JsonObject: {type: object, additionalProperties: true}
+    Error:
+      type: object
+      required: [error, message, request_id]
+      properties:
+        error: {type: string, example: not_found}
+        message: {type: string, example: resource not found}
+        request_id: {type: string, example: 0ec02ed2-8483-4981-893e-bffc535897d7}
+    Timestamp: {type: string, format: date-time, example: '2026-08-17T12:00:00Z'}
+  requestBodies:
+    JsonBody:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/JsonObject'}}}
+  responses:
+    JsonSuccess:
+      description: Successful JSON response
+      headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}
+      content: {application/json: {schema: {$ref: '#/components/schemas/JsonObject'}}}
+    Error:
+      description: Correlated API error
+      headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
