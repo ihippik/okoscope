@@ -20,7 +20,7 @@ CI publishes an `okoscope-kubernetes-<commit>` bundle containing:
 
 The bundled PostgreSQL profile requests 100m CPU/256 MiB and limits 1 CPU/1 GiB. Server defaults are 100m/128 MiB requests and 1 CPU/512 MiB limits; agent defaults are 100m/96 MiB and 1 CPU/512 MiB. Tune these in a site overlay after measuring usage.
 
-The agent is the only host-aware workload. `hostPID` is required to map kernel PIDs to containers; read-only `/proc` and cgroup v2 mounts provide attribution; tracefs is writable for probe attachment. The container drops every capability except `BPF`, `PERFMON`, and `SYS_RESOURCE`, and RBAC is read-only for Pods, ReplicaSets, and Deployments. It has no host network, host root mount, Secret read API, workload mutation, or broad `privileged` mode. Older kernels that lack capability separation are unsupported by this hardened profile rather than silently receiving `SYS_ADMIN`.
+The agent is the only host-aware workload. `hostPID` is required to map kernel PIDs to containers; read-only `/proc` and cgroup v2 mounts provide attribution; tracefs is writable for probe attachment. The container drops every capability except `BPF`, `PERFMON`, `SYS_RESOURCE`, and `SYS_ADMIN`; the latter is required by the reference cluster kernel for tracepoint `perf_event_open`. RBAC is read-only for Pods, ReplicaSets, and Deployments. It has no host network, host root mount, Secret read API, workload mutation, or broad `privileged` mode.
 
 ## Provision the Secret
 
@@ -81,7 +81,7 @@ kubectl get certificate -n okoscope
 
 Do not apply the install artifact to the adopted environment. Keep the existing Secret, StatefulSet, PVC, Service names, Traefik routes, and Certificate until rendered resources have been diffed. The upgrade artifact adopts stateless resources by stable names and does not take ownership of Secret or PostgreSQL. If existing labels differ, update selectors only after confirming they continue to match live Pods.
 
-The 2026-08-17 `aliens` adoption dry-run found and corrected two compatibility issues before rollout: Kustomize labels were initially entering immutable workload selectors, and the existing Web Service exposes port 80 rather than 8080. After preserving the live `app` selectors and Service ports, server-side dry-run accepted the server, Web, agent, PDB, Certificate, Middleware, and both IngressRoutes without mutating the cluster. The live Secret still has the intentionally retained development webhook key, so production preflight and actual migration/rollout remain gated until that key is provisioned out of band and images containing `server migrate` are published.
+The 2026-08-17 `aliens` adoption dry-run found and corrected two compatibility issues before rollout: Kustomize labels were initially entering immutable workload selectors, and the existing Web Service exposes port 80 rather than 8080. The first live rollout then found two runtime-only requirements: the Web entrypoint creates `/tmp/okoscope-web`, and the reference kernel requires `SYS_ADMIN` for tracepoint `perf_event_open`. Web and agent were rolled back while remaining available; the manifests now provide a writable `/tmp` `emptyDir` and the explicit capability. Server migration and rollout succeeded without replacing Secret, PostgreSQL, or PVC identities.
 
 ## Ordered upgrade and failure gate
 
@@ -97,7 +97,7 @@ deploy/scripts/deploy-release.sh ./release
 
 The production server has `OKOSCOPE_MIGRATE=false`. Only the release-specific Job runs `server migrate`. Reapplying an already completed release is safe; migration history and credentials are preserved.
 
-For public routing, set `OKOSCOPE_DOMAIN`, `OKOSCOPE_CERT_ISSUER`, `OKOSCOPE_TLS_SECRET`, `OKOSCOPE_HTTP_ENTRYPOINT`, `OKOSCOPE_HTTPS_ENTRYPOINT`, `OKOSCOPE_SERVER_SERVICE`, and `OKOSCOPE_WEB_SERVICE`, then render with the final argument `enabled`. Invalid or missing values fail before rendering.
+For public routing, set `OKOSCOPE_DOMAIN`, `OKOSCOPE_CERTIFICATE_NAME`, `OKOSCOPE_CERT_ISSUER`, `OKOSCOPE_TLS_SECRET`, `OKOSCOPE_HTTP_ENTRYPOINT`, `OKOSCOPE_HTTPS_ENTRYPOINT`, `OKOSCOPE_SERVER_SERVICE`, and `OKOSCOPE_WEB_SERVICE`, then render with the final argument `enabled`. Existing environments must use their current Certificate name and issuer to avoid competing ownership of one TLS Secret. Invalid or missing values fail before rendering.
 
 ## Verification and rollback
 

@@ -185,7 +185,8 @@ jobs:
         env:
           WEB_IMAGE: ${{ vars.OKOSCOPE_WEB_IMAGE || 'ghcr.io/ihippik/okoscope-web:0df87f703f3f1801590a6ec7ad73dae9ad487f87' }}
           OKOSCOPE_DOMAIN: okoscope.com
-          OKOSCOPE_CERT_ISSUER: letsencrypt-production
+          OKOSCOPE_CERTIFICATE_NAME: okoscope-com
+          OKOSCOPE_CERT_ISSUER: letsencrypt-prod
           OKOSCOPE_TLS_SECRET: okoscope-com-tls
           OKOSCOPE_HTTP_ENTRYPOINT: web
           OKOSCOPE_HTTPS_ENTRYPOINT: websecure

@@ -29,6 +29,7 @@ spec:
             runAsUser: 65532
             runAsGroup: 65532
           env:
+            - {name: RUST_LOG, value: info}
             - name: OKOSCOPE_DATABASE_URL
               valueFrom:
                 secretKeyRef: {name: okoscope-secrets, key: database-url}
@@ -40,4 +41,3 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
-

@@ -22,6 +22,7 @@ grep -q 'okoscope.io/required-migration: "6"' "$migrate"
 [[ ! -e "$work/no-routing/04-routing.yaml" ]]
 
 export OKOSCOPE_DOMAIN=okoscope.example
+export OKOSCOPE_CERTIFICATE_NAME=okoscope-example
 export OKOSCOPE_CERT_ISSUER=letsencrypt-production
 export OKOSCOPE_TLS_SECRET=okoscope-example-tls
 export OKOSCOPE_HTTP_ENTRYPOINT=web
@@ -38,4 +39,3 @@ grep -q 'name: okoscope-web' "$routing"
 ! grep -q '__[A-Z_]*__' "$routing"
 
 echo "manifest policy tests passed"
-

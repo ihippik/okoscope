@@ -40,6 +40,11 @@ spec:
             httpGet: {path: /healthz, port: http}
           livenessProbe:
             httpGet: {path: /healthz, port: http}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

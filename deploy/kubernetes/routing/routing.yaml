@@ -1,7 +1,7 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: okoscope-public
+  name: __CERTIFICATE_NAME__
 spec:
   secretName: __TLS_SECRET__
   dnsNames: [__DOMAIN__]
