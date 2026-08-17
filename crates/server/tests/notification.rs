@@ -110,6 +110,7 @@ fn service(pool: sqlx::PgPool) -> NotificationService {
         shutdown_drain_seconds: 3,
         allow_http: true,
         allow_private_ips: true,
+        ..NotificationArgs::default()
     };
     NotificationService::new(pool, args.build(true).unwrap()).unwrap()
 }

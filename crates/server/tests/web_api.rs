@@ -84,7 +84,7 @@ async fn browser_foundation_is_correlated_cors_safe_and_tenant_scoped(pool: sqlx
     assert_eq!(build.headers()[header::CACHE_CONTROL], "no-store");
     let build = json(build).await;
     assert_eq!(build["api_version"], "v1");
-    assert_eq!(build["required_database_migration"], 6);
+    assert_eq!(build["required_database_migration"], 7);
     assert!(build.get("database_url").is_none());
 
     let notification_health = app
@@ -341,4 +341,138 @@ async fn navigation_pagination_is_stable_and_cursor_is_scoped(pool: sqlx::PgPool
         .await
         .unwrap();
     assert_eq!(wrong_owner.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn recovery_api_is_tenant_scoped_idempotent_and_correlated(pool: sqlx::PgPool) {
+    let owner_config = config("recovery-api-owner");
+    let owner = bootstrap(&pool, &owner_config).await.unwrap();
+    let foreign_config = config("recovery-api-foreign");
+    bootstrap(&pool, &foreign_config).await.unwrap();
+    let destination_id = Uuid::new_v4();
+    let delivery_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO webhook_destinations(id,organization_id,project_id,name,url,encrypted_secret,secret_nonce) VALUES($1,$2,$3,'receiver','https://receiver.example/hook',$4,$5)")
+        .bind(destination_id).bind(owner.organization_id).bind(owner.project_id)
+        .bind(vec![1_u8; 48]).bind(vec![2_u8; 24]).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO notification_deliveries(id,organization_id,project_id,destination_id,origin,source,event_name,payload,status,attempt_count,max_attempts,terminal_at,last_error_class) VALUES($1,$2,$3,$4,'test','test','okoscope.test','{}','failed',1,3,now(),'timeout')")
+        .bind(delivery_id).bind(owner.organization_id).bind(owner.project_id).bind(destination_id).execute(&pool).await.unwrap();
+    let notification_service = notifications(pool.clone(), false);
+    let app = health::router(
+        pool,
+        true,
+        Some(notification_service),
+        &WebApiConfig::default(),
+    );
+
+    let uri = format!(
+        "/api/v1/projects/{}/notification-deliveries/{delivery_id}/retry",
+        owner.project_id
+    );
+    let missing_key = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&uri)
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", owner_config.api_credential),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_key.status(), StatusCode::BAD_REQUEST);
+
+    let malformed_key = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&uri)
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", owner_config.api_credential),
+                )
+                .header("idempotency-key", "short")
+                .header("x-request-id", "recovery-invalid-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(malformed_key.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        malformed_key.headers()["x-request-id"],
+        "recovery-invalid-key"
+    );
+
+    let invalid_bearer = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&uri)
+                .header(header::AUTHORIZATION, "Bearer invalid")
+                .header("idempotency-key", "recovery-api-invalid-bearer")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_bearer.status(), StatusCode::UNAUTHORIZED);
+
+    let command = || {
+        Request::builder()
+            .method("POST")
+            .uri(&uri)
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", owner_config.api_credential),
+            )
+            .header("idempotency-key", "recovery-api-command-0001")
+            .header("x-request-id", "recovery-api-request-1")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let first = app.clone().oneshot(command()).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(first.headers()[header::CACHE_CONTROL], "no-store");
+    let first = json(first).await;
+    assert_eq!(first["replayed"], false);
+    let repeated = json(app.clone().oneshot(command()).await.unwrap()).await;
+    assert_eq!(repeated["replayed"], true);
+    assert_eq!(repeated["operation_id"], first["operation_id"]);
+
+    let foreign = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&uri)
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", foreign_config.api_credential),
+                )
+                .header("idempotency-key", "recovery-api-command-0002")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    let operations = app
+        .oneshot(request(
+            &format!(
+                "/api/v1/projects/{}/notification-recovery-operations?limit=1",
+                owner.project_id
+            ),
+            Some(&owner_config.api_credential),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(operations.status(), StatusCode::OK);
+    assert_eq!(json(operations).await["items"].as_array().unwrap().len(), 1);
 }

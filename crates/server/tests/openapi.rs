@@ -62,6 +62,26 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}",
         "get",
     ),
+    (
+        "/api/v1/projects/{project_id}/notification-deliveries/bulk-retry",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}/retry",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}/cancel",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/notification-recovery-operations",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/notification-recovery-operations/{operation_id}",
+        "get",
+    ),
     ("/api/v1/projects/{project_id}/notification-health", "get"),
 ];
 
@@ -160,12 +180,43 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         false
     );
     assert_notification_health_contract(&document);
+    assert_delivery_contract(&document);
+    assert_recovery_contract(&document);
     assert_query_parameters(
         &document,
         "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
         "get",
         &["baseline_id", "cursor", "limit"],
     );
+}
+
+fn assert_recovery_contract(document: &serde_json::Value) {
+    for schema_name in [
+        "DeliveryRecoveryResult",
+        "BulkRecoveryResult",
+        "RecoveryOperationSummary",
+        "RecoveryOperationPage",
+    ] {
+        assert_eq!(
+            document["components"]["schemas"][schema_name]["additionalProperties"], false,
+            "{schema_name} must remain concrete"
+        );
+    }
+    for path in [
+        "/api/v1/projects/{project_id}/notification-deliveries/bulk-retry",
+        "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}/retry",
+        "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}/cancel",
+    ] {
+        let parameters = document["paths"][path]["post"]["parameters"]
+            .as_array()
+            .expect("recovery command parameters");
+        assert!(
+            parameters
+                .iter()
+                .any(|parameter| { parameter["$ref"] == "#/components/parameters/IdempotencyKey" })
+        );
+        assert!(document["paths"][path]["post"]["responses"]["409"].is_object());
+    }
 }
 
 fn assert_notification_health_contract(document: &serde_json::Value) {
@@ -187,6 +238,33 @@ fn assert_notification_health_contract(document: &serde_json::Value) {
             .iter()
             .all(|field| fields.iter().any(|item| item == field))
     }));
+}
+
+fn assert_delivery_contract(document: &serde_json::Value) {
+    let schema = &document["components"]["schemas"]["DeliverySummary"];
+    let required = schema["required"]
+        .as_array()
+        .expect("delivery required fields");
+    for field in [
+        "next_attempt_at",
+        "terminal_reason",
+        "semantic_metadata",
+        "destination",
+    ] {
+        assert!(required.iter().any(|item| item == field), "missing {field}");
+    }
+    assert_eq!(
+        document["components"]["schemas"]["SafeDestination"]["additionalProperties"],
+        false
+    );
+    assert!(
+        document["components"]["schemas"]["SafeDestination"]["properties"]["url"].is_null(),
+        "safe destination must not expose a URL"
+    );
+    assert_eq!(
+        document["components"]["schemas"]["DeliverySemanticMetadata"]["additionalProperties"],
+        false
+    );
 }
 
 fn assert_query_parameters(

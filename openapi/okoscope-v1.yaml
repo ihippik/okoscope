@@ -146,6 +146,18 @@ paths:
       operationId: listNotificationDeliveries
       parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses: {"200": {$ref: '#/components/responses/DeliveryPage'}}
+  /api/v1/projects/{project_id}/notification-deliveries/bulk-retry:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    post:
+      operationId: bulkRetryNotificationDeliveries
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/BulkRetryFilter'}
+      responses:
+        "200": {$ref: '#/components/responses/BulkRecoveryResult'}
+        "400": {$ref: '#/components/responses/Error'}
+        "401": {$ref: '#/components/responses/Error'}
+        "404": {$ref: '#/components/responses/Error'}
+        "409": {$ref: '#/components/responses/Error'}
   /api/v1/projects/{project_id}/notification-health:
     parameters: [{$ref: '#/components/parameters/ProjectId'}]
     get:
@@ -160,6 +172,42 @@ paths:
     get:
       operationId: getNotificationDelivery
       responses: {"200": {$ref: '#/components/responses/DeliveryDetail'}}
+  /api/v1/projects/{project_id}/notification-deliveries/{delivery_id}/retry:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DeliveryId'}]
+    post:
+      operationId: retryNotificationDelivery
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        "200": {$ref: '#/components/responses/DeliveryRecoveryResult'}
+        "400": {$ref: '#/components/responses/Error'}
+        "401": {$ref: '#/components/responses/Error'}
+        "404": {$ref: '#/components/responses/Error'}
+        "409": {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{project_id}/notification-deliveries/{delivery_id}/cancel:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DeliveryId'}]
+    post:
+      operationId: cancelNotificationDelivery
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        "200": {$ref: '#/components/responses/DeliveryRecoveryResult'}
+        "400": {$ref: '#/components/responses/Error'}
+        "401": {$ref: '#/components/responses/Error'}
+        "404": {$ref: '#/components/responses/Error'}
+        "409": {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{project_id}/notification-recovery-operations:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    get:
+      operationId: listNotificationRecoveryOperations
+      parameters:
+        - {name: command_type, in: query, schema: {$ref: '#/components/schemas/RecoveryCommandType'}}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses: {"200": {$ref: '#/components/responses/RecoveryOperationPage'}}
+  /api/v1/projects/{project_id}/notification-recovery-operations/{operation_id}:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/OperationId'}]
+    get:
+      operationId: getNotificationRecoveryOperation
+      responses: {"200": {$ref: '#/components/responses/RecoveryOperationDetail'}}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer}
@@ -173,6 +221,8 @@ components:
     TargetId: {name: target_id, in: path, required: true, schema: {type: string, format: uuid}}
     DestinationId: {name: destination_id, in: path, required: true, schema: {type: string, format: uuid}}
     DeliveryId: {name: delivery_id, in: path, required: true, schema: {type: string, format: uuid}}
+    OperationId: {name: operation_id, in: path, required: true, schema: {type: string, format: uuid}}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 8, maxLength: 200, pattern: '^[!-~]+$'}}
   headers:
     RequestId: {schema: {type: string}, description: Correlation identifier for the request.}
   schemas:
@@ -192,7 +242,7 @@ components:
         service_version: {type: string, example: 0.1.0}
         git_commit: {type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a}
         api_version: {type: string, const: v1}
-        required_database_migration: {type: integer, format: int64, example: 6}
+        required_database_migration: {type: integer, format: int64, example: 7}
     Organization:
       type: object
       additionalProperties: false
@@ -407,7 +457,7 @@ components:
     DeliverySummary:
       type: object
       additionalProperties: false
-      required: [id, project_id, destination_id, outbox_message_id, origin, source, event_name, status, available_at, attempt_count, max_attempts, last_error_class, created_at, updated_at, terminal_at]
+      required: [id, project_id, destination_id, outbox_message_id, origin, source, event_name, semantic_metadata, destination, status, available_at, next_attempt_at, recovery_generation, attempt_count, total_attempt_count, max_attempts, last_error_class, terminal_reason, created_at, updated_at, terminal_at, retry_allowed, cancel_allowed, last_recovery_operation_id]
       properties:
         id: {$ref: '#/components/schemas/Uuid'}
         project_id: {$ref: '#/components/schemas/Uuid'}
@@ -416,14 +466,44 @@ components:
         origin: {type: string}
         source: {type: string}
         event_name: {type: string}
-        status: {type: string}
+        semantic_metadata: {$ref: '#/components/schemas/NullableDeliverySemanticMetadata'}
+        destination: {$ref: '#/components/schemas/SafeDestination'}
+        status: {type: string, enum: [pending, in_flight, succeeded, failed, suppressed, cancelled]}
         available_at: {$ref: '#/components/schemas/Timestamp'}
+        next_attempt_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        recovery_generation: {type: integer, format: int32, minimum: 0}
         attempt_count: {type: integer, format: int32}
+        total_attempt_count: {type: integer, format: int64, minimum: 0}
         max_attempts: {type: integer, format: int32}
-        last_error_class: {type: [string, 'null']}
+        last_error_class: {type: [string, 'null'], maxLength: 100}
+        terminal_reason: {type: [string, 'null'], maxLength: 100}
         created_at: {$ref: '#/components/schemas/Timestamp'}
         updated_at: {$ref: '#/components/schemas/Timestamp'}
         terminal_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        retry_allowed: {type: boolean}
+        cancel_allowed: {type: boolean}
+        last_recovery_operation_id: {$ref: '#/components/schemas/NullableUuid'}
+    SafeDestination:
+      type: object
+      additionalProperties: false
+      description: Destination identity and operational state without URL, credentials, or signing material.
+      required: [id, name, enabled]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        name: {type: string, maxLength: 200}
+        enabled: {type: boolean}
+    DeliverySemanticMetadata:
+      type: object
+      additionalProperties: false
+      required: [application_id, group_id, event_kind]
+      properties:
+        application_id: {$ref: '#/components/schemas/NullableUuid'}
+        group_id: {$ref: '#/components/schemas/NullableUuid'}
+        event_kind: {type: [string, 'null'], maxLength: 100}
+    NullableDeliverySemanticMetadata:
+      oneOf:
+        - {$ref: '#/components/schemas/DeliverySemanticMetadata'}
+        - {type: 'null'}
     DeliveryPage:
       type: object
       additionalProperties: false
@@ -434,9 +514,10 @@ components:
     DeliveryAttempt:
       type: object
       additionalProperties: false
-      required: [id, attempt_number, started_at, finished_at, duration_ms, outcome, http_status, error_class, response_excerpt]
+      required: [id, recovery_generation, attempt_number, started_at, finished_at, duration_ms, outcome, http_status, error_class, response_excerpt]
       properties:
         id: {$ref: '#/components/schemas/Uuid'}
+        recovery_generation: {type: integer, format: int32, minimum: 0}
         attempt_number: {type: integer, format: int32}
         started_at: {$ref: '#/components/schemas/Timestamp'}
         finished_at: {$ref: '#/components/schemas/Timestamp'}
@@ -468,6 +549,87 @@ components:
         failed_count: {type: integer, format: int64, minimum: 0}
         oldest_due_age_seconds: {type: [integer, 'null'], format: int64, minimum: 0}
         observed_at: {$ref: '#/components/schemas/Timestamp'}
+    RecoveryCommandType: {type: string, enum: [retry, cancel, bulk_retry]}
+    RecoveryConflictCode: {type: string, enum: [invalid_state, active_lease, destination_disabled, idempotency_key_reused, bulk_limit_exceeded]}
+    BulkRetryFilter:
+      type: object
+      additionalProperties: false
+      properties:
+        destination_id: {$ref: '#/components/schemas/Uuid'}
+        failed_before: {$ref: '#/components/schemas/Timestamp'}
+        failed_after: {$ref: '#/components/schemas/Timestamp'}
+        error_class: {type: string, minLength: 1, maxLength: 100}
+        limit: {type: integer, format: int64, minimum: 1, maximum: 200, default: 50}
+    DeliveryRecoveryResult:
+      type: object
+      additionalProperties: false
+      required: [operation_id, delivery_id, status, recovery_generation, current_attempt_count, total_attempt_count, replayed, completed_at]
+      properties:
+        operation_id: {$ref: '#/components/schemas/Uuid'}
+        delivery_id: {$ref: '#/components/schemas/Uuid'}
+        status: {type: string, enum: [pending, cancelled]}
+        recovery_generation: {type: integer, format: int32, minimum: 0}
+        current_attempt_count: {type: integer, format: int32, minimum: 0}
+        total_attempt_count: {type: integer, format: int64, minimum: 0}
+        replayed: {type: boolean}
+        completed_at: {$ref: '#/components/schemas/Timestamp'}
+    BulkRecoveryResult:
+      type: object
+      additionalProperties: false
+      required: [operation_id, selected_count, retried_count, skipped_count, remaining_count, has_more, replayed, completed_at]
+      properties:
+        operation_id: {$ref: '#/components/schemas/Uuid'}
+        selected_count: {type: integer, format: int32, minimum: 0, maximum: 200}
+        retried_count: {type: integer, format: int32, minimum: 0, maximum: 200}
+        skipped_count: {type: integer, format: int32, minimum: 0, maximum: 200}
+        remaining_count: {type: integer, format: int32, minimum: 0}
+        has_more: {type: boolean}
+        replayed: {type: boolean}
+        completed_at: {$ref: '#/components/schemas/Timestamp'}
+    RecoveryOperationSummary:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, command_type, target_delivery_id, actor_kind, actor_id, request_id, outcome, selected_count, retried_count, cancelled_count, skipped_count, remaining_count, created_at, completed_at]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        project_id: {$ref: '#/components/schemas/Uuid'}
+        command_type: {$ref: '#/components/schemas/RecoveryCommandType'}
+        target_delivery_id: {$ref: '#/components/schemas/NullableUuid'}
+        actor_kind: {type: string, enum: [api_credential]}
+        actor_id: {$ref: '#/components/schemas/Uuid'}
+        request_id: {type: string, maxLength: 200}
+        outcome: {type: string, enum: [completed, conflict]}
+        selected_count: {type: integer, format: int32, minimum: 0}
+        retried_count: {type: integer, format: int32, minimum: 0}
+        cancelled_count: {type: integer, format: int32, minimum: 0}
+        skipped_count: {type: integer, format: int32, minimum: 0}
+        remaining_count: {type: integer, format: int32, minimum: 0}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        completed_at: {$ref: '#/components/schemas/Timestamp'}
+    RecoveryOperationDelivery:
+      type: object
+      additionalProperties: false
+      required: [delivery_id, recovery_generation, action, created_at]
+      properties:
+        delivery_id: {$ref: '#/components/schemas/Uuid'}
+        recovery_generation: {type: integer, format: int32, minimum: 0}
+        action: {type: string, enum: [retried, cancelled, skipped]}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    RecoveryOperationPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/RecoveryOperationSummary'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    RecoveryOperationDetail:
+      unevaluatedProperties: false
+      allOf:
+        - {$ref: '#/components/schemas/RecoveryOperationSummary'}
+        - type: object
+          required: [affected_deliveries]
+          properties:
+            affected_deliveries: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/RecoveryOperationDelivery'}}
     Uuid: {type: string, format: uuid}
     NullableUuid: {type: [string, 'null'], format: uuid}
     Timestamp: {type: string, format: date-time, example: '2026-08-17T12:00:00Z'}
@@ -482,6 +644,9 @@ components:
     UpdateWebhookDestination:
       required: true
       content: {application/json: {schema: {$ref: '#/components/schemas/UpdateWebhookDestination'}}}
+    BulkRetryFilter:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/BulkRetryFilter'}}}
   responses:
     BuildInfoResponse: {description: Build compatibility metadata, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/BuildInfo'}}}}
     Organization: {description: Current organization, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Organization'}}}}
@@ -503,6 +668,10 @@ components:
     DeliveryPage: {description: Notification delivery page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryPage'}}}}
     DeliveryDetail: {description: Notification delivery detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryDetail'}}}}
     NotificationHealth: {description: Secret-free Project notification health snapshot, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/NotificationHealth'}}}}
+    DeliveryRecoveryResult: {description: Idempotent single-delivery recovery result, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryRecoveryResult'}}}}
+    BulkRecoveryResult: {description: Bounded bulk retry result, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/BulkRecoveryResult'}}}}
+    RecoveryOperationPage: {description: Recovery operation page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RecoveryOperationPage'}}}}
+    RecoveryOperationDetail: {description: Recovery operation detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RecoveryOperationDetail'}}}}
     Error:
       description: Correlated API error
       headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}

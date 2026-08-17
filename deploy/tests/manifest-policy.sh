@@ -19,7 +19,7 @@ check=$(find "$work/no-routing" -name '02-notification-check-*.yaml' -print -qui
 [[ $(grep -c 'resources:' "$upgrade") -ge 3 ]]
 [[ $(grep -c 'resources:' "$migrate") -eq 1 ]]
 grep -q 'OKOSCOPE_MIGRATE: "false"' "$upgrade"
-grep -q 'okoscope.io/required-migration: "6"' "$migrate"
+grep -q 'okoscope.io/required-migration: "7"' "$migrate"
 grep -q 'OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: "false"' "$upgrade" "$check"
 grep -Eq 'okoscope.io/notification-config: "[0-9a-f]{12}"' "$upgrade"
 grep -q 'notification_delivery_enabled=false' "$work/no-routing/PROVENANCE.txt"

@@ -23,6 +23,13 @@ static NOTIFICATION_DURATION_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_CYCLE_FAILURES: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_DRAINS: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_DRAIN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_RETENTION_ENABLED: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_RETENTION_SUCCESSES: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_RETENTION_FAILURES: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_RETENTION_OPERATIONS_DELETED: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_RETENTION_DELIVERIES_DELETED: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_RETENTION_LAST_SUCCESS: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_RETENTION_DURATION_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_WORKER_RUNTIME_STATE: AtomicU64 = AtomicU64::new(1);
 static RELEASE_ATTRIBUTED: AtomicU64 = AtomicU64::new(0);
 static RELEASE_ABSENT: AtomicU64 = AtomicU64::new(0);
@@ -92,6 +99,30 @@ pub fn record_notification_drain(completed: bool) {
 
 pub fn notification_worker_is_draining() -> bool {
     NOTIFICATION_WORKER_RUNTIME_STATE.load(Ordering::Relaxed) == 5
+}
+
+pub fn configure_notification_retention(enabled: bool) {
+    NOTIFICATION_RETENTION_ENABLED.store(u64::from(enabled), Ordering::Relaxed);
+}
+
+pub fn record_notification_retention_success(
+    stats: crate::notification::retention::RetentionStats,
+) {
+    NOTIFICATION_RETENTION_SUCCESSES.fetch_add(1, Ordering::Relaxed);
+    NOTIFICATION_RETENTION_OPERATIONS_DELETED
+        .fetch_add(stats.recovery_operations_deleted, Ordering::Relaxed);
+    NOTIFICATION_RETENTION_DELIVERIES_DELETED
+        .fetch_add(stats.terminal_deliveries_deleted, Ordering::Relaxed);
+    NOTIFICATION_RETENTION_DURATION_MICROSECONDS
+        .fetch_add(stats.duration_micros, Ordering::Relaxed);
+    NOTIFICATION_RETENTION_LAST_SUCCESS.store(
+        u64::try_from(chrono::Utc::now().timestamp()).unwrap_or_default(),
+        Ordering::Relaxed,
+    );
+}
+
+pub fn record_notification_retention_failure() {
+    NOTIFICATION_RETENTION_FAILURES.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn record_release_attribution(provided: bool, resolved: bool) {
@@ -297,6 +328,34 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         (
             "okoscope_notification_drain_timeouts_total",
             NOTIFICATION_DRAIN_TIMEOUTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_notification_retention_enabled",
+            NOTIFICATION_RETENTION_ENABLED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_notification_retention_successes_total",
+            NOTIFICATION_RETENTION_SUCCESSES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_notification_retention_failures_total",
+            NOTIFICATION_RETENTION_FAILURES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_notification_retention_operations_deleted_total",
+            NOTIFICATION_RETENTION_OPERATIONS_DELETED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_notification_retention_deliveries_deleted_total",
+            NOTIFICATION_RETENTION_DELIVERIES_DELETED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_notification_retention_last_success_timestamp_seconds",
+            NOTIFICATION_RETENTION_LAST_SUCCESS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_notification_retention_duration_microseconds_total",
+            NOTIFICATION_RETENTION_DURATION_MICROSECONDS.load(Ordering::Relaxed),
         ),
         (
             "okoscope_release_attributed_total",

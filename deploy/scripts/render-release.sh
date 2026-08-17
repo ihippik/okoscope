@@ -23,6 +23,11 @@ webhook_backoff_min_seconds=${OKOSCOPE_WEBHOOK_BACKOFF_MIN_SECONDS:-5}
 webhook_backoff_max_seconds=${OKOSCOPE_WEBHOOK_BACKOFF_MAX_SECONDS:-3600}
 webhook_max_response_bytes=${OKOSCOPE_WEBHOOK_MAX_RESPONSE_BYTES:-4096}
 notification_drain_seconds=${OKOSCOPE_NOTIFICATION_DRAIN_SECONDS:-15}
+retention_enabled=${OKOSCOPE_NOTIFICATION_RETENTION_ENABLED:-false}
+terminal_retention_days=${OKOSCOPE_NOTIFICATION_TERMINAL_RETENTION_DAYS:-90}
+recovery_retention_days=${OKOSCOPE_NOTIFICATION_RECOVERY_RETENTION_DAYS:-365}
+retention_batch_size=${OKOSCOPE_NOTIFICATION_RETENTION_BATCH_SIZE:-1000}
+retention_poll_seconds=${OKOSCOPE_NOTIFICATION_RETENTION_POLL_SECONDS:-3600}
 
 require_range() {
   local name=$1 value=$2 minimum=$3 maximum=$4
@@ -44,7 +49,12 @@ notification_substitutions() {
       -e "s/__WEBHOOK_BACKOFF_MIN_SECONDS__/\"$webhook_backoff_min_seconds\"/g" \
       -e "s/__WEBHOOK_BACKOFF_MAX_SECONDS__/\"$webhook_backoff_max_seconds\"/g" \
       -e "s/__WEBHOOK_MAX_RESPONSE_BYTES__/\"$webhook_max_response_bytes\"/g" \
-      -e "s/__NOTIFICATION_DRAIN_SECONDS__/\"$notification_drain_seconds\"/g"
+      -e "s/__NOTIFICATION_DRAIN_SECONDS__/\"$notification_drain_seconds\"/g" \
+      -e "s/__RETENTION_ENABLED__/\"$retention_enabled\"/g" \
+      -e "s/__TERMINAL_RETENTION_DAYS__/\"$terminal_retention_days\"/g" \
+      -e "s/__RECOVERY_RETENTION_DAYS__/\"$recovery_retention_days\"/g" \
+      -e "s/__RETENTION_BATCH_SIZE__/\"$retention_batch_size\"/g" \
+      -e "s/__RETENTION_POLL_SECONDS__/\"$retention_poll_seconds\"/g"
 }
 
 [[ $server_tag =~ ^[0-9a-f]{40}$ ]] || { echo "server tag must be a 40-character commit SHA" >&2; exit 2; }
@@ -58,6 +68,10 @@ notification_substitutions() {
   echo "OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED must be true or false" >&2
   exit 2
 }
+[[ $retention_enabled == true || $retention_enabled == false ]] || {
+  echo "OKOSCOPE_NOTIFICATION_RETENTION_ENABLED must be true or false" >&2
+  exit 2
+}
 require_range notification_poll_ms "$notification_poll_ms" 50 60000
 require_range notification_claim_size "$notification_claim_size" 1 1000
 require_range notification_concurrency "$notification_concurrency" 1 256
@@ -68,6 +82,10 @@ require_range webhook_backoff_min_seconds "$webhook_backoff_min_seconds" 1 86400
 require_range webhook_backoff_max_seconds "$webhook_backoff_max_seconds" 1 604800
 require_range webhook_max_response_bytes "$webhook_max_response_bytes" 128 65536
 require_range notification_drain_seconds "$notification_drain_seconds" 1 300
+require_range terminal_retention_days "$terminal_retention_days" 1 3650
+require_range recovery_retention_days "$recovery_retention_days" 1 3650
+require_range retention_batch_size "$retention_batch_size" 1 10000
+require_range retention_poll_seconds "$retention_poll_seconds" 60 86400
 [[ $webhook_backoff_min_seconds -le $webhook_backoff_max_seconds ]] || {
   echo "minimum webhook backoff must not exceed maximum backoff" >&2
   exit 2
@@ -76,7 +94,8 @@ activation_fingerprint=$(printf '%s\n' \
   "$notification_enabled" "$notification_poll_ms" "$notification_claim_size" \
   "$notification_concurrency" "$notification_lease_seconds" "$webhook_timeout_seconds" \
   "$webhook_max_attempts" "$webhook_backoff_min_seconds" "$webhook_backoff_max_seconds" \
-  "$webhook_max_response_bytes" "$notification_drain_seconds" \
+  "$webhook_max_response_bytes" "$notification_drain_seconds" "$retention_enabled" \
+  "$terminal_retention_days" "$recovery_retention_days" "$retention_batch_size" "$retention_poll_seconds" \
   | shasum -a 256 | cut -c1-12)
 
 mkdir -p "$output_dir"
@@ -126,7 +145,7 @@ cat >"$output_dir/PROVENANCE.txt" <<EOF
 server_image=ghcr.io/ihippik/okoscope-server:$server_tag
 agent_image=ghcr.io/ihippik/okoscope-agent:$agent_tag
 web_image=$web_image
-required_migration=6
+required_migration=7
 routing=$routing
 notification_delivery_enabled=$notification_enabled
 notification_poll_ms=$notification_poll_ms
@@ -139,4 +158,9 @@ webhook_backoff_min_seconds=$webhook_backoff_min_seconds
 webhook_backoff_max_seconds=$webhook_backoff_max_seconds
 webhook_max_response_bytes=$webhook_max_response_bytes
 notification_drain_seconds=$notification_drain_seconds
+notification_retention_enabled=$retention_enabled
+notification_terminal_retention_days=$terminal_retention_days
+notification_recovery_retention_days=$recovery_retention_days
+notification_retention_batch_size=$retention_batch_size
+notification_retention_poll_seconds=$retention_poll_seconds
 EOF

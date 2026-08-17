@@ -76,6 +76,17 @@ async fn serve(
                 shutdown_receiver.clone(),
             ))
         });
+    let retention_task = notifications
+        .as_ref()
+        .filter(|service| service.config.retention.enabled)
+        .map(|service| {
+            metrics::configure_notification_retention(true);
+            tokio::spawn(server::notification::retention::run(
+                pool.clone(),
+                service.config.retention,
+                shutdown_receiver.clone(),
+            ))
+        });
     let grpc_server = grpc
         .add_service(AgentServiceServer::new(AgentSessionService::new(
             pool.clone(),
@@ -113,6 +124,9 @@ async fn serve(
         } else {
             tracing::warn!("notification worker drain timed out");
         }
+    }
+    if let Some(retention_task) = retention_task {
+        let _ = retention_task.await;
     }
     Ok(())
 }
@@ -191,6 +205,8 @@ enum Command {
     Migrate,
     /// Validate notification configuration and database readiness without starting listeners.
     NotificationCheck,
+    /// Run one bounded notification retention batch and exit.
+    NotificationRetention,
     Backfill {
         #[arg(long)]
         organization_id: Uuid,
@@ -232,34 +248,44 @@ async fn check_notifications(
     Ok(())
 }
 
-async fn run_command(command: Option<Command>, pool: &sqlx::PgPool) -> Result<bool> {
-    let Some(command) = command else {
-        return Ok(false);
-    };
-    let Command::Backfill {
-        organization_id,
-        project_id,
-        fingerprint_version,
-        batch_size,
-        throttle_ms,
-    } = command
-    else {
-        return Ok(false);
-    };
-    let stats = run_backfill(
-        pool,
-        BackfillOptions {
+async fn run_command(
+    command: Option<Command>,
+    pool: &sqlx::PgPool,
+    notification_config: &server::notification_config::NotificationConfig,
+) -> Result<bool> {
+    match command {
+        Some(Command::Backfill {
             organization_id,
             project_id,
             fingerprint_version,
             batch_size,
-            throttle: std::time::Duration::from_millis(throttle_ms),
-        },
-    )
-    .await
-    .context("backfill runtime event groups")?;
-    tracing::info!(?stats, "runtime event backfill complete");
-    Ok(true)
+            throttle_ms,
+        }) => {
+            let stats = run_backfill(
+                pool,
+                BackfillOptions {
+                    organization_id,
+                    project_id,
+                    fingerprint_version,
+                    batch_size,
+                    throttle: std::time::Duration::from_millis(throttle_ms),
+                },
+            )
+            .await
+            .context("backfill runtime event groups")?;
+            tracing::info!(?stats, "runtime event backfill complete");
+            Ok(true)
+        }
+        Some(Command::NotificationRetention) => {
+            let stats =
+                server::notification::retention::delete_once(pool, notification_config.retention)
+                    .await
+                    .context("notification retention batch")?;
+            tracing::info!(?stats, "notification retention command complete");
+            Ok(true)
+        }
+        Some(Command::Migrate | Command::NotificationCheck) | None => Ok(false),
+    }
 }
 
 #[tokio::main]
@@ -303,7 +329,6 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let notification_ready = true;
-    let notifications = NotificationService::new(pool.clone(), notification_config);
     if args.migrate {
         let report = migrate(&pool)
             .await
@@ -317,9 +342,10 @@ async fn main() -> Result<()> {
     verify_schema(&pool)
         .await
         .context("database schema readiness")?;
-    if run_command(args.command, &pool).await? {
+    if run_command(args.command, &pool, &notification_config).await? {
         return Ok(());
     }
+    let notifications = NotificationService::new(pool.clone(), notification_config);
     let ids = bootstrap(
         &pool,
         &BootstrapConfig {

@@ -4,6 +4,7 @@ use clap::Args;
 use thiserror::Error;
 
 #[derive(Clone, Debug, Args)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct NotificationArgs {
     #[arg(
         long,
@@ -53,6 +54,36 @@ pub struct NotificationArgs {
         default_value_t = 15
     )]
     pub shutdown_drain_seconds: u64,
+    #[arg(
+        long,
+        env = "OKOSCOPE_NOTIFICATION_RETENTION_ENABLED",
+        default_value_t = false
+    )]
+    pub retention_enabled: bool,
+    #[arg(
+        long,
+        env = "OKOSCOPE_NOTIFICATION_TERMINAL_RETENTION_DAYS",
+        default_value_t = 90
+    )]
+    pub terminal_retention_days: u64,
+    #[arg(
+        long,
+        env = "OKOSCOPE_NOTIFICATION_RECOVERY_RETENTION_DAYS",
+        default_value_t = 365
+    )]
+    pub recovery_retention_days: u64,
+    #[arg(
+        long,
+        env = "OKOSCOPE_NOTIFICATION_RETENTION_BATCH_SIZE",
+        default_value_t = 1000
+    )]
+    pub retention_batch_size: i64,
+    #[arg(
+        long,
+        env = "OKOSCOPE_NOTIFICATION_RETENTION_POLL_SECONDS",
+        default_value_t = 3600
+    )]
+    pub retention_poll_seconds: u64,
     #[arg(long, env = "OKOSCOPE_WEBHOOK_ALLOW_HTTP", default_value_t = false)]
     pub allow_http: bool,
     #[arg(
@@ -78,6 +109,11 @@ impl Default for NotificationArgs {
             backoff_max_seconds: 3600,
             max_response_bytes: 4096,
             shutdown_drain_seconds: 15,
+            retention_enabled: false,
+            terminal_retention_days: 90,
+            recovery_retention_days: 365,
+            retention_batch_size: 1000,
+            retention_poll_seconds: 3600,
             allow_http: false,
             allow_private_ips: false,
         }
@@ -98,6 +134,7 @@ pub struct NotificationConfig {
     pub backoff_max: Duration,
     pub max_response_bytes: usize,
     pub shutdown_drain: Duration,
+    pub retention: crate::notification::retention::RetentionConfig,
     pub allow_http: bool,
     pub allow_private_ips: bool,
 }
@@ -142,6 +179,15 @@ impl NotificationArgs {
             65_536,
         )?;
         validate_range("shutdown drain", self.shutdown_drain_seconds, 1, 300)?;
+        validate_range("terminal retention", self.terminal_retention_days, 1, 3650)?;
+        validate_range("recovery retention", self.recovery_retention_days, 1, 3650)?;
+        validate_range(
+            "retention batch size",
+            u64::try_from(self.retention_batch_size).unwrap_or_default(),
+            1,
+            10_000,
+        )?;
+        validate_range("retention poll", self.retention_poll_seconds, 60, 86_400)?;
         if self.backoff_min_seconds > self.backoff_max_seconds {
             return Err(NotificationConfigError::InvalidBackoff);
         }
@@ -161,6 +207,17 @@ impl NotificationArgs {
             backoff_max: Duration::from_secs(self.backoff_max_seconds),
             max_response_bytes: self.max_response_bytes,
             shutdown_drain: Duration::from_secs(self.shutdown_drain_seconds),
+            retention: crate::notification::retention::RetentionConfig {
+                enabled: self.retention_enabled,
+                terminal_window: Duration::from_secs(
+                    self.terminal_retention_days.saturating_mul(86_400),
+                ),
+                recovery_window: Duration::from_secs(
+                    self.recovery_retention_days.saturating_mul(86_400),
+                ),
+                batch_size: self.retention_batch_size,
+                poll_interval: Duration::from_secs(self.retention_poll_seconds),
+            },
             allow_http: self.allow_http,
             allow_private_ips: self.allow_private_ips,
         })

@@ -121,3 +121,18 @@ Bundled PostgreSQL is single-replica and is not highly available. A PVC protects
 ## Legacy artifact transition
 
 `deploy/kubernetes/mvp.yaml` is deprecated. It embeds development credentials, runs startup migrations, and combines PostgreSQL with stateless upgrades. It remains for one release only to help compare existing resources; do not use it for new installs or upgrades. Recovery during the transition uses the last known immutable application images through `03-upgrade.yaml`, never the monolithic manifest.
+# Notification recovery and retention
+
+Notification recovery commands preserve the stable delivery identifier and prior attempts. A manual retry increments `recovery_generation`, resets only the current generation's attempt budget, and remains subject to the normal worker concurrency and signing path. Pending work can be cancelled, but an unexpired in-flight lease returns a conflict because Okoscope cannot prove that interrupting the local request prevents receiver processing.
+
+Every mutating recovery request requires an `Idempotency-Key`. The server stores only a keyed hash and a canonical request fingerprint; raw keys, bearer credentials, signing secrets, destination URLs, and payload bodies are excluded from operation audit records and logs. Bulk retry is capped at 200 deliveries per confirmed command and reports whether eligible work remains.
+
+Terminal history retention is disabled by default. Configure it explicitly with:
+
+- `OKOSCOPE_NOTIFICATION_RETENTION_ENABLED`;
+- `OKOSCOPE_NOTIFICATION_TERMINAL_RETENTION_DAYS` (1–3650, default 90);
+- `OKOSCOPE_NOTIFICATION_RECOVERY_RETENTION_DAYS` (1–3650, default 365);
+- `OKOSCOPE_NOTIFICATION_RETENTION_BATCH_SIZE` (1–10000, default 1000);
+- `OKOSCOPE_NOTIFICATION_RETENTION_POLL_SECONDS` (60–86400, default 3600).
+
+The maintenance loop deletes only terminal deliveries older than the boundary and preserves pending, retryable, and in-flight work. `server notification-retention` runs one independently callable bounded batch. Deletions are irreversible without a PostgreSQL backup; validate retention with representative volume before production activation.

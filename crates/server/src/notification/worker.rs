@@ -61,6 +61,7 @@ pub struct DeliveryClaim {
     pub source: String,
     pub event_name: String,
     pub payload: Value,
+    pub recovery_generation: i32,
     pub attempt_count: i32,
     pub max_attempts: i32,
     pub lease_owner: Uuid,
@@ -80,7 +81,7 @@ pub struct DeliveryFilter {
     pub limit: Option<i64>,
 }
 
-#[derive(Clone, Debug, FromRow, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct DeliverySummary {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -89,19 +90,132 @@ pub struct DeliverySummary {
     pub origin: String,
     pub source: String,
     pub event_name: String,
+    pub semantic_metadata: Option<DeliverySemanticMetadata>,
+    pub destination: SafeDestination,
     pub status: String,
     pub available_at: DateTime<Utc>,
+    pub next_attempt_at: Option<DateTime<Utc>>,
+    pub recovery_generation: i32,
     pub attempt_count: i32,
+    pub total_attempt_count: i64,
     pub max_attempts: i32,
     pub last_error_class: Option<String>,
+    pub terminal_reason: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub terminal_at: Option<DateTime<Utc>>,
+    pub retry_allowed: bool,
+    pub cancel_allowed: bool,
+    pub last_recovery_operation_id: Option<Uuid>,
+}
+
+#[derive(Clone, Debug, FromRow, Serialize)]
+pub struct SafeDestination {
+    pub id: Uuid,
+    pub name: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DeliverySemanticMetadata {
+    pub application_id: Option<Uuid>,
+    pub group_id: Option<Uuid>,
+    pub event_kind: Option<String>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+struct DeliverySummaryRow {
+    id: Uuid,
+    project_id: Uuid,
+    destination_id: Uuid,
+    outbox_message_id: Option<Uuid>,
+    origin: String,
+    source: String,
+    event_name: String,
+    payload: Value,
+    destination_name: String,
+    destination_enabled: bool,
+    status: String,
+    available_at: DateTime<Utc>,
+    recovery_generation: i32,
+    attempt_count: i32,
+    total_attempt_count: i64,
+    max_attempts: i32,
+    last_error_class: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    terminal_at: Option<DateTime<Utc>>,
+    last_recovery_operation_id: Option<Uuid>,
+}
+
+impl From<DeliverySummaryRow> for DeliverySummary {
+    fn from(row: DeliverySummaryRow) -> Self {
+        let next_attempt_at = (row.status == "pending").then_some(row.available_at);
+        let terminal_reason = row.terminal_at.map(|_| {
+            row.last_error_class
+                .clone()
+                .unwrap_or_else(|| match row.status.as_str() {
+                    "succeeded" => "delivered".to_owned(),
+                    "suppressed" => "suppressed".to_owned(),
+                    "cancelled" => "cancelled".to_owned(),
+                    _ => "terminal".to_owned(),
+                })
+        });
+        let semantic_metadata = delivery_semantic_metadata(&row.payload);
+        let retry_allowed = row.status == "failed" && row.destination_enabled;
+        let cancel_allowed = row.status == "pending";
+        Self {
+            id: row.id,
+            project_id: row.project_id,
+            destination_id: row.destination_id,
+            outbox_message_id: row.outbox_message_id,
+            origin: row.origin,
+            source: row.source,
+            event_name: row.event_name,
+            semantic_metadata,
+            destination: SafeDestination {
+                id: row.destination_id,
+                name: row.destination_name,
+                enabled: row.destination_enabled,
+            },
+            status: row.status,
+            available_at: row.available_at,
+            next_attempt_at,
+            recovery_generation: row.recovery_generation,
+            attempt_count: row.attempt_count,
+            total_attempt_count: row.total_attempt_count,
+            max_attempts: row.max_attempts,
+            last_error_class: row.last_error_class,
+            terminal_reason,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            terminal_at: row.terminal_at,
+            retry_allowed,
+            cancel_allowed,
+            last_recovery_operation_id: row.last_recovery_operation_id,
+        }
+    }
+}
+
+fn delivery_semantic_metadata(payload: &Value) -> Option<DeliverySemanticMetadata> {
+    let metadata = DeliverySemanticMetadata {
+        application_id: uuid_field(payload, "application_id"),
+        group_id: uuid_field(payload, "group_id"),
+        event_kind: payload
+            .get("event_kind")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    };
+    (metadata.application_id.is_some()
+        || metadata.group_id.is_some()
+        || metadata.event_kind.is_some())
+    .then_some(metadata)
 }
 
 #[derive(Clone, Debug, FromRow, Serialize)]
 pub struct DeliveryAttempt {
     pub id: Uuid,
+    pub recovery_generation: i32,
     pub attempt_number: i32,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
@@ -244,7 +358,7 @@ pub async fn claim_due(service: &NotificationService) -> Result<Vec<DeliveryClai
     let lease_owner = Uuid::new_v4();
     let lease_seconds = i64::try_from(service.config.lease_duration.as_secs()).unwrap_or(i64::MAX);
     let claims = sqlx::query_as::<_, DeliveryClaim>(
-        "WITH candidates AS (SELECT id FROM notification_deliveries WHERE (status='pending' AND available_at<=now()) OR (status='in_flight' AND lease_expires_at<=now()) ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT $1), claimed AS (UPDATE notification_deliveries d SET status='in_flight',lease_owner=$2,lease_expires_at=now()+make_interval(secs=>$3),updated_at=now() FROM candidates c WHERE d.id=c.id RETURNING d.*) SELECT c.id,c.organization_id,c.project_id,c.destination_id,c.outbox_message_id,c.source,c.event_name,c.payload,c.attempt_count,c.max_attempts,c.lease_owner,w.url,w.encrypted_secret,w.secret_nonce FROM claimed c JOIN webhook_destinations w ON w.id=c.destination_id AND w.organization_id=c.organization_id AND w.project_id=c.project_id WHERE w.enabled=true",
+        "WITH candidates AS (SELECT id FROM notification_deliveries WHERE (status='pending' AND available_at<=now()) OR (status='in_flight' AND lease_expires_at<=now()) ORDER BY available_at,created_at FOR UPDATE SKIP LOCKED LIMIT $1), claimed AS (UPDATE notification_deliveries d SET status='in_flight',lease_owner=$2,lease_expires_at=now()+make_interval(secs=>$3),updated_at=now() FROM candidates c WHERE d.id=c.id RETURNING d.*) SELECT c.id,c.organization_id,c.project_id,c.destination_id,c.outbox_message_id,c.source,c.event_name,c.payload,c.recovery_generation,c.attempt_count,c.max_attempts,c.lease_owner,w.url,w.encrypted_secret,w.secret_nonce FROM claimed c JOIN webhook_destinations w ON w.id=c.destination_id AND w.organization_id=c.organization_id AND w.project_id=c.project_id WHERE w.enabled=true",
     )
     .bind(i64::from(service.config.claim_size))
     .bind(lease_owner)
@@ -322,6 +436,7 @@ pub async fn test_destination(
             source: "test".into(),
             event_name: "okoscope.test".into(),
             payload,
+            recovery_generation: 0,
             attempt_count: 0,
             max_attempts: 1,
             lease_owner,
@@ -350,7 +465,7 @@ pub async fn list_deliveries(
         None
     };
     let (cursor_time, cursor_id) = cursor.unzip();
-    let mut rows = sqlx::query_as::<_, DeliverySummary>("SELECT id,project_id,destination_id,outbox_message_id,origin,source,event_name,status,available_at,attempt_count,max_attempts,last_error_class,created_at,updated_at,terminal_at FROM notification_deliveries WHERE organization_id=$1 AND project_id=$2 AND ($3::uuid IS NULL OR destination_id=$3) AND ($4::text IS NULL OR status=$4) AND ($5::text IS NULL OR source=$5) AND ($6::text IS NULL OR origin=$6) AND ($7::timestamptz IS NULL OR created_at >= $7) AND ($8::timestamptz IS NULL OR (created_at,id)<($8,$9)) ORDER BY created_at DESC,id DESC LIMIT $10")
+    let mut rows = sqlx::query_as::<_, DeliverySummaryRow>("SELECT d.id,d.project_id,d.destination_id,d.outbox_message_id,d.origin,d.source,d.event_name,d.payload,w.name destination_name,w.enabled destination_enabled,d.status,d.available_at,d.recovery_generation,d.attempt_count,(SELECT count(*) FROM notification_delivery_attempts a WHERE a.delivery_id=d.id) total_attempt_count,d.max_attempts,d.last_error_class,d.created_at,d.updated_at,d.terminal_at,d.last_recovery_operation_id FROM notification_deliveries d JOIN webhook_destinations w ON w.organization_id=d.organization_id AND w.project_id=d.project_id AND w.id=d.destination_id WHERE d.organization_id=$1 AND d.project_id=$2 AND ($3::uuid IS NULL OR d.destination_id=$3) AND ($4::text IS NULL OR d.status=$4) AND ($5::text IS NULL OR d.source=$5) AND ($6::text IS NULL OR d.origin=$6) AND ($7::timestamptz IS NULL OR d.created_at >= $7) AND ($8::timestamptz IS NULL OR (d.created_at,d.id)<($8,$9)) ORDER BY d.created_at DESC,d.id DESC LIMIT $10")
         .bind(organization_id).bind(project_id).bind(filter.destination_id).bind(&filter.status).bind(&filter.source).bind(&filter.origin)
         .bind(filter.since).bind(cursor_time).bind(cursor_id).bind(limit + 1).fetch_all(pool).await?;
     let next_cursor = if i64::try_from(rows.len()).unwrap_or(i64::MAX) > limit {
@@ -359,7 +474,10 @@ pub async fn list_deliveries(
     } else {
         None
     };
-    Ok((rows, next_cursor))
+    Ok((
+        rows.into_iter().map(DeliverySummary::from).collect(),
+        next_cursor,
+    ))
 }
 
 pub async fn delivery_detail(
@@ -372,7 +490,7 @@ pub async fn delivery_detail(
     else {
         return Ok(None);
     };
-    let attempts = sqlx::query_as::<_, DeliveryAttempt>("SELECT id,attempt_number,started_at,finished_at,duration_ms,outcome,http_status,error_class,response_excerpt FROM notification_delivery_attempts WHERE organization_id=$1 AND project_id=$2 AND delivery_id=$3 ORDER BY attempt_number DESC LIMIT 100")
+    let attempts = sqlx::query_as::<_, DeliveryAttempt>("SELECT id,recovery_generation,attempt_number,started_at,finished_at,duration_ms,outcome,http_status,error_class,response_excerpt FROM notification_delivery_attempts WHERE organization_id=$1 AND project_id=$2 AND delivery_id=$3 ORDER BY recovery_generation DESC,attempt_number DESC LIMIT 100")
         .bind(organization_id).bind(project_id).bind(delivery_id).fetch_all(pool).await?;
     Ok(Some(DeliveryDetail { delivery, attempts }))
 }
@@ -383,8 +501,9 @@ async fn delivery_by_id(
     project_id: Uuid,
     id: Uuid,
 ) -> Result<Option<DeliverySummary>, sqlx::Error> {
-    sqlx::query_as("SELECT id,project_id,destination_id,outbox_message_id,origin,source,event_name,status,available_at,attempt_count,max_attempts,last_error_class,created_at,updated_at,terminal_at FROM notification_deliveries WHERE organization_id=$1 AND project_id=$2 AND id=$3")
-        .bind(organization_id).bind(project_id).bind(id).fetch_optional(pool).await
+    let row = sqlx::query_as::<_, DeliverySummaryRow>("SELECT d.id,d.project_id,d.destination_id,d.outbox_message_id,d.origin,d.source,d.event_name,d.payload,w.name destination_name,w.enabled destination_enabled,d.status,d.available_at,d.recovery_generation,d.attempt_count,(SELECT count(*) FROM notification_delivery_attempts a WHERE a.delivery_id=d.id) total_attempt_count,d.max_attempts,d.last_error_class,d.created_at,d.updated_at,d.terminal_at,d.last_recovery_operation_id FROM notification_deliveries d JOIN webhook_destinations w ON w.organization_id=d.organization_id AND w.project_id=d.project_id AND w.id=d.destination_id WHERE d.organization_id=$1 AND d.project_id=$2 AND d.id=$3")
+        .bind(organization_id).bind(project_id).bind(id).fetch_optional(pool).await?;
+    Ok(row.map(DeliverySummary::from))
 }
 
 fn classify(result: Result<WebhookResponse, WebhookError>, elapsed: Duration) -> AttemptResult {
@@ -480,8 +599,8 @@ async fn persist_attempt(
         disposition == AttemptDisposition::Retryable,
         disposition == AttemptDisposition::Failed,
     );
-    sqlx::query("INSERT INTO notification_delivery_attempts (id,organization_id,project_id,delivery_id,attempt_number,started_at,finished_at,duration_ms,outcome,http_status,error_class,response_excerpt) VALUES ($1,$2,$3,$4,$5,$6,now(),$7,$8,$9,$10,$11)")
-        .bind(Uuid::new_v4()).bind(claim.organization_id).bind(claim.project_id).bind(claim.id).bind(attempt_number).bind(started_at)
+    sqlx::query("INSERT INTO notification_delivery_attempts (id,organization_id,project_id,delivery_id,recovery_generation,attempt_number,started_at,finished_at,duration_ms,outcome,http_status,error_class,response_excerpt) VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$9,$10,$11,$12)")
+        .bind(Uuid::new_v4()).bind(claim.organization_id).bind(claim.project_id).bind(claim.id).bind(claim.recovery_generation).bind(attempt_number).bind(started_at)
         .bind(i64::try_from(result.duration.as_millis()).unwrap_or(i64::MAX))
         .bind(match disposition { AttemptDisposition::Succeeded => "succeeded", AttemptDisposition::Retryable => "retryable", AttemptDisposition::Failed => "failed" })
         .bind(result.http_status.map(i32::from)).bind(result.error_class).bind(result.response_excerpt)
@@ -614,5 +733,52 @@ mod tests {
         for status in [301, 400, 401, 404, 422] {
             assert!(!retryable_status(StatusCode::from_u16(status).unwrap()));
         }
+    }
+
+    #[test]
+    fn delivery_summary_exposes_safe_typed_ui_metadata() {
+        let application_id = Uuid::new_v4();
+        let group_id = Uuid::new_v4();
+        let available_at = Utc::now();
+        let summary = DeliverySummary::from(DeliverySummaryRow {
+            id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            destination_id: Uuid::new_v4(),
+            outbox_message_id: None,
+            origin: "outbox".into(),
+            source: "live".into(),
+            event_name: "runtime_group.first_seen".into(),
+            payload: serde_json::json!({
+                "application_id": application_id,
+                "group_id": group_id,
+                "event_kind": "exec"
+            }),
+            destination_name: "operations".into(),
+            destination_enabled: true,
+            status: "pending".into(),
+            available_at,
+            recovery_generation: 0,
+            attempt_count: 1,
+            total_attempt_count: 1,
+            max_attempts: 3,
+            last_error_class: Some("timeout".into()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            terminal_at: None,
+            last_recovery_operation_id: None,
+        });
+
+        assert_eq!(summary.next_attempt_at, Some(available_at));
+        assert_eq!(summary.terminal_reason, None);
+        assert_eq!(summary.destination.name, "operations");
+        let metadata = summary
+            .semantic_metadata
+            .as_ref()
+            .expect("semantic metadata");
+        assert_eq!(metadata.application_id, Some(application_id));
+        assert_eq!(metadata.group_id, Some(group_id));
+        assert_eq!(metadata.event_kind.as_deref(), Some("exec"));
+        let json = serde_json::to_value(summary).unwrap();
+        assert!(json["destination"].get("url").is_none());
     }
 }
