@@ -11,6 +11,7 @@ cd "$root"
 deploy/scripts/render-release.sh "$work/no-routing" "$commit" "$commit" "$web" disabled
 upgrade="$work/no-routing/03-upgrade.yaml"
 migrate=$(find "$work/no-routing" -name '02-migrate-*.yaml' -print -quit)
+check=$(find "$work/no-routing" -name '02-notification-check-*.yaml' -print -quit)
 
 ! grep -q '^kind: Secret$' "$upgrade"
 ! grep -q '^kind: StatefulSet$' "$upgrade"
@@ -19,7 +20,24 @@ migrate=$(find "$work/no-routing" -name '02-migrate-*.yaml' -print -quit)
 [[ $(grep -c 'resources:' "$migrate") -eq 1 ]]
 grep -q 'OKOSCOPE_MIGRATE: "false"' "$upgrade"
 grep -q 'okoscope.io/required-migration: "6"' "$migrate"
+grep -q 'OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: false' "$upgrade" "$check"
+grep -q 'notification_delivery_enabled=false' "$work/no-routing/PROVENANCE.txt"
+! grep -Eq '(database-url=|credential=|encryption-key=|signing)' "$work/no-routing/PROVENANCE.txt"
 [[ ! -e "$work/no-routing/04-routing.yaml" ]]
+
+export OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=true
+export OKOSCOPE_NOTIFICATION_CONCURRENCY=4
+export OKOSCOPE_NOTIFICATION_DRAIN_SECONDS=20
+deploy/scripts/render-release.sh "$work/enabled" "$commit" "$commit" "$web" disabled
+grep -q 'OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: true' "$work/enabled/03-upgrade.yaml"
+grep -q 'OKOSCOPE_NOTIFICATION_CONCURRENCY: 4' "$work/enabled/03-upgrade.yaml"
+grep -q 'notification_drain_seconds=20' "$work/enabled/PROVENANCE.txt"
+export OKOSCOPE_NOTIFICATION_CONCURRENCY=0
+if deploy/scripts/render-release.sh "$work/invalid" "$commit" "$commit" "$web" disabled >/dev/null 2>&1; then
+  echo "invalid notification bounds unexpectedly rendered" >&2
+  exit 1
+fi
+unset OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED OKOSCOPE_NOTIFICATION_CONCURRENCY OKOSCOPE_NOTIFICATION_DRAIN_SECONDS
 
 export OKOSCOPE_DOMAIN=okoscope.example
 export OKOSCOPE_CERTIFICATE_NAME=okoscope-example

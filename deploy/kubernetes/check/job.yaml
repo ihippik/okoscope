@@ -1,70 +1,47 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
-  name: okoscope-server
+  name: okoscope-notification-check-000000000000
+  labels:
+    app.kubernetes.io/name: okoscope-notification-check
+  annotations:
+    okoscope.io/required-migration: "6"
 spec:
-  replicas: 2
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
-  selector:
-    matchLabels:
-      app: okoscope-server
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 604800
   template:
     metadata:
       labels:
-        app: okoscope-server
-        app.kubernetes.io/name: okoscope-server
+        app.kubernetes.io/name: okoscope-notification-check
     spec:
-      terminationGracePeriodSeconds: 30
+      restartPolicy: Never
       securityContext:
         runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
+        seccompProfile: {type: RuntimeDefault}
       containers:
-        - name: server
+        - name: notification-check
           image: ghcr.io/ihippik/okoscope-server:0000000000000000000000000000000000000000
+          args: [notification-check]
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
+            capabilities: {drop: [ALL]}
             readOnlyRootFilesystem: true
             runAsUser: 65532
             runAsGroup: 65532
           envFrom:
             - configMapRef:
-                name: okoscope-server
+                name: okoscope-server-activation
           env:
+            - {name: RUST_LOG, value: info}
             - name: OKOSCOPE_DATABASE_URL
               valueFrom:
                 secretKeyRef: {name: okoscope-secrets, key: database-url}
-            - name: OKOSCOPE_CLUSTER_CREDENTIAL
-              valueFrom:
-                secretKeyRef: {name: okoscope-secrets, key: cluster-credential}
-            - name: OKOSCOPE_API_CREDENTIAL
-              valueFrom:
-                secretKeyRef: {name: okoscope-secrets, key: api-credential}
             - name: OKOSCOPE_WEBHOOK_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef: {name: okoscope-secrets, key: webhook-encryption-key}
-          ports:
-            - {name: grpc, containerPort: 4317}
-            - {name: health, containerPort: 8080}
           resources:
-            requests: {cpu: 100m, memory: 128Mi}
-            limits: {cpu: "1", memory: 512Mi}
-          startupProbe:
-            httpGet: {path: /healthz, port: health}
-            failureThreshold: 30
-            periodSeconds: 2
-          readinessProbe:
-            httpGet: {path: /readyz, port: health}
-            periodSeconds: 5
-          livenessProbe:
-            httpGet: {path: /healthz, port: health}
-            periodSeconds: 10
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 128Mi}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
       volumes:
@@ -72,23 +49,10 @@ spec:
           emptyDir: {}
 ---
 apiVersion: v1
-kind: Service
-metadata:
-  name: okoscope-server
-spec:
-  selector:
-    app: okoscope-server
-  ports:
-    - {name: grpc, port: 4317, targetPort: grpc}
-    - {name: health, port: 8080, targetPort: 8080}
----
-apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: okoscope-server
+  name: okoscope-server-activation
 data:
-  OKOSCOPE_MIGRATE: "false"
-  OKOSCOPE_DEVELOPMENT_PLAINTEXT: "true"
   OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: "__NOTIFICATION_ENABLED__"
   OKOSCOPE_NOTIFICATION_POLL_MS: "__NOTIFICATION_POLL_MS__"
   OKOSCOPE_NOTIFICATION_CLAIM_SIZE: "__NOTIFICATION_CLAIM_SIZE__"
@@ -100,4 +64,3 @@ data:
   OKOSCOPE_WEBHOOK_BACKOFF_MAX_SECONDS: "__WEBHOOK_BACKOFF_MAX_SECONDS__"
   OKOSCOPE_WEBHOOK_MAX_RESPONSE_BYTES: "__WEBHOOK_MAX_RESPONSE_BYTES__"
   OKOSCOPE_NOTIFICATION_DRAIN_SECONDS: "__NOTIFICATION_DRAIN_SECONDS__"
-  RUST_LOG: info

@@ -12,6 +12,39 @@ server_tag=$2
 agent_tag=$3
 web_image=$4
 routing=${5:-disabled}
+notification_enabled=${OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED:-false}
+notification_poll_ms=${OKOSCOPE_NOTIFICATION_POLL_MS:-1000}
+notification_claim_size=${OKOSCOPE_NOTIFICATION_CLAIM_SIZE:-50}
+notification_concurrency=${OKOSCOPE_NOTIFICATION_CONCURRENCY:-8}
+notification_lease_seconds=${OKOSCOPE_NOTIFICATION_LEASE_SECONDS:-30}
+webhook_timeout_seconds=${OKOSCOPE_WEBHOOK_TIMEOUT_SECONDS:-10}
+webhook_max_attempts=${OKOSCOPE_WEBHOOK_MAX_ATTEMPTS:-8}
+webhook_backoff_min_seconds=${OKOSCOPE_WEBHOOK_BACKOFF_MIN_SECONDS:-5}
+webhook_backoff_max_seconds=${OKOSCOPE_WEBHOOK_BACKOFF_MAX_SECONDS:-3600}
+webhook_max_response_bytes=${OKOSCOPE_WEBHOOK_MAX_RESPONSE_BYTES:-4096}
+notification_drain_seconds=${OKOSCOPE_NOTIFICATION_DRAIN_SECONDS:-15}
+
+require_range() {
+  local name=$1 value=$2 minimum=$3 maximum=$4
+  [[ $value =~ ^[0-9]+$ && $value -ge $minimum && $value -le $maximum ]] || {
+    echo "$name must be an integer in range $minimum..$maximum" >&2
+    exit 2
+  }
+}
+
+notification_substitutions() {
+  sed -e "s/__NOTIFICATION_ENABLED__/$notification_enabled/g" \
+      -e "s/__NOTIFICATION_POLL_MS__/$notification_poll_ms/g" \
+      -e "s/__NOTIFICATION_CLAIM_SIZE__/$notification_claim_size/g" \
+      -e "s/__NOTIFICATION_CONCURRENCY__/$notification_concurrency/g" \
+      -e "s/__NOTIFICATION_LEASE_SECONDS__/$notification_lease_seconds/g" \
+      -e "s/__WEBHOOK_TIMEOUT_SECONDS__/$webhook_timeout_seconds/g" \
+      -e "s/__WEBHOOK_MAX_ATTEMPTS__/$webhook_max_attempts/g" \
+      -e "s/__WEBHOOK_BACKOFF_MIN_SECONDS__/$webhook_backoff_min_seconds/g" \
+      -e "s/__WEBHOOK_BACKOFF_MAX_SECONDS__/$webhook_backoff_max_seconds/g" \
+      -e "s/__WEBHOOK_MAX_RESPONSE_BYTES__/$webhook_max_response_bytes/g" \
+      -e "s/__NOTIFICATION_DRAIN_SECONDS__/$notification_drain_seconds/g"
+}
 
 [[ $server_tag =~ ^[0-9a-f]{40}$ ]] || { echo "server tag must be a 40-character commit SHA" >&2; exit 2; }
 [[ $agent_tag =~ ^[0-9a-f]{40}$ ]] || { echo "agent tag must be a 40-character commit SHA" >&2; exit 2; }
@@ -20,6 +53,24 @@ routing=${5:-disabled}
   exit 2
 }
 [[ $routing == enabled || $routing == disabled ]] || usage
+[[ $notification_enabled == true || $notification_enabled == false ]] || {
+  echo "OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED must be true or false" >&2
+  exit 2
+}
+require_range notification_poll_ms "$notification_poll_ms" 50 60000
+require_range notification_claim_size "$notification_claim_size" 1 1000
+require_range notification_concurrency "$notification_concurrency" 1 256
+require_range notification_lease_seconds "$notification_lease_seconds" 5 3600
+require_range webhook_timeout_seconds "$webhook_timeout_seconds" 1 120
+require_range webhook_max_attempts "$webhook_max_attempts" 1 100
+require_range webhook_backoff_min_seconds "$webhook_backoff_min_seconds" 1 86400
+require_range webhook_backoff_max_seconds "$webhook_backoff_max_seconds" 1 604800
+require_range webhook_max_response_bytes "$webhook_max_response_bytes" 128 65536
+require_range notification_drain_seconds "$notification_drain_seconds" 1 300
+[[ $webhook_backoff_min_seconds -le $webhook_backoff_max_seconds ]] || {
+  echo "minimum webhook backoff must not exceed maximum backoff" >&2
+  exit 2
+}
 
 mkdir -p "$output_dir"
 kubectl kustomize deploy/kubernetes/install/bundled-postgres >"$output_dir/01-install-bundled-postgres.yaml"
@@ -27,10 +78,16 @@ kubectl kustomize deploy/kubernetes/migrate \
   | sed -e "s/0000000000000000000000000000000000000000/$server_tag/g" \
         -e "s/okoscope-migrate-000000000000/okoscope-migrate-${server_tag:0:12}/g" \
   >"$output_dir/02-migrate-${server_tag:0:12}.yaml"
+kubectl kustomize deploy/kubernetes/check \
+  | sed -e "s/0000000000000000000000000000000000000000/$server_tag/g" \
+        -e "s/okoscope-notification-check-000000000000/okoscope-notification-check-${server_tag:0:12}/g" \
+  | notification_substitutions \
+  >"$output_dir/02-notification-check-${server_tag:0:12}.yaml"
 kubectl kustomize deploy/kubernetes/overlays/production \
   | sed -e "s#ghcr.io/ihippik/okoscope-server:0000000000000000000000000000000000000000#ghcr.io/ihippik/okoscope-server:$server_tag#g" \
         -e "s#ghcr.io/ihippik/okoscope-agent:0000000000000000000000000000000000000000#ghcr.io/ihippik/okoscope-agent:$agent_tag#g" \
         -e "s#ghcr.io/ihippik/okoscope-web:0000000000000000000000000000000000000000#$web_image#g" \
+  | notification_substitutions \
   >"$output_dir/03-upgrade.yaml"
 
 if [[ $routing == enabled ]]; then
@@ -64,4 +121,15 @@ agent_image=ghcr.io/ihippik/okoscope-agent:$agent_tag
 web_image=$web_image
 required_migration=6
 routing=$routing
+notification_delivery_enabled=$notification_enabled
+notification_poll_ms=$notification_poll_ms
+notification_claim_size=$notification_claim_size
+notification_concurrency=$notification_concurrency
+notification_lease_seconds=$notification_lease_seconds
+webhook_timeout_seconds=$webhook_timeout_seconds
+webhook_max_attempts=$webhook_max_attempts
+webhook_backoff_min_seconds=$webhook_backoff_min_seconds
+webhook_backoff_max_seconds=$webhook_backoff_max_seconds
+webhook_max_response_bytes=$webhook_max_response_bytes
+notification_drain_seconds=$notification_drain_seconds
 EOF

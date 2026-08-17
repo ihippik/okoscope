@@ -106,8 +106,18 @@ fn service(pool: sqlx::PgPool) -> NotificationService {
         backoff_min_seconds: 1,
         backoff_max_seconds: 2,
         max_response_bytes: 1024,
+        shutdown_drain_seconds: 3,
         allow_http: true,
         allow_private_ips: true,
+    };
+    NotificationService::new(pool, args.build(true).unwrap()).unwrap()
+}
+
+fn disabled_service(pool: sqlx::PgPool) -> NotificationService {
+    let args = NotificationArgs {
+        enabled: false,
+        encryption_key: Some(hex::encode([9_u8; 32])),
+        ..NotificationArgs::default()
     };
     NotificationService::new(pool, args.build(true).unwrap()).unwrap()
 }
@@ -247,6 +257,64 @@ async fn destination_schema_lifecycle_and_tenant_ownership(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn disabled_then_enabled_preserves_and_delivers_backlog(pool: sqlx::PgPool) {
+    let (url, _receiver, task) = spawn_receiver(vec![StatusCode::OK]).await;
+    let (ids, context) = tenant(&pool, "notify-reactivate").await;
+    let disabled = disabled_service(pool.clone());
+    disabled
+        .destinations
+        .create(ids.organization_id, ids.project_id, "primary", &url, false)
+        .await
+        .unwrap();
+    persist_batch(
+        &pool,
+        context,
+        &[event(
+            ids.project_id,
+            ids.application_id,
+            EventPayload::Syscall(SyscallEvent {
+                name: "ptrace".into(),
+            }),
+        )],
+    )
+    .await
+    .unwrap();
+    assert!(!disabled.config.enabled);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM notification_deliveries")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM outbox_messages WHERE processed_at IS NULL"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+
+    let enabled = service(pool.clone());
+    assert!(claim_due(&enabled).await.unwrap().is_empty());
+    assert_eq!(materialize_once(&enabled).await.unwrap().deliveries, 1);
+    process_claim(&enabled, claim_due(&enabled).await.unwrap().remove(0))
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM notification_deliveries")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "succeeded"
+    );
+    task.abort();
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn live_delivery_is_signed_idempotent_and_completes_outbox(pool: sqlx::PgPool) {
     let (url, receiver, task) = spawn_receiver(vec![StatusCode::OK]).await;
     let (ids, context) = tenant(&pool, "notify-live").await;
@@ -310,6 +378,35 @@ async fn live_delivery_is_signed_idempotent_and_completes_outbox(pool: sqlx::PgP
         .unwrap(),
         1
     );
+    persist_batch(
+        &pool,
+        context,
+        &[event(
+            ids.project_id,
+            ids.application_id,
+            EventPayload::ProcessExec(ProcessExec {
+                executable: "/bin/sh".into(),
+                parent_command: None,
+            }),
+        )],
+    )
+    .await
+    .unwrap();
+    materialize_once(&service).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM notification_deliveries")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT occurrence_count FROM runtime_event_groups")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2
+    );
     let captured = receiver.requests.lock().await;
     assert_eq!(captured.len(), 1);
     let envelope: WebhookEnvelope = serde_json::from_slice(&captured[0].body).unwrap();
@@ -338,6 +435,7 @@ async fn retries_suppresses_backfill_and_test_is_outbox_independent(pool: sqlx::
         StatusCode::BAD_REQUEST,
         StatusCode::OK,
         StatusCode::OK,
+        StatusCode::INTERNAL_SERVER_ERROR,
     ])
     .await;
     let (ids, context) = tenant(&pool, "notify-retry").await;
@@ -495,6 +593,16 @@ async fn retries_suppresses_backfill_and_test_is_outbox_independent(pool: sqlx::
     .unwrap();
     assert_eq!(test.origin, "test");
     assert_eq!(test.status, "succeeded");
+    let failed_test = test_destination(
+        &service,
+        ids.organization_id,
+        ids.project_id,
+        destination.id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(failed_test.origin, "test");
+    assert_eq!(failed_test.status, "failed");
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM outbox_messages")
             .fetch_one(&pool)
@@ -502,7 +610,7 @@ async fn retries_suppresses_backfill_and_test_is_outbox_independent(pool: sqlx::
             .unwrap(),
         outbox_before
     );
-    assert_eq!(receiver.requests.lock().await.len(), 5);
+    assert_eq!(receiver.requests.lock().await.len(), 6);
     task.abort();
 }
 

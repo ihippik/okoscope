@@ -47,6 +47,12 @@ pub struct NotificationArgs {
         default_value_t = 4096
     )]
     pub max_response_bytes: usize,
+    #[arg(
+        long,
+        env = "OKOSCOPE_NOTIFICATION_DRAIN_SECONDS",
+        default_value_t = 15
+    )]
+    pub shutdown_drain_seconds: u64,
     #[arg(long, env = "OKOSCOPE_WEBHOOK_ALLOW_HTTP", default_value_t = false)]
     pub allow_http: bool,
     #[arg(
@@ -71,6 +77,7 @@ impl Default for NotificationArgs {
             backoff_min_seconds: 5,
             backoff_max_seconds: 3600,
             max_response_bytes: 4096,
+            shutdown_drain_seconds: 15,
             allow_http: false,
             allow_private_ips: false,
         }
@@ -90,6 +97,7 @@ pub struct NotificationConfig {
     pub backoff_min: Duration,
     pub backoff_max: Duration,
     pub max_response_bytes: usize,
+    pub shutdown_drain: Duration,
     pub allow_http: bool,
     pub allow_private_ips: bool,
 }
@@ -112,7 +120,11 @@ impl NotificationArgs {
         development_plaintext: bool,
     ) -> Result<NotificationConfig, NotificationConfigError> {
         let encryption_key = self.encryption_key.as_deref().map(decode_key).transpose()?;
-        if self.enabled && encryption_key.is_none() {
+        if self.enabled
+            && encryption_key
+                .as_ref()
+                .is_none_or(|key| key.iter().all(|byte| *byte == 0))
+        {
             return Err(NotificationConfigError::InvalidEncryptionKey);
         }
         validate_range("poll interval", self.poll_ms, 50, 60_000)?;
@@ -129,6 +141,7 @@ impl NotificationArgs {
             128,
             65_536,
         )?;
+        validate_range("shutdown drain", self.shutdown_drain_seconds, 1, 300)?;
         if self.backoff_min_seconds > self.backoff_max_seconds {
             return Err(NotificationConfigError::InvalidBackoff);
         }
@@ -147,6 +160,7 @@ impl NotificationArgs {
             backoff_min: Duration::from_secs(self.backoff_min_seconds),
             backoff_max: Duration::from_secs(self.backoff_max_seconds),
             max_response_bytes: self.max_response_bytes,
+            shutdown_drain: Duration::from_secs(self.shutdown_drain_seconds),
             allow_http: self.allow_http,
             allow_private_ips: self.allow_private_ips,
         })
@@ -202,6 +216,23 @@ mod tests {
         assert_eq!(
             args.build(false),
             Err(NotificationConfigError::InvalidBound("poll interval"))
+        );
+        let args = NotificationArgs {
+            enabled: true,
+            encryption_key: Some(hex::encode([0_u8; 32])),
+            ..NotificationArgs::default()
+        };
+        assert_eq!(
+            args.build(false),
+            Err(NotificationConfigError::InvalidEncryptionKey)
+        );
+        let args = NotificationArgs {
+            shutdown_drain_seconds: 0,
+            ..NotificationArgs::default()
+        };
+        assert_eq!(
+            args.build(false),
+            Err(NotificationConfigError::InvalidBound("shutdown drain"))
         );
     }
 

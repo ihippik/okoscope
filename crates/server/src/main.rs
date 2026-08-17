@@ -7,7 +7,7 @@ use server::{
     backfill::{BackfillOptions, run as run_backfill},
     bootstrap::{BootstrapConfig, bootstrap},
     database::{migrate, verify_schema},
-    health,
+    health, metrics,
     notification::NotificationService,
     notification_config::NotificationArgs,
     session::AgentSessionService,
@@ -102,10 +102,15 @@ async fn serve(
     let _ = shutdown_sender.send(true);
     signal_task.abort();
     if let Some(worker_task) = worker_task {
+        metrics::record_notification_drain_started();
         let drain = notifications.map_or(std::time::Duration::from_secs(15), |service| {
-            service.config.request_timeout + std::time::Duration::from_secs(5)
+            service.config.shutdown_drain
         });
-        if tokio::time::timeout(drain, worker_task).await.is_err() {
+        let drained = tokio::time::timeout(drain, worker_task).await.is_ok();
+        metrics::record_notification_drain(drained);
+        if drained {
+            tracing::info!("notification worker drained");
+        } else {
             tracing::warn!("notification worker drain timed out");
         }
     }
@@ -184,6 +189,8 @@ struct Args {
 enum Command {
     /// Apply embedded database migrations and exit without starting listeners.
     Migrate,
+    /// Validate notification configuration and database readiness without starting listeners.
+    NotificationCheck,
     Backfill {
         #[arg(long)]
         organization_id: Uuid,
@@ -196,6 +203,33 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         throttle_ms: u64,
     },
+}
+
+async fn check_notifications(
+    pool: &sqlx::PgPool,
+    config: &server::notification_config::NotificationConfig,
+) -> Result<()> {
+    verify_schema(pool)
+        .await
+        .context("database schema readiness")?;
+    let enabled_destinations: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM webhook_destinations WHERE enabled=true")
+            .fetch_one(pool)
+            .await
+            .context("count enabled webhook destinations")?;
+    tracing::info!(
+        enabled = config.enabled,
+        concurrency = config.concurrency,
+        claim_size = config.claim_size,
+        poll_ms = config.poll_interval.as_millis(),
+        lease_seconds = config.lease_duration.as_secs(),
+        timeout_seconds = config.request_timeout.as_secs(),
+        max_attempts = config.max_attempts,
+        drain_seconds = config.shutdown_drain.as_secs(),
+        enabled_destinations,
+        "notification configuration check passed"
+    );
+    Ok(())
 }
 
 async fn run_command(command: Option<Command>, pool: &sqlx::PgPool) -> Result<bool> {
@@ -242,14 +276,14 @@ async fn main() -> Result<()> {
         tls_certificate: args.tls_certificate.clone(),
         tls_private_key: args.tls_private_key.clone(),
     };
-    let notification_config = args.notification.build(args.development_plaintext);
+    let notification_config = args
+        .notification
+        .build(args.development_plaintext)
+        .map_err(anyhow::Error::msg)
+        .context("notification delivery configuration")?;
     let web_api_config = WebApiConfig::new(args.cors_origins.clone())
         .map_err(anyhow::Error::msg)
         .context("web API configuration")?;
-    let notification_ready = notification_config.is_ok();
-    if let Err(error) = &notification_config {
-        tracing::error!(error=%error, "notification delivery configuration is invalid");
-    }
     let pool = PgPoolOptions::new()
         .max_connections(20)
         .connect(&args.database_url)
@@ -264,9 +298,12 @@ async fn main() -> Result<()> {
         );
         return Ok(());
     }
-    let notifications = notification_config
-        .ok()
-        .and_then(|config| NotificationService::new(pool.clone(), config));
+    if matches!(args.command, Some(Command::NotificationCheck)) {
+        check_notifications(&pool, &notification_config).await?;
+        return Ok(());
+    }
+    let notification_ready = true;
+    let notifications = NotificationService::new(pool.clone(), notification_config);
     if args.migrate {
         let report = migrate(&pool)
             .await

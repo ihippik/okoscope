@@ -561,6 +561,7 @@ async fn complete_outbox_if_terminal(
 }
 
 pub async fn run(service: NotificationService, mut shutdown: watch::Receiver<bool>) {
+    tracing::info!("notification worker active");
     let mut ticker = tokio::time::interval(service.config.poll_interval);
     loop {
         tokio::select! {
@@ -568,12 +569,17 @@ pub async fn run(service: NotificationService, mut shutdown: watch::Receiver<boo
                 if *shutdown.borrow() { break; }
             }
             _ = ticker.tick() => {
-                if let Err(error) = run_cycle(&service).await {
-                    tracing::error!(error=%error, "notification worker cycle failed");
+                match run_cycle(&service).await {
+                    Ok(()) => crate::metrics::record_notification_cycle_success(),
+                    Err(error) => {
+                        crate::metrics::record_notification_cycle_failure();
+                        tracing::error!(error=%error, "notification worker cycle failed");
+                    }
                 }
             }
         }
     }
+    tracing::info!("notification worker stopped claiming work");
 }
 
 async fn run_cycle(service: &NotificationService) -> Result<(), WorkerError> {

@@ -18,6 +18,10 @@ static NOTIFICATION_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_RETRIES: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_TERMINAL_FAILURES: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_DURATION_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_CYCLE_FAILURES: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_DRAINS: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_DRAIN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
+static NOTIFICATION_WORKER_RUNTIME_STATE: AtomicU64 = AtomicU64::new(1);
 static RELEASE_ATTRIBUTED: AtomicU64 = AtomicU64::new(0);
 static RELEASE_ABSENT: AtomicU64 = AtomicU64::new(0);
 static RELEASE_UNKNOWN: AtomicU64 = AtomicU64::new(0);
@@ -66,6 +70,24 @@ pub fn record_notification_attempt(duration_micros: u64, retry: bool, terminal_f
     NOTIFICATION_TERMINAL_FAILURES.fetch_add(u64::from(terminal_failure), Ordering::Relaxed);
 }
 
+pub fn record_notification_cycle_failure() {
+    NOTIFICATION_CYCLE_FAILURES.fetch_add(1, Ordering::Relaxed);
+    NOTIFICATION_WORKER_RUNTIME_STATE.store(4, Ordering::Relaxed);
+}
+
+pub fn record_notification_cycle_success() {
+    NOTIFICATION_WORKER_RUNTIME_STATE.store(1, Ordering::Relaxed);
+}
+
+pub fn record_notification_drain_started() {
+    NOTIFICATION_WORKER_RUNTIME_STATE.store(5, Ordering::Relaxed);
+}
+
+pub fn record_notification_drain(completed: bool) {
+    NOTIFICATION_DRAINS.fetch_add(1, Ordering::Relaxed);
+    NOTIFICATION_DRAIN_TIMEOUTS.fetch_add(u64::from(!completed), Ordering::Relaxed);
+}
+
 pub fn record_release_attribution(provided: bool, resolved: bool) {
     match (provided, resolved) {
         (_, true) => &RELEASE_ATTRIBUTED,
@@ -98,18 +120,28 @@ pub fn record_cors_denial() {
     CORS_DENIALS.fetch_add(1, Ordering::Relaxed);
 }
 
-pub fn router(pool: PgPool) -> Router {
+#[derive(Clone)]
+struct MetricsState {
+    pool: PgPool,
+    notification_enabled: bool,
+}
+
+pub fn router(pool: PgPool, notification_enabled: bool) -> Router {
     Router::new()
         .route("/metrics", get(render))
-        .with_state(pool)
+        .with_state(MetricsState {
+            pool,
+            notification_enabled,
+        })
 }
 
 #[allow(clippy::too_many_lines)]
-async fn render(State(pool): State<PgPool>) -> impl IntoResponse {
+async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
+    let pool = &state.pool;
     let outbox_depth = sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM outbox_messages WHERE processed_at IS NULL",
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await;
     let Ok(outbox_depth) = outbox_depth else {
         return (
@@ -117,20 +149,54 @@ async fn render(State(pool): State<PgPool>) -> impl IntoResponse {
             "database metrics unavailable\n".to_owned(),
         );
     };
-    let delivery_depth = sqlx::query_as::<_, (i64, i64, i64)>(
-        "SELECT count(*) FILTER (WHERE status='pending'), count(*) FILTER (WHERE status='in_flight'), count(*) FILTER (WHERE status='in_flight' AND lease_expires_at<=now()) FROM notification_deliveries",
+    let delivery_depth = sqlx::query_as::<_, (i64, i64, i64, i64, i64, i64)>(
+        "SELECT count(*) FILTER (WHERE status='pending'), count(*) FILTER (WHERE status='pending' AND available_at<=now()), count(*) FILTER (WHERE status='pending' AND attempt_count>0), count(*) FILTER (WHERE status='in_flight'), count(*) FILTER (WHERE status='in_flight' AND lease_expires_at<=now()), count(*) FILTER (WHERE status='failed') FROM notification_deliveries",
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await;
-    let Ok((pending_deliveries, in_flight_deliveries, expired_leases)) = delivery_depth else {
+    let Ok((
+        pending_deliveries,
+        due_deliveries,
+        retrying_deliveries,
+        in_flight_deliveries,
+        expired_leases,
+        failed_deliveries,
+    )) = delivery_depth
+    else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "database metrics unavailable\n".to_owned(),
         );
     };
+    let oldest_due_seconds = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(available_at))::bigint,0) FROM notification_deliveries WHERE status='pending' AND available_at<=now()",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or_default();
+    let enabled_destinations = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM webhook_destinations WHERE enabled=true",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or_default();
+    let runtime_state = NOTIFICATION_WORKER_RUNTIME_STATE.load(Ordering::Relaxed);
+    let worker_state = if !state.notification_enabled {
+        0
+    } else if runtime_state == 5 {
+        5
+    } else if runtime_state == 4 {
+        4
+    } else if retrying_deliveries > 0 {
+        3
+    } else if due_deliveries > 0 {
+        2
+    } else {
+        1
+    };
     let release_summary_count =
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM runtime_event_group_releases")
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await;
     let Ok(release_summary_count) = release_summary_count else {
         return (
@@ -172,6 +238,15 @@ async fn render(State(pool): State<PgPool>) -> impl IntoResponse {
             u64::try_from(outbox_depth).unwrap_or_default(),
         ),
         (
+            "okoscope_notification_worker_enabled",
+            u64::from(state.notification_enabled),
+        ),
+        ("okoscope_notification_worker_state", worker_state),
+        (
+            "okoscope_notification_enabled_destinations",
+            u64::try_from(enabled_destinations).unwrap_or_default(),
+        ),
+        (
             "okoscope_notification_materialized_total",
             NOTIFICATION_MATERIALIZED.load(Ordering::Relaxed),
         ),
@@ -208,12 +283,40 @@ async fn render(State(pool): State<PgPool>) -> impl IntoResponse {
             u64::try_from(pending_deliveries).unwrap_or_default(),
         ),
         (
+            "okoscope_notification_due",
+            u64::try_from(due_deliveries).unwrap_or_default(),
+        ),
+        (
+            "okoscope_notification_retrying",
+            u64::try_from(retrying_deliveries).unwrap_or_default(),
+        ),
+        (
+            "okoscope_notification_oldest_due_seconds",
+            u64::try_from(oldest_due_seconds.max(0)).unwrap_or_default(),
+        ),
+        (
             "okoscope_notification_in_flight",
             u64::try_from(in_flight_deliveries).unwrap_or_default(),
         ),
         (
             "okoscope_notification_expired_leases",
             u64::try_from(expired_leases).unwrap_or_default(),
+        ),
+        (
+            "okoscope_notification_failed",
+            u64::try_from(failed_deliveries).unwrap_or_default(),
+        ),
+        (
+            "okoscope_notification_cycle_failures_total",
+            NOTIFICATION_CYCLE_FAILURES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_notification_drains_total",
+            NOTIFICATION_DRAINS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_notification_drain_timeouts_total",
+            NOTIFICATION_DRAIN_TIMEOUTS.load(Ordering::Relaxed),
         ),
         (
             "okoscope_release_attributed_total",

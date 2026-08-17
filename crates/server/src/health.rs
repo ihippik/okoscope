@@ -32,7 +32,12 @@ pub fn router(
                 }
             }),
         )
-        .merge(metrics::router((*pool).clone()));
+        .merge(metrics::router(
+            (*pool).clone(),
+            notifications
+                .as_ref()
+                .is_some_and(|service| service.config.enabled),
+        ));
     let api_router = api::router((*pool).clone())
         .merge(crate::releases::router((*pool).clone()))
         .merge(crate::navigation::router((*pool).clone()));

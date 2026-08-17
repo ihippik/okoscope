@@ -31,7 +31,10 @@ if [[ ${1-} == get && ${2-} == secret && "$*" == *jsonpath* ]]; then
   esac
   printf %s "$value" | base64
 fi
-if [[ ${1-} == wait && ${TEST_MIGRATION_FAIL:-false} == true ]]; then
+if [[ ${1-} == wait && "$*" == *okoscope-migrate-* && ${TEST_MIGRATION_FAIL:-false} == true ]]; then
+  exit 1
+fi
+if [[ ${1-} == wait && "$*" == *okoscope-notification-check-* && ${TEST_CHECK_FAIL:-false} == true ]]; then
   exit 1
 fi
 MOCK
@@ -43,6 +46,7 @@ real_path=${PATH#"$work/bin:"}
 deploy/scripts/deploy-release.sh "$work/release"
 deploy/scripts/deploy-release.sh "$work/release"
 [[ $(grep -c 'apply -f .*02-migrate-' "$TEST_COMMAND_LOG") -eq 2 ]]
+[[ $(grep -c 'apply -f .*02-notification-check-' "$TEST_COMMAND_LOG") -eq 2 ]]
 [[ $(grep -c 'apply -f .*03-upgrade.yaml' "$TEST_COMMAND_LOG") -eq 2 ]]
 ! grep -q '01-install-bundled-postgres' "$TEST_COMMAND_LOG"
 
@@ -54,6 +58,15 @@ if deploy/scripts/deploy-release.sh "$work/release" >/dev/null 2>&1; then
 fi
 ! grep -q '03-upgrade.yaml' "$TEST_COMMAND_LOG"
 unset TEST_MIGRATION_FAIL
+
+: >"$TEST_COMMAND_LOG"
+export TEST_CHECK_FAIL=true
+if deploy/scripts/deploy-release.sh "$work/release" >/dev/null 2>&1; then
+  echo "failed notification preflight unexpectedly advanced" >&2
+  exit 1
+fi
+! grep -q '03-upgrade.yaml' "$TEST_COMMAND_LOG"
+unset TEST_CHECK_FAIL
 
 export PATH="$real_path"
 deploy/scripts/render-release.sh "$work/rollback" "$previous" "$previous" "$web" disabled

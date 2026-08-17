@@ -53,6 +53,7 @@ jobs:
           toolchain: 1.91.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p server --test migrations -- --ignored
+      - run: cargo test -p server --test notification -- --ignored
 
   deployment-validation:
     runs-on: ubuntu-latest
@@ -74,11 +75,12 @@ jobs:
           work=$(mktemp -d)
           kubectl kustomize deploy/kubernetes/install/bundled-postgres > "$work/install.yaml"
           kubectl kustomize deploy/kubernetes/migrate > "$work/migrate.yaml"
+          kubectl kustomize deploy/kubernetes/check > "$work/notification-check.yaml"
           kubectl kustomize deploy/kubernetes/overlays/production > "$work/production.yaml"
           kubectl kustomize deploy/kubernetes/overlays/external-postgres > "$work/external.yaml"
           kubectl kustomize deploy/kubernetes/overlays/development > "$work/development.yaml"
           kubectl kustomize deploy/kubernetes/routing > "$work/routing.yaml"
-          kubeconform -strict -summary "$work/install.yaml" "$work/migrate.yaml" \
+          kubeconform -strict -summary "$work/install.yaml" "$work/migrate.yaml" "$work/notification-check.yaml" \
             "$work/production.yaml" "$work/external.yaml" "$work/development.yaml"
           kubeconform -strict -ignore-missing-schemas -summary "$work/routing.yaml"
 

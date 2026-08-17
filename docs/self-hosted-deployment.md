@@ -14,9 +14,10 @@ CI publishes an `okoscope-kubernetes-<commit>` bundle containing:
 
 1. `01-install-bundled-postgres.yaml` — one-time namespace, Service, StatefulSet, and PVC template.
 2. `02-migrate-<commit>.yaml` — release-specific migration gate.
-3. `03-upgrade.yaml` — stateless server, Web, agent, Services, RBAC, configuration, and disruption controls.
-4. `04-routing.yaml` — optional public route and certificate resources.
-5. `PROVENANCE.txt` — source/image mapping and required migration.
+3. `02-notification-check-<commit>.yaml` — secret-redacted notification activation and schema gate.
+4. `03-upgrade.yaml` — stateless server, Web, agent, Services, RBAC, configuration, and disruption controls.
+5. `04-routing.yaml` — optional public route and certificate resources.
+6. `PROVENANCE.txt` — source/image mapping, required migration, activation state, and non-secret worker bounds.
 
 The bundled PostgreSQL profile requests 100m CPU/256 MiB and limits 1 CPU/1 GiB. Server defaults are 100m/128 MiB requests and 1 CPU/512 MiB limits; agent defaults are 100m/96 MiB and 1 CPU/512 MiB. Tune these in a site overlay after measuring usage.
 
@@ -85,7 +86,7 @@ The 2026-08-17 `aliens` adoption dry-run found and corrected two compatibility i
 
 ## Ordered upgrade and failure gate
 
-The canonical sequence is render, validate, secret preflight, migration, rollout, then smoke verification. `deploy-release.sh` stops immediately when preflight fails or the migration Job does not complete; it never applies `03-upgrade.yaml` after such a failure.
+The canonical sequence is render, validate, secret preflight, migration, notification configuration check, rollout, then smoke verification. `deploy-release.sh` stops immediately when any gate fails; it never applies `03-upgrade.yaml` after such a failure.
 
 ```bash
 deploy/scripts/render-release.sh ./release \
@@ -96,6 +97,12 @@ deploy/scripts/deploy-release.sh ./release
 ```
 
 The production server has `OKOSCOPE_MIGRATE=false`. Only the release-specific Job runs `server migrate`. Reapplying an already completed release is safe; migration history and credentials are preserved.
+
+Notification delivery is disabled by default. To activate it, set `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=true` before rendering. Optional bounded inputs are `OKOSCOPE_NOTIFICATION_POLL_MS`, `OKOSCOPE_NOTIFICATION_CLAIM_SIZE`, `OKOSCOPE_NOTIFICATION_CONCURRENCY`, `OKOSCOPE_NOTIFICATION_LEASE_SECONDS`, `OKOSCOPE_WEBHOOK_TIMEOUT_SECONDS`, `OKOSCOPE_WEBHOOK_MAX_ATTEMPTS`, `OKOSCOPE_WEBHOOK_BACKOFF_MIN_SECONDS`, `OKOSCOPE_WEBHOOK_BACKOFF_MAX_SECONDS`, `OKOSCOPE_WEBHOOK_MAX_RESPONSE_BYTES`, and `OKOSCOPE_NOTIFICATION_DRAIN_SECONDS`. Invalid values fail rendering; an absent, malformed, or all-zero encryption key fails the cluster check. Output contains only activation state, bounds, and enabled destination count.
+
+Before activation, review enabled destinations through the tenant-scoped API, confirm each receiver deduplicates by stable delivery ID, and verify it validates the timestamped HMAC signature. `okoscope_notification_worker_state` is a bounded gauge: `0=disabled`, `1=ready/idle`, `2=backlogged`, `3=retrying`, `4=failing`, and `5=draining`. Alert on oldest due work, due/retrying deliveries, terminal failures, expired leases, cycle failures, and drain timeouts. Receiver failures are delivery signals and do not make the core API unready.
+
+To pause delivery, render and roll out with `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=false`. Workers stop taking new claims and drain in-flight work for the configured bounded interval; queued and retryable rows remain durable. Re-enable with the same key to resume. Back up the encryption key separately from the database. Rotation must use the destination rotation API so stored secrets are re-encrypted deliberately. Never delete delivery rows, outbox rows, or migrations as rollback.
 
 For public routing, set `OKOSCOPE_DOMAIN`, `OKOSCOPE_CERTIFICATE_NAME`, `OKOSCOPE_CERT_ISSUER`, `OKOSCOPE_TLS_SECRET`, `OKOSCOPE_HTTP_ENTRYPOINT`, `OKOSCOPE_HTTPS_ENTRYPOINT`, `OKOSCOPE_SERVER_SERVICE`, and `OKOSCOPE_WEB_SERVICE`, then render with the final argument `enabled`. Existing environments must use their current Certificate name and issuer to avoid competing ownership of one TLS Secret. Invalid or missing values fail before rendering.
 
