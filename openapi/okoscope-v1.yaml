@@ -45,11 +45,15 @@ paths:
         - {name: project_id, in: query, required: true, schema: {type: string, format: uuid}}
         - {name: application_id, in: query, required: true, schema: {type: string, format: uuid}}
         - {name: event_kind, in: query, schema: {type: string}}
-        - {name: status, in: query, schema: {type: string, enum: [open]}}
+        - {name: status, in: query, schema: {type: string, enum: [open, acknowledged, resolved]}}
         - {name: namespace, in: query, schema: {type: string}}
         - {name: workload_kind, in: query, schema: {type: string}}
         - {name: workload_name, in: query, schema: {type: string}}
         - {name: since, in: query, schema: {type: string, format: date-time}}
+        - {name: first_seen_from, in: query, schema: {type: string, format: date-time}}
+        - {name: first_seen_to, in: query, schema: {type: string, format: date-time}}
+        - {name: last_seen_to, in: query, schema: {type: string, format: date-time}}
+        - {name: release_id, in: query, schema: {type: string, format: uuid}}
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
       responses: {"200": {$ref: '#/components/responses/RuntimeGroupPage'}}
@@ -58,6 +62,27 @@ paths:
     get:
       operationId: getRuntimeGroup
       responses: {"200": {$ref: '#/components/responses/RuntimeGroupDetail'}}
+  /api/v1/runtime-groups/{group_id}/occurrences:
+    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    get:
+      operationId: listRuntimeGroupOccurrences
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {"200": {$ref: '#/components/responses/OccurrencePage'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/runtime-groups/{group_id}/acknowledge:
+    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    post:
+      operationId: acknowledgeRuntimeGroup
+      responses: {"200": {$ref: '#/components/responses/RuntimeGroup'}, "400": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/runtime-groups/{group_id}/resolve:
+    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    post:
+      operationId: resolveRuntimeGroup
+      responses: {"200": {$ref: '#/components/responses/RuntimeGroup'}, "400": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/runtime-groups/{group_id}/reopen:
+    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    post:
+      operationId: reopenRuntimeGroup
+      responses: {"200": {$ref: '#/components/responses/RuntimeGroup'}, "400": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
   /api/v1/projects/{project_id}/applications/{application_id}/releases:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
     get:
@@ -158,7 +183,7 @@ components:
         service_version: {type: string, example: 0.1.0}
         git_commit: {type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a}
         api_version: {type: string, const: v1}
-        required_database_migration: {type: integer, format: int64, example: 5}
+        required_database_migration: {type: integer, format: int64, example: 6}
     Organization:
       type: object
       additionalProperties: false
@@ -210,7 +235,7 @@ components:
     RuntimeGroup:
       type: object
       additionalProperties: false
-      required: [id, project_id, application_id, cluster_id, namespace, workload_kind, workload_name, fingerprint_version, event_kind, semantic_summary, status, first_seen_at, last_seen_at, occurrence_count, representative_event_id]
+      required: [id, project_id, application_id, cluster_id, namespace, workload_kind, workload_name, fingerprint_version, event_kind, semantic_summary, status, first_seen_at, first_seen_event_id, last_seen_at, occurrence_count, representative_event_id, status_changed_at, status_changed_by]
       properties:
         id: {$ref: '#/components/schemas/Uuid'}
         project_id: {$ref: '#/components/schemas/Uuid'}
@@ -222,11 +247,14 @@ components:
         fingerprint_version: {type: integer}
         event_kind: {type: string}
         semantic_summary: {type: object, additionalProperties: true}
-        status: {type: string}
+        status: {type: string, enum: [open, acknowledged, resolved]}
         first_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        first_seen_event_id: {$ref: '#/components/schemas/Uuid'}
         last_seen_at: {$ref: '#/components/schemas/Timestamp'}
         occurrence_count: {type: integer, format: int64, minimum: 0}
         representative_event_id: {$ref: '#/components/schemas/Uuid'}
+        status_changed_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        status_changed_by: {$ref: '#/components/schemas/NullableUuid'}
     RuntimeGroupPage:
       type: object
       additionalProperties: false
@@ -237,7 +265,7 @@ components:
     EventOccurrence:
       type: object
       additionalProperties: false
-      required: [id, event_id, observed_at, node_name, namespace, pod_name, container_name, process_command, event_kind, payload]
+      required: [id, event_id, observed_at, node_name, namespace, pod_name, container_name, process_command, event_kind, payload, release_id, release_version]
       properties:
         id: {$ref: '#/components/schemas/Uuid'}
         event_id: {$ref: '#/components/schemas/Uuid'}
@@ -249,15 +277,33 @@ components:
         process_command: {type: string}
         event_kind: {type: string}
         payload: {type: object, additionalProperties: true}
+        release_id: {$ref: '#/components/schemas/NullableUuid'}
+        release_version: {type: [string, 'null']}
+    OccurrencePage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/EventOccurrence'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    FirstSeenNotificationSummary:
+      type: object
+      additionalProperties: false
+      required: [state, delivery_count, succeeded_count, failed_count]
+      properties:
+        state: {type: string, enum: [pending, not_configured, delivering, delivered, terminally_failed, backfill_suppressed]}
+        delivery_count: {type: integer, format: int64, minimum: 0}
+        succeeded_count: {type: integer, format: int64, minimum: 0}
+        failed_count: {type: integer, format: int64, minimum: 0}
     RuntimeGroupDetail:
       unevaluatedProperties: false
       allOf:
         - {$ref: '#/components/schemas/RuntimeGroup'}
         - type: object
-          required: [representative_event, recent_occurrences]
+          required: [representative_event, notification]
           properties:
             representative_event: {$ref: '#/components/schemas/EventOccurrence'}
-            recent_occurrences: {type: array, items: {$ref: '#/components/schemas/EventOccurrence'}}
+            notification: {$ref: '#/components/schemas/FirstSeenNotificationSummary'}
     Release:
       type: object
       additionalProperties: false
@@ -419,7 +465,9 @@ components:
     Application: {description: Application summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Application'}}}}
     ApplicationPage: {description: Application page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ApplicationPage'}}}}
     RuntimeGroupPage: {description: Runtime group page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroupPage'}}}}
+    RuntimeGroup: {description: Runtime group, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroup'}}}}
     RuntimeGroupDetail: {description: Runtime group detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroupDetail'}}}}
+    OccurrencePage: {description: Runtime group occurrence page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/OccurrencePage'}}}}
     Release: {description: Release, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Release'}}}}
     ReleasePage: {description: Release page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ReleasePage'}}}}
     RuntimeDiff: {description: Runtime behavior diff, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeDiff'}}}}

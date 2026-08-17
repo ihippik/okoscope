@@ -146,6 +146,12 @@ Backfill-created `runtime_group.first_seen` outbox records have `source=backfill
 
 To roll back, deploy the prior server image. The additive grouping tables remain unused and raw-event ingestion continues. Do not reverse or drop migration `0003` during a service rollback. Inspect group totals, ungrouped events, and pending outbox records with `deploy/queries/runtime-groups.sql`.
 
+## First-seen observability upgrade
+
+Migration `0006_first_seen_observability.sql` adds deterministic first-seen event identity and operator lifecycle metadata. Deploy migration 0006 and the compatible server before enabling lifecycle or occurrence views in the separate Web UI. The UI compatibility gate must require build-info `required_database_migration >= 6` and regenerate its client from `openapi/okoscope-v1.yaml`; older servers do not provide these routes or fields.
+
+The group detail API now returns a secret-free notification summary, while raw occurrences use the separately bounded `/api/v1/runtime-groups/{group_id}/occurrences` collection. Use `docs/first-seen-observability-smoke.md` for the deployed verification procedure. Rollback to an older server image leaves the additive migration in place; do not drop the new columns during rollback.
+
 ## Webhook notification delivery
 
 Migration `0004_notification_delivery.sql` is additive. The example manifest supplies a syntactically valid development encryption key but leaves `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=false`. Replace the key with 32 cryptographically random bytes encoded as 64 hexadecimal characters before creating destinations; back it up separately from PostgreSQL. Losing the key makes stored signing secrets undecryptable.

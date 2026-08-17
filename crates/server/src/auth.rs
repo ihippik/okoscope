@@ -10,6 +10,7 @@ pub struct SessionScope {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ApiPrincipal {
+    pub credential_id: Uuid,
     pub organization_id: Uuid,
 }
 
@@ -64,12 +65,17 @@ impl ApiCredentialAuthenticator {
             return Ok(None);
         }
         let digest = Sha256::digest(credential.as_bytes()).to_vec();
-        let organization_id: Option<Uuid> = sqlx::query_scalar(
-            "UPDATE api_credentials SET last_used_at=now() WHERE credential_hash=$1 AND revoked_at IS NULL RETURNING organization_id",
+        let identity: Option<(Uuid, Uuid)> = sqlx::query_as(
+            "UPDATE api_credentials SET last_used_at=now() WHERE credential_hash=$1 AND revoked_at IS NULL RETURNING id,organization_id",
         )
         .bind(digest)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(organization_id.map(|organization_id| ApiPrincipal { organization_id }))
+        Ok(
+            identity.map(|(credential_id, organization_id)| ApiPrincipal {
+                credential_id,
+                organization_id,
+            }),
+        )
     }
 }

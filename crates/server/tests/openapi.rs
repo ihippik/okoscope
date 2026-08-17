@@ -12,6 +12,10 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
     ),
     ("/api/v1/runtime-groups", "get"),
     ("/api/v1/runtime-groups/{group_id}", "get"),
+    ("/api/v1/runtime-groups/{group_id}/occurrences", "get"),
+    ("/api/v1/runtime-groups/{group_id}/acknowledge", "post"),
+    ("/api/v1/runtime-groups/{group_id}/resolve", "post"),
+    ("/api/v1/runtime-groups/{group_id}/reopen", "post"),
     (
         "/api/v1/projects/{project_id}/applications/{application_id}/releases",
         "get",
@@ -117,6 +121,10 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
             "workload_kind",
             "workload_name",
             "since",
+            "first_seen_from",
+            "first_seen_to",
+            "last_seen_to",
+            "release_id",
             "cursor",
             "limit",
         ],
@@ -126,6 +134,29 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         "/api/v1/projects/{project_id}/applications/{application_id}/releases",
         "get",
         &["cursor", "limit"],
+    );
+    assert_query_parameters(
+        &document,
+        "/api/v1/runtime-groups/{group_id}/occurrences",
+        "get",
+        &["cursor", "limit"],
+    );
+    let runtime_group_required = document["components"]["schemas"]["RuntimeGroup"]["required"]
+        .as_array()
+        .expect("RuntimeGroup required fields");
+    for field in [
+        "first_seen_event_id",
+        "status_changed_at",
+        "status_changed_by",
+    ] {
+        assert!(
+            runtime_group_required.iter().any(|item| item == field),
+            "RuntimeGroup must require {field}"
+        );
+    }
+    assert_eq!(
+        document["components"]["schemas"]["FirstSeenNotificationSummary"]["additionalProperties"],
+        false
     );
     assert_query_parameters(
         &document,

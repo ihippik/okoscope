@@ -27,12 +27,16 @@ impl From<FingerprintVersion> for i16 {
 pub enum RuntimeGroupStatus {
     #[default]
     Open,
+    Acknowledged,
+    Resolved,
 }
 
 impl fmt::Display for RuntimeGroupStatus {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Open => "open",
+            Self::Acknowledged => "acknowledged",
+            Self::Resolved => "resolved",
         })
     }
 }
@@ -103,7 +107,7 @@ pub async fn assign_event(
     let version = i16::from(fingerprint.version);
     let candidate_group_id = Uuid::new_v4();
     let created_group_id: Option<Uuid> = sqlx::query_scalar(
-        "INSERT INTO runtime_event_groups (id, organization_id, project_id, cluster_id, application_id, namespace, workload_kind, workload_name, fingerprint_version, fingerprint_digest, event_kind, semantic_summary, first_seen_at, last_seen_at, occurrence_count, representative_event_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,1,$14) ON CONFLICT (organization_id, project_id, application_id, cluster_id, namespace, workload_kind, workload_name, fingerprint_version, fingerprint_digest) DO NOTHING RETURNING id",
+        "INSERT INTO runtime_event_groups (id, organization_id, project_id, cluster_id, application_id, namespace, workload_kind, workload_name, fingerprint_version, fingerprint_digest, event_kind, semantic_summary, first_seen_at, last_seen_at, occurrence_count, representative_event_id, first_seen_event_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,1,$14,$14) ON CONFLICT (organization_id, project_id, application_id, cluster_id, namespace, workload_kind, workload_name, fingerprint_version, fingerprint_digest) DO NOTHING RETURNING id",
     )
     .bind(candidate_group_id)
     .bind(scope.organization_id)
@@ -157,13 +161,7 @@ pub async fn assign_event(
     .is_some();
 
     if membership_created && !group_created {
-        sqlx::query(
-            "UPDATE runtime_event_groups SET first_seen_at=LEAST(first_seen_at,$2), last_seen_at=GREATEST(last_seen_at,$2), occurrence_count=occurrence_count+1, updated_at=now() WHERE id=$1",
-        )
-        .bind(group_id)
-        .bind(event.observed_at)
-        .execute(&mut **tx)
-        .await?;
+        update_group_occurrence(tx, group_id, raw_event_id, event).await?;
     }
 
     if membership_created && let Some(release_id) = release_id {
@@ -201,6 +199,23 @@ pub async fn assign_event(
     );
     tracing::debug!(group_id=%group_id, group_created, membership_created, source=source.as_str(), "runtime event grouped");
     Ok(outcome)
+}
+
+async fn update_group_occurrence(
+    tx: &mut Transaction<'_, Postgres>,
+    group_id: Uuid,
+    raw_event_id: Uuid,
+    event: &RuntimeEvent,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE runtime_event_groups SET first_seen_event_id=CASE WHEN ($2,$3) < (first_seen_at,first_seen_event_id) THEN $3 ELSE first_seen_event_id END, first_seen_at=LEAST(first_seen_at,$2), last_seen_at=GREATEST(last_seen_at,$2), occurrence_count=occurrence_count+1, updated_at=now() WHERE id=$1",
+    )
+    .bind(group_id)
+    .bind(event.observed_at)
+    .bind(raw_event_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 async fn update_release_summary(

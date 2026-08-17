@@ -95,20 +95,29 @@ async fn batch_is_tenant_safe_idempotent_and_preserves_timestamps(pool: sqlx::Pg
             .unwrap(),
         0
     );
-    let (group_id, representative_event_id, occurrence_count, first_seen_at, last_seen_at): (
+    let (group_id, representative_event_id, first_seen_event_id, occurrence_count, first_seen_at, last_seen_at): (
+        Uuid,
         Uuid,
         Uuid,
         i64,
         chrono::DateTime<Utc>,
         chrono::DateTime<Utc>,
     ) = sqlx::query_as(
-        "SELECT id, representative_event_id, occurrence_count, first_seen_at, last_seen_at FROM runtime_event_groups WHERE organization_id=$1",
+        "SELECT id, representative_event_id, first_seen_event_id, occurrence_count, first_seen_at, last_seen_at FROM runtime_event_groups WHERE organization_id=$1",
     )
     .bind(first.organization_id)
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(occurrence_count, 1);
+    let valid_storage_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM runtime_events WHERE agent_id=$1 AND event_id=$2")
+            .bind(agent_id)
+            .bind(valid.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(first_seen_event_id, valid_storage_id);
     assert_eq!(first_seen_at, valid.observed_at);
     assert_eq!(last_seen_at, valid.observed_at);
     let membership_count: i64 = sqlx::query_scalar(
@@ -137,19 +146,28 @@ async fn batch_is_tenant_safe_idempotent_and_preserves_timestamps(pool: sqlx::Pg
             .unwrap(),
         1
     );
-    let (new_representative, count, first_seen, last_seen): (
+    let (new_representative, new_first_seen_event, count, first_seen, last_seen): (
+        Uuid,
         Uuid,
         i64,
         chrono::DateTime<Utc>,
         chrono::DateTime<Utc>,
     ) = sqlx::query_as(
-        "SELECT representative_event_id, occurrence_count, first_seen_at, last_seen_at FROM runtime_event_groups WHERE id=$1",
+        "SELECT representative_event_id, first_seen_event_id, occurrence_count, first_seen_at, last_seen_at FROM runtime_event_groups WHERE id=$1",
     )
     .bind(group_id)
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(new_representative, representative_event_id);
+    let delayed_storage_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM runtime_events WHERE agent_id=$1 AND event_id=$2")
+            .bind(agent_id)
+            .bind(delayed.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(new_first_seen_event, delayed_storage_id);
     assert_eq!(count, 2);
     assert_eq!(first_seen, delayed.observed_at);
     assert_eq!(last_seen, valid.observed_at);
