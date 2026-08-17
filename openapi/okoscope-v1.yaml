@@ -44,6 +44,12 @@ paths:
       parameters:
         - {name: project_id, in: query, required: true, schema: {type: string, format: uuid}}
         - {name: application_id, in: query, required: true, schema: {type: string, format: uuid}}
+        - {name: event_kind, in: query, schema: {type: string}}
+        - {name: status, in: query, schema: {type: string, enum: [open]}}
+        - {name: namespace, in: query, schema: {type: string}}
+        - {name: workload_kind, in: query, schema: {type: string}}
+        - {name: workload_name, in: query, schema: {type: string}}
+        - {name: since, in: query, schema: {type: string, format: date-time}}
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
       responses: {"200": {$ref: '#/components/responses/RuntimeGroupPage'}}
@@ -56,6 +62,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
     get:
       operationId: listReleases
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses: {"200": {$ref: '#/components/responses/ReleasePage'}}
     post:
       operationId: createRelease
@@ -70,7 +77,10 @@ paths:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/TargetId'}]
     get:
       operationId: getRuntimeDiff
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      parameters:
+        - {name: baseline_id, in: query, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
       responses: {"200": {$ref: '#/components/responses/RuntimeDiff'}}
   /api/v1/projects/{project_id}/webhook-destinations:
     parameters: [{$ref: '#/components/parameters/ProjectId'}]

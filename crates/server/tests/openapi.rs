@@ -104,6 +104,59 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         LIVE_OPERATIONS.len(),
         "documented route inventory drift"
     );
+    assert_query_parameters(
+        &document,
+        "/api/v1/runtime-groups",
+        "get",
+        &[
+            "project_id",
+            "application_id",
+            "event_kind",
+            "status",
+            "namespace",
+            "workload_kind",
+            "workload_name",
+            "since",
+            "cursor",
+            "limit",
+        ],
+    );
+    assert_query_parameters(
+        &document,
+        "/api/v1/projects/{project_id}/applications/{application_id}/releases",
+        "get",
+        &["cursor", "limit"],
+    );
+    assert_query_parameters(
+        &document,
+        "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
+        "get",
+        &["baseline_id", "cursor", "limit"],
+    );
+}
+
+fn assert_query_parameters(
+    document: &serde_json::Value,
+    path: &str,
+    method: &str,
+    expected: &[&str],
+) {
+    let parameters = document["paths"][path][method]["parameters"]
+        .as_array()
+        .expect("operation parameters");
+    let actual = parameters
+        .iter()
+        .map(|parameter| {
+            let parameter = resolve_component(document, parameter, "parameters");
+            assert_eq!(parameter["in"], "query", "non-query operation parameter");
+            parameter["name"].as_str().expect("parameter name")
+        })
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        actual,
+        expected.iter().copied().collect(),
+        "query parameter drift for {method} {path}"
+    );
 }
 
 fn assert_success_response_is_typed(
