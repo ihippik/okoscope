@@ -20,7 +20,8 @@ check=$(find "$work/no-routing" -name '02-notification-check-*.yaml' -print -qui
 [[ $(grep -c 'resources:' "$migrate") -eq 1 ]]
 grep -q 'OKOSCOPE_MIGRATE: "false"' "$upgrade"
 grep -q 'okoscope.io/required-migration: "6"' "$migrate"
-grep -q 'OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: false' "$upgrade" "$check"
+grep -q 'OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: "false"' "$upgrade" "$check"
+grep -Eq 'okoscope.io/notification-config: "[0-9a-f]{12}"' "$upgrade"
 grep -q 'notification_delivery_enabled=false' "$work/no-routing/PROVENANCE.txt"
 ! grep -Eq '(database-url=|credential=|encryption-key=|signing)' "$work/no-routing/PROVENANCE.txt"
 [[ ! -e "$work/no-routing/04-routing.yaml" ]]
@@ -29,9 +30,16 @@ export OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=true
 export OKOSCOPE_NOTIFICATION_CONCURRENCY=4
 export OKOSCOPE_NOTIFICATION_DRAIN_SECONDS=20
 deploy/scripts/render-release.sh "$work/enabled" "$commit" "$commit" "$web" disabled
-grep -q 'OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: true' "$work/enabled/03-upgrade.yaml"
-grep -q 'OKOSCOPE_NOTIFICATION_CONCURRENCY: 4' "$work/enabled/03-upgrade.yaml"
+grep -q 'OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: "true"' "$work/enabled/03-upgrade.yaml"
+grep -q 'OKOSCOPE_NOTIFICATION_CONCURRENCY: "4"' "$work/enabled/03-upgrade.yaml"
 grep -q 'notification_drain_seconds=20' "$work/enabled/PROVENANCE.txt"
+disabled_check_name=$(awk '$1 == "name:" && $2 ~ /^okoscope-notification-check-/ {print $2; exit}' "$check")
+enabled_check=$(find "$work/enabled" -name '02-notification-check-*.yaml' -print -quit)
+enabled_check_name=$(awk '$1 == "name:" && $2 ~ /^okoscope-notification-check-/ {print $2; exit}' "$enabled_check")
+[[ $disabled_check_name != "$enabled_check_name" ]]
+disabled_fingerprint=$(awk '$1 == "okoscope.io/notification-config:" {gsub(/"/, "", $2); print $2; exit}' "$upgrade")
+enabled_fingerprint=$(awk '$1 == "okoscope.io/notification-config:" {gsub(/"/, "", $2); print $2; exit}' "$work/enabled/03-upgrade.yaml")
+[[ $disabled_fingerprint != "$enabled_fingerprint" ]]
 export OKOSCOPE_NOTIFICATION_CONCURRENCY=0
 if deploy/scripts/render-release.sh "$work/invalid" "$commit" "$commit" "$web" disabled >/dev/null 2>&1; then
   echo "invalid notification bounds unexpectedly rendered" >&2

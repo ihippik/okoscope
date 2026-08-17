@@ -33,17 +33,18 @@ require_range() {
 }
 
 notification_substitutions() {
-  sed -e "s/__NOTIFICATION_ENABLED__/$notification_enabled/g" \
-      -e "s/__NOTIFICATION_POLL_MS__/$notification_poll_ms/g" \
-      -e "s/__NOTIFICATION_CLAIM_SIZE__/$notification_claim_size/g" \
-      -e "s/__NOTIFICATION_CONCURRENCY__/$notification_concurrency/g" \
-      -e "s/__NOTIFICATION_LEASE_SECONDS__/$notification_lease_seconds/g" \
-      -e "s/__WEBHOOK_TIMEOUT_SECONDS__/$webhook_timeout_seconds/g" \
-      -e "s/__WEBHOOK_MAX_ATTEMPTS__/$webhook_max_attempts/g" \
-      -e "s/__WEBHOOK_BACKOFF_MIN_SECONDS__/$webhook_backoff_min_seconds/g" \
-      -e "s/__WEBHOOK_BACKOFF_MAX_SECONDS__/$webhook_backoff_max_seconds/g" \
-      -e "s/__WEBHOOK_MAX_RESPONSE_BYTES__/$webhook_max_response_bytes/g" \
-      -e "s/__NOTIFICATION_DRAIN_SECONDS__/$notification_drain_seconds/g"
+  sed -e "s/__NOTIFICATION_CONFIG_FINGERPRINT__/\"$activation_fingerprint\"/g" \
+      -e "s/__NOTIFICATION_ENABLED__/\"$notification_enabled\"/g" \
+      -e "s/__NOTIFICATION_POLL_MS__/\"$notification_poll_ms\"/g" \
+      -e "s/__NOTIFICATION_CLAIM_SIZE__/\"$notification_claim_size\"/g" \
+      -e "s/__NOTIFICATION_CONCURRENCY__/\"$notification_concurrency\"/g" \
+      -e "s/__NOTIFICATION_LEASE_SECONDS__/\"$notification_lease_seconds\"/g" \
+      -e "s/__WEBHOOK_TIMEOUT_SECONDS__/\"$webhook_timeout_seconds\"/g" \
+      -e "s/__WEBHOOK_MAX_ATTEMPTS__/\"$webhook_max_attempts\"/g" \
+      -e "s/__WEBHOOK_BACKOFF_MIN_SECONDS__/\"$webhook_backoff_min_seconds\"/g" \
+      -e "s/__WEBHOOK_BACKOFF_MAX_SECONDS__/\"$webhook_backoff_max_seconds\"/g" \
+      -e "s/__WEBHOOK_MAX_RESPONSE_BYTES__/\"$webhook_max_response_bytes\"/g" \
+      -e "s/__NOTIFICATION_DRAIN_SECONDS__/\"$notification_drain_seconds\"/g"
 }
 
 [[ $server_tag =~ ^[0-9a-f]{40}$ ]] || { echo "server tag must be a 40-character commit SHA" >&2; exit 2; }
@@ -71,6 +72,12 @@ require_range notification_drain_seconds "$notification_drain_seconds" 1 300
   echo "minimum webhook backoff must not exceed maximum backoff" >&2
   exit 2
 }
+activation_fingerprint=$(printf '%s\n' \
+  "$notification_enabled" "$notification_poll_ms" "$notification_claim_size" \
+  "$notification_concurrency" "$notification_lease_seconds" "$webhook_timeout_seconds" \
+  "$webhook_max_attempts" "$webhook_backoff_min_seconds" "$webhook_backoff_max_seconds" \
+  "$webhook_max_response_bytes" "$notification_drain_seconds" \
+  | shasum -a 256 | cut -c1-12)
 
 mkdir -p "$output_dir"
 kubectl kustomize deploy/kubernetes/install/bundled-postgres >"$output_dir/01-install-bundled-postgres.yaml"
@@ -80,7 +87,7 @@ kubectl kustomize deploy/kubernetes/migrate \
   >"$output_dir/02-migrate-${server_tag:0:12}.yaml"
 kubectl kustomize deploy/kubernetes/check \
   | sed -e "s/0000000000000000000000000000000000000000/$server_tag/g" \
-        -e "s/okoscope-notification-check-000000000000/okoscope-notification-check-${server_tag:0:12}/g" \
+        -e "s/okoscope-notification-check-000000000000/okoscope-notification-check-${server_tag:0:8}-$activation_fingerprint/g" \
   | notification_substitutions \
   >"$output_dir/02-notification-check-${server_tag:0:12}.yaml"
 kubectl kustomize deploy/kubernetes/overlays/production \

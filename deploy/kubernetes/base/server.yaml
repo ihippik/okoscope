@@ -14,6 +14,8 @@ spec:
       app: okoscope-server
   template:
     metadata:
+      annotations:
+        okoscope.io/notification-config: "__NOTIFICATION_CONFIG_FINGERPRINT__"
       labels:
         app: okoscope-server
         app.kubernetes.io/name: okoscope-server
