@@ -1,4 +1,4 @@
-.PHONY: build build-ebpf check test proto-check
+.PHONY: build build-ebpf check test proto-check deployment-test
 
 build:
 	cargo build --workspace --exclude agent-ebpf
@@ -16,3 +16,7 @@ test:
 proto-check:
 	cargo check -p protocol
 
+deployment-test:
+	deploy/tests/manifest-policy.sh
+	deploy/tests/secret-preflight.sh
+	deploy/tests/deployment-workflow.sh

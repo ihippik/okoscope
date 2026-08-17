@@ -6,7 +6,7 @@ use protocol::v1::agent_service_server::AgentServiceServer;
 use server::{
     backfill::{BackfillOptions, run as run_backfill},
     bootstrap::{BootstrapConfig, bootstrap},
-    database::{MIGRATOR, verify_schema},
+    database::{migrate, verify_schema},
     health,
     notification::NotificationService,
     notification_config::NotificationArgs,
@@ -182,6 +182,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Apply embedded database migrations and exit without starting listeners.
+    Migrate,
     Backfill {
         #[arg(long)]
         organization_id: Uuid,
@@ -197,13 +199,16 @@ enum Command {
 }
 
 async fn run_command(command: Option<Command>, pool: &sqlx::PgPool) -> Result<bool> {
-    let Some(Command::Backfill {
+    let Some(command) = command else {
+        return Ok(false);
+    };
+    let Command::Backfill {
         organization_id,
         project_id,
         fingerprint_version,
         batch_size,
         throttle_ms,
-    }) = command
+    } = command
     else {
         return Ok(false);
     };
@@ -250,14 +255,27 @@ async fn main() -> Result<()> {
         .connect(&args.database_url)
         .await
         .context("connect PostgreSQL")?;
+    if matches!(args.command, Some(Command::Migrate)) {
+        let report = migrate(&pool).await.context("migrate database")?;
+        tracing::info!(
+            required_migration = report.required,
+            applied_migration = report.applied,
+            "database migration complete"
+        );
+        return Ok(());
+    }
     let notifications = notification_config
         .ok()
         .and_then(|config| NotificationService::new(pool.clone(), config));
     if args.migrate {
-        MIGRATOR
-            .run(&pool)
+        let report = migrate(&pool)
             .await
-            .context("apply database migrations")?;
+            .context("apply development startup migrations")?;
+        tracing::info!(
+            required_migration = report.required,
+            applied_migration = report.applied,
+            "development startup migration complete"
+        );
     }
     verify_schema(&pool)
         .await

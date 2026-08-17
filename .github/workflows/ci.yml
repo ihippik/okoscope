@@ -29,6 +29,59 @@ jobs:
       - run: cargo test --workspace --exclude agent-ebpf
       - run: cargo check -p protocol
 
+  postgres-migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: okoscope_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/okoscope_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p server --test migrations -- --ignored
+
+  deployment-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.4
+      - name: Run release policy and secret regression tests
+        run: make deployment-test
+      - name: Install pinned kubeconform
+        run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xz kubeconform
+          sudo install kubeconform /usr/local/bin/kubeconform
+      - name: Validate supported Kubernetes overlays
+        run: |
+          work=$(mktemp -d)
+          kubectl kustomize deploy/kubernetes/install/bundled-postgres > "$work/install.yaml"
+          kubectl kustomize deploy/kubernetes/migrate > "$work/migrate.yaml"
+          kubectl kustomize deploy/kubernetes/overlays/production > "$work/production.yaml"
+          kubectl kustomize deploy/kubernetes/overlays/external-postgres > "$work/external.yaml"
+          kubectl kustomize deploy/kubernetes/overlays/development > "$work/development.yaml"
+          kubectl kustomize deploy/kubernetes/routing > "$work/routing.yaml"
+          kubeconform -strict -summary "$work/install.yaml" "$work/migrate.yaml" \
+            "$work/production.yaml" "$work/external.yaml" "$work/development.yaml"
+          kubeconform -strict -ignore-missing-schemas -summary "$work/routing.yaml"
+
   image-build:
     needs: userspace
     runs-on: ${{ matrix.runner }}
@@ -121,22 +174,30 @@ jobs:
 
   deployment-manifest:
     if: github.event_name != 'pull_request'
-    needs: [userspace, image-index]
+    needs: [userspace, postgres-migrations, deployment-validation, image-index]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Render immutable GHCR image references
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.4
+      - name: Render immutable release bundle
         env:
-          IMAGE_PREFIX: ghcr.io/${{ github.repository }}
-          IMAGE_TAG: ${{ github.sha }}
+          WEB_IMAGE: ${{ vars.OKOSCOPE_WEB_IMAGE || 'ghcr.io/ihippik/okoscope-web:0df87f703f3f1801590a6ec7ad73dae9ad487f87' }}
+          OKOSCOPE_DOMAIN: okoscope.com
+          OKOSCOPE_CERT_ISSUER: letsencrypt-production
+          OKOSCOPE_TLS_SECRET: okoscope-com-tls
+          OKOSCOPE_HTTP_ENTRYPOINT: web
+          OKOSCOPE_HTTPS_ENTRYPOINT: websecure
+          OKOSCOPE_SERVER_SERVICE: okoscope-server
+          OKOSCOPE_WEB_SERVICE: okoscope-web
         run: |
-          sed \
-            -e "s#image: okoscope/server:dev#image: ${IMAGE_PREFIX}-server:${IMAGE_TAG}#" \
-            -e "s#image: okoscope/agent:dev#image: ${IMAGE_PREFIX}-agent:${IMAGE_TAG}#" \
-            deploy/kubernetes/mvp.yaml > okoscope-mvp.yaml
+          deploy/scripts/render-release.sh release \
+            "${{ github.sha }}" "${{ github.sha }}" "$WEB_IMAGE" enabled
+          deploy/tests/manifest-policy.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: okoscope-mvp-${{ github.sha }}
-          path: okoscope-mvp.yaml
+          name: okoscope-kubernetes-${{ github.sha }}
+          path: release/
           if-no-files-found: error
           retention-days: 30

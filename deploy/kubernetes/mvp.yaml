@@ -1,3 +1,4 @@
+# DEPRECATED: retained for one transition release only. See docs/self-hosted-deployment.md.
 apiVersion: v1
 kind: Namespace
 metadata:
