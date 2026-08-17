@@ -88,6 +88,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
                 "protected route overrides bearer security: {method} {path}"
             );
         }
+        assert_success_response_is_typed(&document, operation, path, method);
     }
     let documented = paths
         .values()
@@ -103,4 +104,55 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         LIVE_OPERATIONS.len(),
         "documented route inventory drift"
     );
+}
+
+fn assert_success_response_is_typed(
+    document: &serde_json::Value,
+    operation: &serde_json::Value,
+    path: &str,
+    method: &str,
+) {
+    let responses = operation["responses"]
+        .as_object()
+        .expect("responses object");
+    let (_, response) = responses
+        .iter()
+        .find(|(status, _)| status.starts_with('2'))
+        .unwrap_or_else(|| panic!("missing success response for {method} {path}"));
+    let response = resolve_component(document, response, "responses");
+    let schema = &response["content"]["application/json"]["schema"];
+    assert!(
+        schema.is_object(),
+        "missing JSON success schema for {method} {path}"
+    );
+    let schema = resolve_component(document, schema, "schemas");
+    assert_ne!(
+        schema.get("additionalProperties"),
+        Some(&serde_json::Value::Bool(true)),
+        "untyped success schema for {method} {path}"
+    );
+    assert!(
+        schema.get("properties").is_some()
+            || schema.get("items").is_some()
+            || schema.get("allOf").is_some(),
+        "success schema has no declared shape for {method} {path}"
+    );
+}
+
+fn resolve_component<'a>(
+    document: &'a serde_json::Value,
+    value: &'a serde_json::Value,
+    component_kind: &str,
+) -> &'a serde_json::Value {
+    let Some(reference) = value.get("$ref").and_then(serde_json::Value::as_str) else {
+        return value;
+    };
+    let name = reference
+        .strip_prefix(&format!("#/components/{component_kind}/"))
+        .unwrap_or_else(|| panic!("unexpected component reference {reference}"));
+    resolve_component(
+        document,
+        &document["components"][component_kind][name],
+        component_kind,
+    )
 }

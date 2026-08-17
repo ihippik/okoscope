@@ -12,104 +12,110 @@ paths:
     get:
       operationId: getBuildInfo
       security: []
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/BuildInfoResponse'}}
   /api/v1/organization:
     get:
       operationId: getCurrentOrganization
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "401": {$ref: '#/components/responses/Error'}}
+      responses: {"200": {$ref: '#/components/responses/Organization'}, "401": {$ref: '#/components/responses/Error'}}
   /api/v1/projects:
     get:
       operationId: listProjects
       parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "400": {$ref: '#/components/responses/Error'}}
+      responses: {"200": {$ref: '#/components/responses/ProjectPage'}, "400": {$ref: '#/components/responses/Error'}}
   /api/v1/projects/{project_id}:
     parameters: [{$ref: '#/components/parameters/ProjectId'}]
     get:
       operationId: getProject
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "404": {$ref: '#/components/responses/Error'}}
+      responses: {"200": {$ref: '#/components/responses/Project'}, "404": {$ref: '#/components/responses/Error'}}
   /api/v1/projects/{project_id}/applications:
     parameters: [{$ref: '#/components/parameters/ProjectId'}]
     get:
       operationId: listApplications
       parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "404": {$ref: '#/components/responses/Error'}}
+      responses: {"200": {$ref: '#/components/responses/ApplicationPage'}, "404": {$ref: '#/components/responses/Error'}}
   /api/v1/projects/{project_id}/applications/{application_id}:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
     get:
       operationId: getApplication
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}, "404": {$ref: '#/components/responses/Error'}}
+      responses: {"200": {$ref: '#/components/responses/Application'}, "404": {$ref: '#/components/responses/Error'}}
   /api/v1/runtime-groups:
     get:
       operationId: listRuntimeGroups
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      parameters:
+        - {name: project_id, in: query, required: true, schema: {type: string, format: uuid}}
+        - {name: application_id, in: query, required: true, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses: {"200": {$ref: '#/components/responses/RuntimeGroupPage'}}
   /api/v1/runtime-groups/{group_id}:
     parameters: [{$ref: '#/components/parameters/GroupId'}]
     get:
       operationId: getRuntimeGroup
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/RuntimeGroupDetail'}}
   /api/v1/projects/{project_id}/applications/{application_id}/releases:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
     get:
       operationId: listReleases
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/ReleasePage'}}
     post:
       operationId: createRelease
-      requestBody: {$ref: '#/components/requestBodies/JsonBody'}
-      responses: {"201": {$ref: '#/components/responses/JsonSuccess'}}
+      requestBody: {$ref: '#/components/requestBodies/CreateRelease'}
+      responses: {"201": {$ref: '#/components/responses/Release'}}
   /api/v1/projects/{project_id}/applications/{application_id}/releases/{release_id}:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/ReleaseId'}]
     get:
       operationId: getRelease
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/Release'}}
   /api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/TargetId'}]
     get:
       operationId: getRuntimeDiff
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {"200": {$ref: '#/components/responses/RuntimeDiff'}}
   /api/v1/projects/{project_id}/webhook-destinations:
     parameters: [{$ref: '#/components/parameters/ProjectId'}]
     get:
       operationId: listWebhookDestinations
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/WebhookDestinationList'}}
     post:
       operationId: createWebhookDestination
-      requestBody: {$ref: '#/components/requestBodies/JsonBody'}
-      responses: {"201": {$ref: '#/components/responses/JsonSuccess'}}
+      requestBody: {$ref: '#/components/requestBodies/CreateWebhookDestination'}
+      responses: {"201": {$ref: '#/components/responses/DestinationWithSecret'}}
   /api/v1/projects/{project_id}/webhook-destinations/{destination_id}:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
     get:
       operationId: getWebhookDestination
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/WebhookDestination'}}
     patch:
       operationId: updateWebhookDestination
-      requestBody: {$ref: '#/components/requestBodies/JsonBody'}
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      requestBody: {$ref: '#/components/requestBodies/UpdateWebhookDestination'}
+      responses: {"200": {$ref: '#/components/responses/WebhookDestination'}}
   /api/v1/projects/{project_id}/webhook-destinations/{destination_id}/disable:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
     post:
       operationId: disableWebhookDestination
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/WebhookDestination'}}
   /api/v1/projects/{project_id}/webhook-destinations/{destination_id}/rotate-secret:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
     post:
       operationId: rotateWebhookSecret
-      requestBody: {$ref: '#/components/requestBodies/JsonBody'}
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/DestinationWithSecret'}}
   /api/v1/projects/{project_id}/webhook-destinations/{destination_id}/test:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
     post:
       operationId: testWebhookDestination
-      responses: {"202": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/DeliverySummary'}}
   /api/v1/projects/{project_id}/notification-deliveries:
     parameters: [{$ref: '#/components/parameters/ProjectId'}]
     get:
       operationId: listNotificationDeliveries
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {"200": {$ref: '#/components/responses/DeliveryPage'}}
   /api/v1/projects/{project_id}/notification-deliveries/{delivery_id}:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DeliveryId'}]
     get:
       operationId: getNotificationDelivery
-      responses: {"200": {$ref: '#/components/responses/JsonSuccess'}}
+      responses: {"200": {$ref: '#/components/responses/DeliveryDetail'}}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer}
@@ -126,24 +132,293 @@ components:
   headers:
     RequestId: {schema: {type: string}, description: Correlation identifier for the request.}
   schemas:
-    JsonObject: {type: object, additionalProperties: true}
     Error:
       type: object
+      additionalProperties: false
       required: [error, message, request_id]
       properties:
         error: {type: string, example: not_found}
         message: {type: string, example: resource not found}
         request_id: {type: string, example: 0ec02ed2-8483-4981-893e-bffc535897d7}
+    BuildInfo:
+      type: object
+      additionalProperties: false
+      required: [service_version, git_commit, api_version, required_database_migration]
+      properties:
+        service_version: {type: string, example: 0.1.0}
+        git_commit: {type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a}
+        api_version: {type: string, const: v1}
+        required_database_migration: {type: integer, format: int64, example: 5}
+    Organization:
+      type: object
+      additionalProperties: false
+      required: [id, slug, name, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        slug: {type: string}
+        name: {type: string}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, slug, name, created_at, archived_at, application_count, runtime_group_count]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        slug: {type: string}
+        name: {type: string}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        archived_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        application_count: {type: integer, format: int64, minimum: 0}
+        runtime_group_count: {type: integer, format: int64, minimum: 0}
+    ProjectPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Project'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    Application:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, slug, name, created_at, release_count, runtime_group_count, latest_observed_at]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        project_id: {$ref: '#/components/schemas/Uuid'}
+        slug: {type: string}
+        name: {type: string}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        release_count: {type: integer, format: int64, minimum: 0}
+        runtime_group_count: {type: integer, format: int64, minimum: 0}
+        latest_observed_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    ApplicationPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Application'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    RuntimeGroup:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, application_id, cluster_id, namespace, workload_kind, workload_name, fingerprint_version, event_kind, semantic_summary, status, first_seen_at, last_seen_at, occurrence_count, representative_event_id]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        project_id: {$ref: '#/components/schemas/Uuid'}
+        application_id: {$ref: '#/components/schemas/Uuid'}
+        cluster_id: {$ref: '#/components/schemas/Uuid'}
+        namespace: {type: string}
+        workload_kind: {type: string}
+        workload_name: {type: string}
+        fingerprint_version: {type: integer}
+        event_kind: {type: string}
+        semantic_summary: {type: object, additionalProperties: true}
+        status: {type: string}
+        first_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        last_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        occurrence_count: {type: integer, format: int64, minimum: 0}
+        representative_event_id: {$ref: '#/components/schemas/Uuid'}
+    RuntimeGroupPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/RuntimeGroup'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    EventOccurrence:
+      type: object
+      additionalProperties: false
+      required: [id, event_id, observed_at, node_name, namespace, pod_name, container_name, process_command, event_kind, payload]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        event_id: {$ref: '#/components/schemas/Uuid'}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+        node_name: {type: string}
+        namespace: {type: string}
+        pod_name: {type: string}
+        container_name: {type: string}
+        process_command: {type: string}
+        event_kind: {type: string}
+        payload: {type: object, additionalProperties: true}
+    RuntimeGroupDetail:
+      unevaluatedProperties: false
+      allOf:
+        - {$ref: '#/components/schemas/RuntimeGroup'}
+        - type: object
+          required: [representative_event, recent_occurrences]
+          properties:
+            representative_event: {$ref: '#/components/schemas/EventOccurrence'}
+            recent_occurrences: {type: array, items: {$ref: '#/components/schemas/EventOccurrence'}}
+    Release:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, application_id, version, description, deployed_at, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        project_id: {$ref: '#/components/schemas/Uuid'}
+        application_id: {$ref: '#/components/schemas/Uuid'}
+        version: {type: string, minLength: 1, maxLength: 200}
+        description: {type: [string, 'null'], maxLength: 2000}
+        deployed_at: {$ref: '#/components/schemas/Timestamp'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    ReleasePage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Release'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    CreateRelease:
+      type: object
+      additionalProperties: false
+      required: [version, deployed_at]
+      properties:
+        version: {type: string, minLength: 1, maxLength: 200}
+        description: {type: [string, 'null'], maxLength: 2000}
+        deployed_at: {$ref: '#/components/schemas/Timestamp'}
+    RuntimeDiffEntry:
+      type: object
+      additionalProperties: false
+      required: [group_id, classification, event_kind, semantic_summary, baseline_occurrence_count, baseline_first_seen_at, baseline_last_seen_at, target_occurrence_count, target_first_seen_at, target_last_seen_at]
+      properties:
+        group_id: {$ref: '#/components/schemas/Uuid'}
+        classification: {type: string, enum: [new, disappeared, unchanged]}
+        event_kind: {type: string}
+        semantic_summary: {type: object, additionalProperties: true}
+        baseline_occurrence_count: {type: [integer, 'null'], format: int64}
+        baseline_first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        baseline_last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        target_occurrence_count: {type: [integer, 'null'], format: int64}
+        target_first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        target_last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    RuntimeDiff:
+      type: object
+      additionalProperties: false
+      required: [baseline, target, items, next_cursor]
+      properties:
+        baseline: {oneOf: [{$ref: '#/components/schemas/Release'}, {type: 'null'}]}
+        target: {$ref: '#/components/schemas/Release'}
+        items: {type: array, items: {$ref: '#/components/schemas/RuntimeDiffEntry'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    WebhookDestination:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, name, url, enabled, deliver_backfill, revision, created_at, updated_at, disabled_at]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        project_id: {$ref: '#/components/schemas/Uuid'}
+        name: {type: string}
+        url: {type: string, format: uri}
+        enabled: {type: boolean}
+        deliver_backfill: {type: boolean}
+        revision: {type: integer, format: int64}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+        disabled_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    DestinationWithSecret:
+      unevaluatedProperties: false
+      allOf:
+        - {$ref: '#/components/schemas/WebhookDestination'}
+        - type: object
+          required: [secret]
+          properties: {secret: {type: string}}
+    CreateWebhookDestination:
+      type: object
+      additionalProperties: false
+      required: [name, url]
+      properties:
+        name: {type: string}
+        url: {type: string, format: uri}
+        deliver_backfill: {type: boolean, description: Defaults to false when omitted.}
+    UpdateWebhookDestination:
+      type: object
+      additionalProperties: false
+      required: [revision]
+      properties:
+        name: {type: string}
+        url: {type: string, format: uri}
+        deliver_backfill: {type: boolean}
+        enabled: {type: boolean}
+        revision: {type: integer, format: int64}
+    DeliverySummary:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, destination_id, outbox_message_id, origin, source, event_name, status, available_at, attempt_count, max_attempts, last_error_class, created_at, updated_at, terminal_at]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        project_id: {$ref: '#/components/schemas/Uuid'}
+        destination_id: {$ref: '#/components/schemas/Uuid'}
+        outbox_message_id: {$ref: '#/components/schemas/NullableUuid'}
+        origin: {type: string}
+        source: {type: string}
+        event_name: {type: string}
+        status: {type: string}
+        available_at: {$ref: '#/components/schemas/Timestamp'}
+        attempt_count: {type: integer, format: int32}
+        max_attempts: {type: integer, format: int32}
+        last_error_class: {type: [string, 'null']}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+        terminal_at: {$ref: '#/components/schemas/NullableTimestamp'}
+    DeliveryPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/DeliverySummary'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    DeliveryAttempt:
+      type: object
+      additionalProperties: false
+      required: [id, attempt_number, started_at, finished_at, duration_ms, outcome, http_status, error_class, response_excerpt]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        attempt_number: {type: integer, format: int32}
+        started_at: {$ref: '#/components/schemas/Timestamp'}
+        finished_at: {$ref: '#/components/schemas/Timestamp'}
+        duration_ms: {type: integer, format: int64}
+        outcome: {type: string}
+        http_status: {type: [integer, 'null'], format: int32}
+        error_class: {type: [string, 'null']}
+        response_excerpt: {type: [string, 'null']}
+    DeliveryDetail:
+      unevaluatedProperties: false
+      allOf:
+        - {$ref: '#/components/schemas/DeliverySummary'}
+        - type: object
+          required: [attempts]
+          properties: {attempts: {type: array, items: {$ref: '#/components/schemas/DeliveryAttempt'}}}
+    Uuid: {type: string, format: uuid}
+    NullableUuid: {type: [string, 'null'], format: uuid}
     Timestamp: {type: string, format: date-time, example: '2026-08-17T12:00:00Z'}
+    NullableTimestamp: {type: [string, 'null'], format: date-time}
   requestBodies:
-    JsonBody:
+    CreateRelease:
       required: true
-      content: {application/json: {schema: {$ref: '#/components/schemas/JsonObject'}}}
+      content: {application/json: {schema: {$ref: '#/components/schemas/CreateRelease'}}}
+    CreateWebhookDestination:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/CreateWebhookDestination'}}}
+    UpdateWebhookDestination:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/UpdateWebhookDestination'}}}
   responses:
-    JsonSuccess:
-      description: Successful JSON response
-      headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}
-      content: {application/json: {schema: {$ref: '#/components/schemas/JsonObject'}}}
+    BuildInfoResponse: {description: Build compatibility metadata, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/BuildInfo'}}}}
+    Organization: {description: Current organization, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Organization'}}}}
+    Project: {description: Project summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Project'}}}}
+    ProjectPage: {description: Project page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPage'}}}}
+    Application: {description: Application summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Application'}}}}
+    ApplicationPage: {description: Application page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ApplicationPage'}}}}
+    RuntimeGroupPage: {description: Runtime group page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroupPage'}}}}
+    RuntimeGroupDetail: {description: Runtime group detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroupDetail'}}}}
+    Release: {description: Release, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Release'}}}}
+    ReleasePage: {description: Release page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ReleasePage'}}}}
+    RuntimeDiff: {description: Runtime behavior diff, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeDiff'}}}}
+    WebhookDestination: {description: Webhook destination, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/WebhookDestination'}}}}
+    WebhookDestinationList: {description: Webhook destinations, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/WebhookDestination'}}}}}
+    DestinationWithSecret: {description: Webhook destination with one-time secret, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DestinationWithSecret'}}}}
+    DeliverySummary: {description: Notification delivery summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliverySummary'}}}}
+    DeliveryPage: {description: Notification delivery page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryPage'}}}}
+    DeliveryDetail: {description: Notification delivery detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryDetail'}}}}
     Error:
       description: Correlated API error
       headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}
