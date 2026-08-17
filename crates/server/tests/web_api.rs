@@ -5,6 +5,8 @@ use axum::{
 use server::{
     bootstrap::{BootstrapConfig, bootstrap},
     health,
+    notification::NotificationService,
+    notification_config::NotificationArgs,
     web_api::WebApiConfig,
 };
 use tower::ServiceExt;
@@ -37,6 +39,15 @@ fn request(uri: &str, credential: Option<&str>) -> Request<Body> {
     builder.body(Body::empty()).unwrap()
 }
 
+fn notifications(pool: sqlx::PgPool, enabled: bool) -> NotificationService {
+    let args = NotificationArgs {
+        enabled,
+        encryption_key: Some(hex::encode([7_u8; 32])),
+        ..NotificationArgs::default()
+    };
+    NotificationService::new(pool, args.build(false).unwrap()).unwrap()
+}
+
 async fn json(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
 }
@@ -51,9 +62,9 @@ async fn browser_foundation_is_correlated_cors_safe_and_tenant_scoped(pool: sqlx
     sqlx::query("INSERT INTO releases(id,organization_id,project_id,application_id,version,deployed_at) VALUES($1,$2,$3,$4,'1.0.0',now())")
         .bind(Uuid::new_v4()).bind(first.organization_id).bind(first.project_id).bind(first.application_id).execute(&pool).await.unwrap();
     let app = health::router(
-        pool,
+        pool.clone(),
         true,
-        None,
+        Some(notifications(pool.clone(), false)),
         &WebApiConfig::new(vec!["https://ui.example.com".into()]).unwrap(),
     );
 
@@ -75,6 +86,37 @@ async fn browser_foundation_is_correlated_cors_safe_and_tenant_scoped(pool: sqlx
     assert_eq!(build["api_version"], "v1");
     assert_eq!(build["required_database_migration"], 6);
     assert!(build.get("database_url").is_none());
+
+    let notification_health = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/projects/{}/notification-health",
+                    first.project_id
+                ))
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", first_config.api_credential),
+                )
+                .header("x-request-id", "notification-health-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(notification_health.status(), StatusCode::OK);
+    assert_eq!(
+        notification_health.headers()["x-request-id"],
+        "notification-health-1"
+    );
+    assert_eq!(
+        notification_health.headers()[header::CACHE_CONTROL],
+        "no-store"
+    );
+    let notification_health = json(notification_health).await;
+    assert_eq!(notification_health["state"], "disabled");
+    assert_eq!(notification_health["delivery_enabled"], false);
 
     let unauthorized = app
         .clone()
@@ -171,6 +213,7 @@ async fn browser_foundation_is_correlated_cors_safe_and_tenant_scoped(pool: sqlx
     );
 
     let denied = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("OPTIONS")
@@ -189,6 +232,30 @@ async fn browser_foundation_is_correlated_cors_safe_and_tenant_scoped(pool: sqlx
             .is_none()
     );
     assert_ne!(first.organization_id, second.organization_id);
+
+    pool.close().await;
+    let database_failure = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/projects/{}/notification-health",
+                    first.project_id
+                ))
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", first_config.api_credential),
+                )
+                .header("x-request-id", "notification-health-db-failure")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(database_failure.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        json(database_failure).await["request_id"],
+        "notification-health-db-failure"
+    );
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]

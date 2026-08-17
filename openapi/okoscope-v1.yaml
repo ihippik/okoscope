@@ -146,6 +146,15 @@ paths:
       operationId: listNotificationDeliveries
       parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses: {"200": {$ref: '#/components/responses/DeliveryPage'}}
+  /api/v1/projects/{project_id}/notification-health:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    get:
+      operationId: getNotificationHealth
+      responses:
+        "200": {$ref: '#/components/responses/NotificationHealth'}
+        "401": {$ref: '#/components/responses/Error'}
+        "404": {$ref: '#/components/responses/Error'}
+        "500": {$ref: '#/components/responses/Error'}
   /api/v1/projects/{project_id}/notification-deliveries/{delivery_id}:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DeliveryId'}]
     get:
@@ -443,6 +452,22 @@ components:
         - type: object
           required: [attempts]
           properties: {attempts: {type: array, items: {$ref: '#/components/schemas/DeliveryAttempt'}}}
+    NotificationHealth:
+      type: object
+      additionalProperties: false
+      required: [state, delivery_enabled, enabled_destination_count, pending_count, due_count, retrying_count, in_flight_count, expired_lease_count, failed_count, oldest_due_age_seconds, observed_at]
+      properties:
+        state: {type: string, enum: [disabled, idle, backlogged, retrying, failing, draining]}
+        delivery_enabled: {type: boolean}
+        enabled_destination_count: {type: integer, format: int64, minimum: 0}
+        pending_count: {type: integer, format: int64, minimum: 0}
+        due_count: {type: integer, format: int64, minimum: 0}
+        retrying_count: {type: integer, format: int64, minimum: 0}
+        in_flight_count: {type: integer, format: int64, minimum: 0}
+        expired_lease_count: {type: integer, format: int64, minimum: 0}
+        failed_count: {type: integer, format: int64, minimum: 0}
+        oldest_due_age_seconds: {type: [integer, 'null'], format: int64, minimum: 0}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
     Uuid: {type: string, format: uuid}
     NullableUuid: {type: [string, 'null'], format: uuid}
     Timestamp: {type: string, format: date-time, example: '2026-08-17T12:00:00Z'}
@@ -477,6 +502,7 @@ components:
     DeliverySummary: {description: Notification delivery summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliverySummary'}}}}
     DeliveryPage: {description: Notification delivery page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryPage'}}}}
     DeliveryDetail: {description: Notification delivery detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryDetail'}}}}
+    NotificationHealth: {description: Secret-free Project notification health snapshot, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/NotificationHealth'}}}}
     Error:
       description: Correlated API error
       headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}

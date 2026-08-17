@@ -13,6 +13,7 @@ use crate::auth::{ApiCredentialAuthenticator, ApiPrincipal};
 
 use super::{
     NotificationService,
+    health::{NotificationHealthResponse, load_project_snapshot},
     repository::{DestinationError, DestinationRepository, DestinationUpdate, WebhookDestination},
     webhook::{WebhookPolicy, parse_url, resolve_target},
     worker::{
@@ -60,6 +61,10 @@ pub fn router(pool: PgPool, service: NotificationService) -> Router {
         .route(
             "/api/v1/projects/{project_id}/notification-deliveries",
             get(list_delivery_history),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notification-health",
+            get(notification_health),
         )
         .route(
             "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}",
@@ -359,6 +364,28 @@ async fn list_delivery_history(
     )
     .await?;
     Ok(Json(DeliveryList { items, next_cursor }))
+}
+
+async fn notification_health(
+    State(state): State<NotificationApiState>,
+    headers: HeaderMap,
+    Path(project_id): Path<Uuid>,
+) -> Result<Json<NotificationHealthResponse>, ApiError> {
+    let principal = principal(&headers, &state).await?;
+    if !state
+        .destinations
+        .project_owned(principal.organization_id, project_id)
+        .await?
+    {
+        return Err(ApiError::NotFound);
+    }
+    let snapshot =
+        load_project_snapshot(&state.service.pool, principal.organization_id, project_id).await?;
+    Ok(Json(NotificationHealthResponse::from_snapshot(
+        state.service.config.enabled,
+        crate::metrics::notification_worker_is_draining(),
+        &snapshot,
+    )))
 }
 
 async fn get_delivery_history(

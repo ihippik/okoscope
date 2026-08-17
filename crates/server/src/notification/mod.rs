@@ -1,5 +1,6 @@
 pub mod api;
 pub mod crypto;
+pub mod health;
 pub mod repository;
 pub mod webhook;
 pub mod worker;

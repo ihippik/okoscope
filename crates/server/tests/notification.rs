@@ -18,6 +18,7 @@ use server::{
     ingestion::{IngestionContext, persist_batch},
     notification::{
         NotificationService,
+        health::{NotificationHealthResponse, NotificationHealthState, load_project_snapshot},
         webhook::{WebhookEnvelope, signature},
         worker::{claim_due, materialize_once, process_claim, test_destination},
     },
@@ -311,6 +312,80 @@ async fn disabled_then_enabled_preserves_and_delivers_backlog(pool: sqlx::PgPool
         "succeeded"
     );
     task.abort();
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn project_health_snapshot_covers_durable_states(pool: sqlx::PgPool) {
+    let (ids, _) = tenant(&pool, "notify-health-states").await;
+    let service = service(pool.clone());
+    let (destination, _) = service
+        .destinations
+        .create(
+            ids.organization_id,
+            ids.project_id,
+            "health",
+            "http://127.0.0.1:12345/hook",
+            false,
+        )
+        .await
+        .unwrap();
+    let empty = load_project_snapshot(&pool, ids.organization_id, ids.project_id)
+        .await
+        .unwrap();
+    assert_eq!(empty.enabled_destination_count, 1);
+    assert_eq!(
+        NotificationHealthResponse::from_snapshot(true, false, &empty).state,
+        NotificationHealthState::Idle
+    );
+
+    let delivery_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO notification_deliveries(id,organization_id,project_id,destination_id,origin,source,event_name,payload,status,available_at,attempt_count,max_attempts) VALUES($1,$2,$3,$4,'test','test','okoscope.test','{}','pending',now()+interval '1 minute',0,3)")
+        .bind(delivery_id).bind(ids.organization_id).bind(ids.project_id).bind(destination.id).execute(&pool).await.unwrap();
+    let future = load_project_snapshot(&pool, ids.organization_id, ids.project_id)
+        .await
+        .unwrap();
+    assert_eq!(future.pending_count, 1);
+    assert_eq!(future.due_count, 0);
+    assert_eq!(future.oldest_due_age_seconds, None);
+    assert_eq!(
+        NotificationHealthResponse::from_snapshot(true, false, &future).state,
+        NotificationHealthState::Backlogged
+    );
+    sqlx::query("UPDATE notification_deliveries SET available_at=now()-interval '5 seconds',attempt_count=1 WHERE id=$1")
+        .bind(delivery_id).execute(&pool).await.unwrap();
+    let retrying = load_project_snapshot(&pool, ids.organization_id, ids.project_id)
+        .await
+        .unwrap();
+    assert_eq!(retrying.pending_count, 1);
+    assert_eq!(retrying.due_count, 1);
+    assert_eq!(retrying.retrying_count, 1);
+    assert!(retrying.oldest_due_age_seconds.is_some_and(|age| age >= 5));
+    assert_eq!(
+        NotificationHealthResponse::from_snapshot(true, false, &retrying).state,
+        NotificationHealthState::Retrying
+    );
+
+    sqlx::query("UPDATE notification_deliveries SET status='in_flight',lease_owner=$2,lease_expires_at=now()-interval '1 second' WHERE id=$1")
+        .bind(delivery_id).bind(Uuid::new_v4()).execute(&pool).await.unwrap();
+    let draining = load_project_snapshot(&pool, ids.organization_id, ids.project_id)
+        .await
+        .unwrap();
+    assert_eq!(draining.expired_lease_count, 1);
+    assert_eq!(
+        NotificationHealthResponse::from_snapshot(false, false, &draining).state,
+        NotificationHealthState::Draining
+    );
+
+    sqlx::query("UPDATE notification_deliveries SET status='failed',lease_owner=NULL,lease_expires_at=NULL,terminal_at=now() WHERE id=$1")
+        .bind(delivery_id).execute(&pool).await.unwrap();
+    let failed = load_project_snapshot(&pool, ids.organization_id, ids.project_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        NotificationHealthResponse::from_snapshot(true, false, &failed).state,
+        NotificationHealthState::Failing
+    );
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
@@ -619,7 +694,7 @@ async fn retries_suppresses_backfill_and_test_is_outbox_independent(pool: sqlx::
 async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: sqlx::PgPool) {
     let (url, _receiver, task) = spawn_receiver(vec![StatusCode::OK]).await;
     let (first, _) = tenant(&pool, "notify-api-first").await;
-    let (_second, _) = tenant(&pool, "notify-api-second").await;
+    let (second, _) = tenant(&pool, "notify-api-second").await;
     let service = service(pool.clone());
     let app = server::notification::api::router(pool, service);
     let create_uri = format!("/api/v1/projects/{}/webhook-destinations", first.project_id);
@@ -703,6 +778,7 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
         .unwrap();
     assert_eq!(tested.status(), StatusCode::OK);
     let deliveries = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri(format!(
@@ -720,5 +796,58 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
         serde_json::from_slice(&to_bytes(deliveries.into_body(), usize::MAX).await.unwrap())
             .unwrap();
     assert_eq!(body["items"].as_array().unwrap().len(), 1);
+
+    let health_uri = format!("/api/v1/projects/{}/notification-health", first.project_id);
+    let health = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&health_uri)
+                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::OK);
+    let health_text = String::from_utf8(
+        to_bytes(health.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(!health_text.contains("secret"));
+    assert!(!health_text.contains(&url));
+    let health: serde_json::Value = serde_json::from_str(&health_text).unwrap();
+    assert_eq!(health["delivery_enabled"], true);
+    assert_eq!(health["state"], "idle");
+    assert!(health["observed_at"].is_string());
+
+    let foreign_health = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/projects/{}/notification-health",
+                    second.project_id
+                ))
+                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign_health.status(), StatusCode::NOT_FOUND);
+    let unauthorized_health = app
+        .oneshot(
+            Request::builder()
+                .uri(&health_uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthorized_health.status(), StatusCode::UNAUTHORIZED);
     task.abort();
 }

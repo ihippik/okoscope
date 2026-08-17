@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use sqlx::PgPool;
 
+use crate::notification::health::{derive_state, load_global_snapshot};
+
 static GROUPING_COUNT: AtomicU64 = AtomicU64::new(0);
 static GROUPING_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
 static GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
@@ -88,6 +90,10 @@ pub fn record_notification_drain(completed: bool) {
     NOTIFICATION_DRAIN_TIMEOUTS.fetch_add(u64::from(!completed), Ordering::Relaxed);
 }
 
+pub fn notification_worker_is_draining() -> bool {
+    NOTIFICATION_WORKER_RUNTIME_STATE.load(Ordering::Relaxed) == 5
+}
+
 pub fn record_release_attribution(provided: bool, resolved: bool) {
     match (provided, resolved) {
         (_, true) => &RELEASE_ATTRIBUTED,
@@ -149,51 +155,21 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
             "database metrics unavailable\n".to_owned(),
         );
     };
-    let delivery_depth = sqlx::query_as::<_, (i64, i64, i64, i64, i64, i64)>(
-        "SELECT count(*) FILTER (WHERE status='pending'), count(*) FILTER (WHERE status='pending' AND available_at<=now()), count(*) FILTER (WHERE status='pending' AND attempt_count>0), count(*) FILTER (WHERE status='in_flight'), count(*) FILTER (WHERE status='in_flight' AND lease_expires_at<=now()), count(*) FILTER (WHERE status='failed') FROM notification_deliveries",
-    )
-    .fetch_one(pool)
-    .await;
-    let Ok((
-        pending_deliveries,
-        due_deliveries,
-        retrying_deliveries,
-        in_flight_deliveries,
-        expired_leases,
-        failed_deliveries,
-    )) = delivery_depth
-    else {
+    let Ok(notification) = load_global_snapshot(pool).await else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "database metrics unavailable\n".to_owned(),
         );
     };
-    let oldest_due_seconds = sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(EXTRACT(EPOCH FROM now()-min(available_at))::bigint,0) FROM notification_deliveries WHERE status='pending' AND available_at<=now()",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or_default();
-    let enabled_destinations = sqlx::query_scalar::<_, i64>(
-        "SELECT count(*) FROM webhook_destinations WHERE enabled=true",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or_default();
     let runtime_state = NOTIFICATION_WORKER_RUNTIME_STATE.load(Ordering::Relaxed);
-    let worker_state = if !state.notification_enabled {
-        0
-    } else if runtime_state == 5 {
-        5
-    } else if runtime_state == 4 {
-        4
-    } else if retrying_deliveries > 0 {
-        3
-    } else if due_deliveries > 0 {
-        2
-    } else {
-        1
-    };
+    let mut worker_state = derive_state(
+        state.notification_enabled,
+        runtime_state == 5,
+        &notification,
+    );
+    if runtime_state == 4 && state.notification_enabled {
+        worker_state = crate::notification::health::NotificationHealthState::Failing;
+    }
     let release_summary_count =
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM runtime_event_group_releases")
             .fetch_one(pool)
@@ -241,10 +217,13 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
             "okoscope_notification_worker_enabled",
             u64::from(state.notification_enabled),
         ),
-        ("okoscope_notification_worker_state", worker_state),
+        (
+            "okoscope_notification_worker_state",
+            worker_state.metric_code(),
+        ),
         (
             "okoscope_notification_enabled_destinations",
-            u64::try_from(enabled_destinations).unwrap_or_default(),
+            u64::try_from(notification.enabled_destination_count).unwrap_or_default(),
         ),
         (
             "okoscope_notification_materialized_total",
@@ -280,31 +259,32 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         ),
         (
             "okoscope_notification_pending",
-            u64::try_from(pending_deliveries).unwrap_or_default(),
+            u64::try_from(notification.pending_count).unwrap_or_default(),
         ),
         (
             "okoscope_notification_due",
-            u64::try_from(due_deliveries).unwrap_or_default(),
+            u64::try_from(notification.due_count).unwrap_or_default(),
         ),
         (
             "okoscope_notification_retrying",
-            u64::try_from(retrying_deliveries).unwrap_or_default(),
+            u64::try_from(notification.retrying_count).unwrap_or_default(),
         ),
         (
             "okoscope_notification_oldest_due_seconds",
-            u64::try_from(oldest_due_seconds.max(0)).unwrap_or_default(),
+            u64::try_from(notification.oldest_due_age_seconds.unwrap_or_default())
+                .unwrap_or_default(),
         ),
         (
             "okoscope_notification_in_flight",
-            u64::try_from(in_flight_deliveries).unwrap_or_default(),
+            u64::try_from(notification.in_flight_count).unwrap_or_default(),
         ),
         (
             "okoscope_notification_expired_leases",
-            u64::try_from(expired_leases).unwrap_or_default(),
+            u64::try_from(notification.expired_lease_count).unwrap_or_default(),
         ),
         (
             "okoscope_notification_failed",
-            u64::try_from(failed_deliveries).unwrap_or_default(),
+            u64::try_from(notification.failed_count).unwrap_or_default(),
         ),
         (
             "okoscope_notification_cycle_failures_total",

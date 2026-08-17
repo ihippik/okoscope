@@ -62,6 +62,7 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "/api/v1/projects/{project_id}/notification-deliveries/{delivery_id}",
         "get",
     ),
+    ("/api/v1/projects/{project_id}/notification-health", "get"),
 ];
 
 #[test]
@@ -158,12 +159,34 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         document["components"]["schemas"]["FirstSeenNotificationSummary"]["additionalProperties"],
         false
     );
+    assert_notification_health_contract(&document);
     assert_query_parameters(
         &document,
         "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
         "get",
         &["baseline_id", "cursor", "limit"],
     );
+}
+
+fn assert_notification_health_contract(document: &serde_json::Value) {
+    let schema = &document["components"]["schemas"]["NotificationHealth"];
+    assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(
+        schema["properties"]["state"]["enum"],
+        serde_json::json!([
+            "disabled",
+            "idle",
+            "backlogged",
+            "retrying",
+            "failing",
+            "draining"
+        ])
+    );
+    assert!(schema["required"].as_array().is_some_and(|fields| {
+        ["state", "delivery_enabled", "observed_at"]
+            .iter()
+            .all(|field| fields.iter().any(|item| item == field))
+    }));
 }
 
 fn assert_query_parameters(
