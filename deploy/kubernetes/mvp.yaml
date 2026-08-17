@@ -83,8 +83,6 @@ spec:
             - {name: OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED, value: "false"}
             - {name: OKOSCOPE_NOTIFICATION_CONCURRENCY, value: "8"}
             - {name: OKOSCOPE_WEBHOOK_TIMEOUT_SECONDS, value: "10"}
-            # Comma-separated exact browser origins; empty disables cross-origin access.
-            - {name: OKOSCOPE_CORS_ORIGINS, value: ""}
             - {name: OKOSCOPE_MIGRATE, value: "true"}
             - {name: OKOSCOPE_DEVELOPMENT_PLAINTEXT, value: "true"}
             - {name: RUST_LOG, value: info}
