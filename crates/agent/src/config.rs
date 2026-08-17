@@ -53,6 +53,7 @@ pub struct WorkloadSelector {
     pub namespace: String,
     pub kind: String,
     pub name: String,
+    pub release: Option<String>,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
 }
@@ -126,7 +127,12 @@ pub enum ConfigError {
 
 impl AgentConfig {
     pub fn from_yaml(input: &str, architecture: Architecture) -> Result<Self, ConfigError> {
-        let config: Self = serde_yaml::from_str(input)?;
+        let mut config: Self = serde_yaml::from_str(input)?;
+        for selector in &mut config.scope.workloads {
+            if let Some(release) = &mut selector.release {
+                *release = release.trim().to_owned();
+            }
+        }
         config.validate(architecture)?;
         Ok(config)
     }
@@ -169,6 +175,13 @@ impl AgentConfig {
                     "namespace, kind, and name are required".into(),
                 ));
             }
+            if let Some(release) = &selector.release
+                && (release.is_empty() || release.len() > 200)
+            {
+                return Err(ConfigError::InvalidSelector(
+                    "release must be trimmed and contain 1..=200 bytes".into(),
+                ));
+            }
         }
         for name in &self.observation.syscalls {
             syscall::resolve(name, architecture)?;
@@ -209,6 +222,32 @@ observation:
     fn parses_strict_valid_configuration() {
         let config = AgentConfig::from_yaml(VALID, Architecture::X86_64).unwrap();
         assert_eq!(config.scope.workloads.len(), 1);
+    }
+
+    #[test]
+    fn release_is_optional_bounded_and_trimmed() {
+        let with_release = VALID.replace(
+            "      name: payment-api",
+            "      name: payment-api\n      release: 1.7.2",
+        );
+        let config = AgentConfig::from_yaml(&with_release, Architecture::X86_64).unwrap();
+        assert_eq!(config.scope.workloads[0].release.as_deref(), Some("1.7.2"));
+        let normalized = AgentConfig::from_yaml(
+            &with_release.replace("1.7.2", "\" 1.7.2 \""),
+            Architecture::X86_64,
+        )
+        .unwrap();
+        assert_eq!(
+            normalized.scope.workloads[0].release.as_deref(),
+            Some("1.7.2")
+        );
+        assert!(
+            AgentConfig::from_yaml(
+                &with_release.replace("1.7.2", &"x".repeat(201)),
+                Architecture::X86_64
+            )
+            .is_err()
+        );
     }
 
     #[test]

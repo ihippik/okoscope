@@ -40,6 +40,8 @@ pub struct KubernetesAttribution {
     pub workload_uid: String,
     pub workload_kind: String,
     pub workload_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -80,6 +80,7 @@ message KubernetesAttribution {
   string workload_uid = 9;
   string workload_kind = 10;
   string workload_name = 11;
+  optional string release = 12;
 }
 
 message ProcessIdentity {

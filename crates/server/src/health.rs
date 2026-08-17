@@ -30,6 +30,7 @@ pub fn router(
             }),
         )
         .merge(api::router((*pool).clone()))
+        .merge(crate::releases::router((*pool).clone()))
         .merge(metrics::router((*pool).clone()));
     if let Some(notifications) = notifications {
         router.merge(crate::notification::api::router(

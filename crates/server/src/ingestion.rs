@@ -60,14 +60,34 @@ async fn persist_event(
     if !owned {
         return Err(IngestionError::InvalidOwnership);
     }
+    let release_id: Option<Uuid> = if let Some(version) = event.attribution.release.as_deref() {
+        sqlx::query_scalar(
+            "SELECT id FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND version=$4",
+        )
+        .bind(context.scope.organization_id)
+        .bind(event.attribution.project_id)
+        .bind(event.attribution.application_id)
+        .bind(version)
+        .fetch_optional(&mut **tx)
+        .await?
+    } else {
+        None
+    };
+    crate::metrics::record_release_attribution(
+        event.attribution.release.is_some(),
+        release_id.is_some(),
+    );
+    if event.attribution.release.is_some() && release_id.is_none() {
+        tracing::warn!(application_id=%event.attribution.application_id, "runtime event release attribution unresolved");
+    }
     let cgroup_id =
         i64::try_from(event.process.cgroup_id).map_err(|_| IngestionError::CgroupOverflow)?;
     let raw_event_id = Uuid::new_v4();
     let inserted: Option<Uuid> = sqlx::query_scalar(
-        "INSERT INTO runtime_events (id, event_id, organization_id, project_id, cluster_id, application_id, agent_id, observed_at, node_name, namespace, pod_uid, pod_name, container_id, container_name, workload_uid, workload_kind, workload_name, cgroup_id, pid, tgid, process_command, event_kind, event_schema_version, payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) ON CONFLICT (agent_id, event_id) DO NOTHING RETURNING id",
+        "INSERT INTO runtime_events (id, event_id, organization_id, project_id, cluster_id, application_id, agent_id, release_id, observed_at, node_name, namespace, pod_uid, pod_name, container_id, container_name, workload_uid, workload_kind, workload_name, cgroup_id, pid, tgid, process_command, event_kind, event_schema_version, payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) ON CONFLICT (agent_id, event_id) DO NOTHING RETURNING id",
     )
     .bind(raw_event_id).bind(event.id).bind(context.scope.organization_id).bind(event.attribution.project_id)
-    .bind(context.scope.cluster_id).bind(event.attribution.application_id).bind(context.agent_id).bind(event.observed_at)
+    .bind(context.scope.cluster_id).bind(event.attribution.application_id).bind(context.agent_id).bind(release_id).bind(event.observed_at)
     .bind(&event.attribution.node_name).bind(&event.attribution.namespace).bind(&event.attribution.pod_uid).bind(&event.attribution.pod_name)
     .bind(&event.attribution.container_id).bind(&event.attribution.container_name).bind(&event.attribution.workload_uid)
     .bind(&event.attribution.workload_kind).bind(&event.attribution.workload_name).bind(cgroup_id).bind(i64::from(event.process.pid))
@@ -86,6 +106,14 @@ async fn persist_event(
         workload_kind: &event.attribution.workload_kind,
         workload_name: &event.attribution.workload_name,
     };
-    assign_event(tx, raw_event_id, &scope, event, GroupingSource::Live).await?;
+    assign_event(
+        tx,
+        raw_event_id,
+        release_id,
+        &scope,
+        event,
+        GroupingSource::Live,
+    )
+    .await?;
     Ok(1)
 }

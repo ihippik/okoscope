@@ -115,6 +115,7 @@ mod tests {
                 workload_uid: "w".into(),
                 workload_kind: "Deployment".into(),
                 workload_name: "app".into(),
+                release: None,
             },
             process: ProcessIdentity {
                 cgroup_id: 1,

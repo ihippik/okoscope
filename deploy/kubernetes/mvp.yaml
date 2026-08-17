@@ -143,6 +143,7 @@ data:
           namespace: okoscope-demo
           kind: Deployment
           name: payment-api
+          # release: 1.7.2 # Create this Application release through the API first.
           labels: {app: payment-api}
     observation:
       processExec: true

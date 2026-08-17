@@ -9,6 +9,7 @@ pub mod ingestion;
 pub mod metrics;
 pub mod notification;
 pub mod notification_config;
+pub mod releases;
 pub mod repository;
 pub mod session;
 pub mod transport;

@@ -106,8 +106,15 @@ pub async fn run(pool: &PgPool, options: BackfillOptions) -> Result<BackfillStat
                 workload_kind: &row.workload_kind,
                 workload_name: &row.workload_name,
             };
-            let outcome =
-                assign_event(&mut tx, row.id, &scope, &event, GroupingSource::Backfill).await?;
+            let outcome = assign_event(
+                &mut tx,
+                row.id,
+                None,
+                &scope,
+                &event,
+                GroupingSource::Backfill,
+            )
+            .await?;
             stats.scanned = stats.scanned.saturating_add(1);
             stats.grouped = stats
                 .grouped
@@ -151,6 +158,7 @@ impl BackfillEvent {
                 workload_uid: self.workload_uid.clone(),
                 workload_kind: self.workload_kind.clone(),
                 workload_name: self.workload_name.clone(),
+                release: None,
             },
             process: ProcessIdentity {
                 cgroup_id: u64::try_from(self.cgroup_id).unwrap_or(u64::MAX),

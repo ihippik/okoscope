@@ -92,6 +92,7 @@ pub struct GroupingOutcome {
 pub async fn assign_event(
     tx: &mut Transaction<'_, Postgres>,
     raw_event_id: Uuid,
+    release_id: Option<Uuid>,
     scope: &TrustedGroupingScope<'_>,
     event: &RuntimeEvent,
     source: GroupingSource,
@@ -142,7 +143,7 @@ pub async fn assign_event(
     };
 
     let membership_created = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO runtime_event_group_memberships (organization_id, project_id, application_id, event_id, group_id, fingerprint_version) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (event_id, fingerprint_version) DO NOTHING RETURNING event_id",
+        "INSERT INTO runtime_event_group_memberships (organization_id, project_id, application_id, event_id, group_id, fingerprint_version, release_id) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (event_id, fingerprint_version) DO NOTHING RETURNING event_id",
     )
     .bind(scope.organization_id)
     .bind(scope.project_id)
@@ -150,6 +151,7 @@ pub async fn assign_event(
     .bind(raw_event_id)
     .bind(group_id)
     .bind(version)
+    .bind(release_id)
     .fetch_optional(&mut **tx)
     .await?
     .is_some();
@@ -162,6 +164,10 @@ pub async fn assign_event(
         .bind(event.observed_at)
         .execute(&mut **tx)
         .await?;
+    }
+
+    if membership_created && let Some(release_id) = release_id {
+        update_release_summary(tx, scope, release_id, group_id, raw_event_id, event).await?;
     }
 
     if group_created {
@@ -195,6 +201,24 @@ pub async fn assign_event(
     );
     tracing::debug!(group_id=%group_id, group_created, membership_created, source=source.as_str(), "runtime event grouped");
     Ok(outcome)
+}
+
+async fn update_release_summary(
+    tx: &mut Transaction<'_, Postgres>,
+    scope: &TrustedGroupingScope<'_>,
+    release_id: Uuid,
+    group_id: Uuid,
+    raw_event_id: Uuid,
+    event: &RuntimeEvent,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO runtime_event_group_releases (organization_id,project_id,application_id,release_id,group_id,occurrence_count,first_seen_at,last_seen_at,representative_event_id) VALUES ($1,$2,$3,$4,$5,1,$6,$6,$7) ON CONFLICT (release_id,group_id) DO UPDATE SET occurrence_count=runtime_event_group_releases.occurrence_count+1,first_seen_at=LEAST(runtime_event_group_releases.first_seen_at,EXCLUDED.first_seen_at),last_seen_at=GREATEST(runtime_event_group_releases.last_seen_at,EXCLUDED.last_seen_at),updated_at=now()",
+    )
+    .bind(scope.organization_id).bind(scope.project_id).bind(scope.application_id)
+    .bind(release_id).bind(group_id).bind(event.observed_at).bind(raw_event_id)
+    .execute(&mut **tx).await?;
+    crate::metrics::record_release_summary();
+    Ok(())
 }
 
 pub fn fingerprint_v1(
@@ -298,6 +322,7 @@ mod tests {
                 workload_uid: "deployment-uid-a".into(),
                 workload_kind: "Deployment".into(),
                 workload_name: "payment-api".into(),
+                release: None,
             },
             process: ProcessIdentity {
                 cgroup_id: 10,

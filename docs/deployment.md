@@ -98,7 +98,7 @@ Apply additive migrations before or together with a compatible server, then roll
 
 Rollback removes or restores the DaemonSet first, then restores the server image. Do not delete the StatefulSet PVC or run reverse/destructive migrations. Database removal is a separate operator-approved action.
 
-Known limits: one tested Linux profile, Deployment owner chains only, in-memory agent delivery buffer, no raw-event retention policy, no release-aware diffs or UI, shared per-cluster agent credential, and no enforcement or external notification delivery.
+Known limits: one tested Linux profile, Deployment owner chains only, in-memory agent delivery buffer, no raw-event retention policy or UI, a shared per-cluster agent credential, and no enforcement or risk scoring.
 
 ## Runtime event grouping upgrade
 
@@ -166,3 +166,42 @@ After configuring a test destination, enable the worker with `OKOSCOPE_NOTIFICAT
 Inspect delivery health through `/metrics`, the Project delivery APIs, and `deploy/queries/notification-delivery.sql`. Retryable network/timeouts and HTTP 408/425/429/5xx responses use capped exponential backoff with jitter. Other 4xx and exhausted retries become terminal failures. Response excerpts are truncated and headers are not stored.
 
 To recover from a worker outage, restore outbound connectivity and restart the server; expired leases are reclaimed automatically. To roll back, set delivery enabled to false and deploy the prior image. Pending outbox and delivery rows remain durable. Do not drop migration `0004` during a service rollback.
+
+## Release runtime diff
+
+Migration `0005_release_runtime_diff.sql` is additive. Create an Application release before configuring agents to emit its version:
+
+```sh
+curl -X POST \
+  -H 'Authorization: Bearer <api-credential>' \
+  -H 'Content-Type: application/json' \
+  http://localhost:8080/api/v1/projects/<project-uuid>/applications/<application-uuid>/releases \
+  -d '{"version":"1.7.2","deployed_at":"2026-08-16T20:00:00Z"}'
+```
+
+Then set the optional value on the matching workload selector and restart the agent DaemonSet:
+
+```yaml
+scope:
+  workloads:
+    - projectId: <project-uuid>
+      applicationId: <application-uuid>
+      namespace: production
+      kind: Deployment
+      name: payment-api
+      release: 1.7.2
+```
+
+Agents without `release` remain compatible. Unknown versions do not reject events: they are stored without release attribution and counted by `okoscope_release_unknown_total`. Create releases before rolling out agent configuration to avoid gaps.
+
+List releases and compare a target with its automatically selected previous release:
+
+```sh
+curl -H 'Authorization: Bearer <api-credential>' \
+  'http://localhost:8080/api/v1/projects/<project-uuid>/applications/<application-uuid>/releases?limit=50'
+
+curl -H 'Authorization: Bearer <api-credential>' \
+  'http://localhost:8080/api/v1/projects/<project-uuid>/applications/<application-uuid>/releases/<target-release-uuid>/runtime-diff?limit=50'
+```
+
+Pass `baseline_id=<release-uuid>` for an explicit comparison. Entries are `new`, `disappeared`, or `unchanged`; baseline and target counts are returned separately. Inspect attribution and summary state with `deploy/queries/release-runtime-diff.sql`. Rollback can deploy the prior binaries while leaving migration `0005` in place; do not drop its nullable columns or tables while attributed data exists.

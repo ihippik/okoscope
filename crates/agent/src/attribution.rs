@@ -221,6 +221,7 @@ impl AttributionCache {
             workload_uid,
             workload_kind,
             workload_name,
+            release: selector.release.clone(),
         })
     }
 }
@@ -397,6 +398,7 @@ mod tests {
             namespace: "production".into(),
             kind: "Deployment".into(),
             name: "payment-api".into(),
+            release: Some("1.7.2".into()),
             labels: BTreeMap::from([("app".into(), "payment-api".into())]),
         };
         let result = cache
@@ -404,6 +406,7 @@ mod tests {
             .unwrap();
         assert_eq!(result.workload_uid, "deployment-uid");
         assert_eq!(result.container_name, "payment-api");
+        assert_eq!(result.release.as_deref(), Some("1.7.2"));
         let other = WorkloadSelector {
             name: "other".into(),
             ..selector

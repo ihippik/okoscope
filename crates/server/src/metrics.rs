@@ -18,6 +18,11 @@ static NOTIFICATION_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_RETRIES: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_TERMINAL_FAILURES: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_DURATION_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
+static RELEASE_ATTRIBUTED: AtomicU64 = AtomicU64::new(0);
+static RELEASE_ABSENT: AtomicU64 = AtomicU64::new(0);
+static RELEASE_UNKNOWN: AtomicU64 = AtomicU64::new(0);
+static RELEASE_SUMMARY_UPDATES: AtomicU64 = AtomicU64::new(0);
+static RELEASE_DIFF_REQUESTS: AtomicU64 = AtomicU64::new(0);
 
 pub fn record_grouping(elapsed_micros: u64, group_created: bool) {
     GROUPING_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -55,6 +60,23 @@ pub fn record_notification_attempt(duration_micros: u64, retry: bool, terminal_f
     NOTIFICATION_TERMINAL_FAILURES.fetch_add(u64::from(terminal_failure), Ordering::Relaxed);
 }
 
+pub fn record_release_attribution(provided: bool, resolved: bool) {
+    match (provided, resolved) {
+        (_, true) => &RELEASE_ATTRIBUTED,
+        (true, false) => &RELEASE_UNKNOWN,
+        (false, false) => &RELEASE_ABSENT,
+    }
+    .fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_release_summary() {
+    RELEASE_SUMMARY_UPDATES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_release_diff() {
+    RELEASE_DIFF_REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn router(pool: PgPool) -> Router {
     Router::new()
         .route("/metrics", get(render))
@@ -80,6 +102,16 @@ async fn render(State(pool): State<PgPool>) -> impl IntoResponse {
     .fetch_one(&pool)
     .await;
     let Ok((pending_deliveries, in_flight_deliveries, expired_leases)) = delivery_depth else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database metrics unavailable\n".to_owned(),
+        );
+    };
+    let release_summary_count =
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM runtime_event_group_releases")
+            .fetch_one(&pool)
+            .await;
+    let Ok(release_summary_count) = release_summary_count else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "database metrics unavailable\n".to_owned(),
@@ -161,6 +193,30 @@ async fn render(State(pool): State<PgPool>) -> impl IntoResponse {
         (
             "okoscope_notification_expired_leases",
             u64::try_from(expired_leases).unwrap_or_default(),
+        ),
+        (
+            "okoscope_release_attributed_total",
+            RELEASE_ATTRIBUTED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_release_absent_total",
+            RELEASE_ABSENT.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_release_unknown_total",
+            RELEASE_UNKNOWN.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_release_summary_updates_total",
+            RELEASE_SUMMARY_UPDATES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_release_summaries",
+            u64::try_from(release_summary_count).unwrap_or_default(),
+        ),
+        (
+            "okoscope_release_diff_requests_total",
+            RELEASE_DIFF_REQUESTS.load(Ordering::Relaxed),
         ),
     ];
     let mut body = String::new();

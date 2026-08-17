@@ -71,6 +71,7 @@ impl From<RuntimeEvent> for v1::RuntimeEvent {
                 workload_uid: a.workload_uid,
                 workload_kind: a.workload_kind,
                 workload_name: a.workload_name,
+                release: a.release,
             }),
             process: Some(v1::ProcessIdentity {
                 cgroup_id: p.cgroup_id,
@@ -116,6 +117,10 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
             workload_uid: a.workload_uid,
             workload_kind: a.workload_kind,
             workload_name: a.workload_name,
+            release: a.release.and_then(|value| {
+                let value = value.trim().to_owned();
+                (!value.is_empty() && value.len() <= 200).then_some(value)
+            }),
         };
         let p = event.process.ok_or(ProtocolError::Missing("process"))?;
         let process = ProcessIdentity {
@@ -185,6 +190,7 @@ mod tests {
                 workload_uid: "deployment-uid".into(),
                 workload_kind: "Deployment".into(),
                 workload_name: "payment-api".into(),
+                release: None,
             },
             process: ProcessIdentity {
                 cgroup_id: 42,
@@ -204,6 +210,25 @@ mod tests {
         let original = event();
         let decoded = RuntimeEvent::try_from(v1::RuntimeEvent::from(original.clone())).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn optional_release_round_trips_and_old_messages_remain_valid() {
+        let mut original = event();
+        original.attribution.release = Some("1.7.2".into());
+        assert_eq!(
+            RuntimeEvent::try_from(v1::RuntimeEvent::from(original.clone())).unwrap(),
+            original
+        );
+        let mut wire = v1::RuntimeEvent::from(event());
+        wire.attribution.as_mut().unwrap().release = None;
+        assert!(
+            RuntimeEvent::try_from(wire)
+                .unwrap()
+                .attribution
+                .release
+                .is_none()
+        );
     }
 
     #[test]

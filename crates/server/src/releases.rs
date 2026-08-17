@@ -1,0 +1,371 @@
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sqlx::{FromRow, PgPool};
+use uuid::Uuid;
+
+use crate::auth::{ApiCredentialAuthenticator, ApiPrincipal};
+
+const DEFAULT_LIMIT: i64 = 50;
+const MAX_LIMIT: i64 = 200;
+
+#[derive(Clone, Debug)]
+struct ReleaseState {
+    pool: PgPool,
+    authenticator: ApiCredentialAuthenticator,
+}
+
+pub fn router(pool: PgPool) -> Router {
+    let state = ReleaseState {
+        authenticator: ApiCredentialAuthenticator::new(pool.clone()),
+        pool,
+    };
+    Router::new()
+        .route(
+            "/api/v1/projects/{project_id}/applications/{application_id}/releases",
+            post(create_release).get(list_releases),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/applications/{application_id}/releases/{release_id}",
+            get(get_release),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
+            get(runtime_diff),
+        )
+        .with_state(state)
+}
+
+#[derive(Debug)]
+enum ReleaseError {
+    Unauthorized,
+    Invalid(String),
+    NotFound,
+    Conflict,
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for ReleaseError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
+impl IntoResponse for ReleaseError {
+    fn into_response(self) -> Response {
+        let (status, code, message) = match self {
+            Self::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "invalid or missing bearer credential".to_owned(),
+            ),
+            Self::Invalid(message) => (StatusCode::BAD_REQUEST, "invalid_request", message),
+            Self::NotFound => (
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "release or application not found".to_owned(),
+            ),
+            Self::Conflict => (
+                StatusCode::CONFLICT,
+                "release_exists",
+                "release version already exists".to_owned(),
+            ),
+            Self::Database(error) => {
+                tracing::error!(error=%error, "release API database error");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "internal server error".to_owned(),
+                )
+            }
+        };
+        (
+            status,
+            Json(ErrorBody {
+                error: code,
+                message,
+            }),
+        )
+            .into_response()
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ErrorBody {
+    error: &'static str,
+    message: String,
+}
+
+#[derive(Clone, Debug, FromRow, Serialize)]
+pub struct Release {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub application_id: Uuid,
+    pub version: String,
+    pub description: Option<String>,
+    pub deployed_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateRelease {
+    version: String,
+    description: Option<String>,
+    deployed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListQuery {
+    cursor: Option<Uuid>,
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseList {
+    items: Vec<Release>,
+    next_cursor: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiffQuery {
+    baseline_id: Option<Uuid>,
+    cursor: Option<Uuid>,
+    limit: Option<i64>,
+}
+
+#[derive(Clone, Debug, FromRow, Serialize)]
+struct DiffEntry {
+    group_id: Uuid,
+    classification: String,
+    event_kind: String,
+    semantic_summary: Value,
+    baseline_occurrence_count: Option<i64>,
+    baseline_first_seen_at: Option<DateTime<Utc>>,
+    baseline_last_seen_at: Option<DateTime<Utc>>,
+    target_occurrence_count: Option<i64>,
+    target_first_seen_at: Option<DateTime<Utc>>,
+    target_last_seen_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeDiff {
+    baseline: Option<Release>,
+    target: Release,
+    items: Vec<DiffEntry>,
+    next_cursor: Option<Uuid>,
+}
+
+async fn principal(
+    headers: &HeaderMap,
+    state: &ReleaseState,
+) -> Result<ApiPrincipal, ReleaseError> {
+    let credential = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or(ReleaseError::Unauthorized)?;
+    state
+        .authenticator
+        .authenticate(credential)
+        .await?
+        .ok_or(ReleaseError::Unauthorized)
+}
+
+fn limit(value: Option<i64>) -> Result<i64, ReleaseError> {
+    let value = value.unwrap_or(DEFAULT_LIMIT);
+    if (1..=MAX_LIMIT).contains(&value) {
+        Ok(value)
+    } else {
+        Err(ReleaseError::Invalid(
+            "limit must be between 1 and 200".into(),
+        ))
+    }
+}
+
+async fn application_owned(
+    pool: &PgPool,
+    organization_id: Uuid,
+    project_id: Uuid,
+    application_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM applications WHERE organization_id=$1 AND project_id=$2 AND id=$3)")
+        .bind(organization_id).bind(project_id).bind(application_id).fetch_one(pool).await
+}
+
+async fn create_release(
+    State(state): State<ReleaseState>,
+    headers: HeaderMap,
+    Path((project_id, application_id)): Path<(Uuid, Uuid)>,
+    Json(input): Json<CreateRelease>,
+) -> Result<(StatusCode, Json<Release>), ReleaseError> {
+    crate::metrics::record_api_request();
+    let principal = principal(&headers, &state).await?;
+    if !application_owned(
+        &state.pool,
+        principal.organization_id,
+        project_id,
+        application_id,
+    )
+    .await?
+    {
+        return Err(ReleaseError::NotFound);
+    }
+    let version = input.version.trim();
+    if version.is_empty() || version.len() > 200 || version != input.version {
+        return Err(ReleaseError::Invalid(
+            "version must be trimmed and contain 1..=200 bytes".into(),
+        ));
+    }
+    if input
+        .description
+        .as_ref()
+        .is_some_and(|value| value.len() > 2000)
+    {
+        return Err(ReleaseError::Invalid(
+            "description must not exceed 2000 bytes".into(),
+        ));
+    }
+    let result = sqlx::query_as::<_, Release>("INSERT INTO releases (id,organization_id,project_id,application_id,version,description,deployed_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id,project_id,application_id,version,description,deployed_at,created_at")
+        .bind(Uuid::new_v4()).bind(principal.organization_id).bind(project_id).bind(application_id)
+        .bind(version).bind(input.description).bind(input.deployed_at).fetch_one(&state.pool).await;
+    match result {
+        Ok(release) => Ok((StatusCode::CREATED, Json(release))),
+        Err(error)
+            if error
+                .as_database_error()
+                .is_some_and(sqlx::error::DatabaseError::is_unique_violation) =>
+        {
+            Err(ReleaseError::Conflict)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn list_releases(
+    State(state): State<ReleaseState>,
+    headers: HeaderMap,
+    Path((project_id, application_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<ReleaseList>, ReleaseError> {
+    crate::metrics::record_api_request();
+    let principal = principal(&headers, &state).await?;
+    let limit = limit(query.limit)?;
+    if !application_owned(
+        &state.pool,
+        principal.organization_id,
+        project_id,
+        application_id,
+    )
+    .await?
+    {
+        return Err(ReleaseError::NotFound);
+    }
+    let cursor = if let Some(id) = query.cursor {
+        Some(sqlx::query_as::<_, (DateTime<Utc>, Uuid)>("SELECT deployed_at,id FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND id=$4")
+            .bind(principal.organization_id).bind(project_id).bind(application_id).bind(id)
+            .fetch_optional(&state.pool).await?.ok_or_else(|| ReleaseError::Invalid("cursor does not exist in this scope".into()))?)
+    } else {
+        None
+    };
+    let (cursor_time, cursor_id) = cursor.unzip();
+    let mut items = sqlx::query_as::<_, Release>("SELECT id,project_id,application_id,version,description,deployed_at,created_at FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND ($4::timestamptz IS NULL OR (deployed_at,id)<($4,$5)) ORDER BY deployed_at DESC,id DESC LIMIT $6")
+        .bind(principal.organization_id).bind(project_id).bind(application_id).bind(cursor_time).bind(cursor_id).bind(limit+1)
+        .fetch_all(&state.pool).await?;
+    let next_cursor = if i64::try_from(items.len()).unwrap_or(i64::MAX) > limit {
+        items.pop();
+        items.last().map(|item| item.id)
+    } else {
+        None
+    };
+    Ok(Json(ReleaseList { items, next_cursor }))
+}
+
+async fn get_release(
+    State(state): State<ReleaseState>,
+    headers: HeaderMap,
+    Path((project_id, application_id, release_id)): Path<(Uuid, Uuid, Uuid)>,
+) -> Result<Json<Release>, ReleaseError> {
+    let principal = principal(&headers, &state).await?;
+    Ok(Json(
+        fetch_release(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+            application_id,
+            release_id,
+        )
+        .await?
+        .ok_or(ReleaseError::NotFound)?,
+    ))
+}
+
+async fn fetch_release(
+    pool: &PgPool,
+    organization_id: Uuid,
+    project_id: Uuid,
+    application_id: Uuid,
+    release_id: Uuid,
+) -> Result<Option<Release>, sqlx::Error> {
+    sqlx::query_as("SELECT id,project_id,application_id,version,description,deployed_at,created_at FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND id=$4")
+        .bind(organization_id).bind(project_id).bind(application_id).bind(release_id).fetch_optional(pool).await
+}
+
+async fn runtime_diff(
+    State(state): State<ReleaseState>,
+    headers: HeaderMap,
+    Path((project_id, application_id, target_id)): Path<(Uuid, Uuid, Uuid)>,
+    Query(query): Query<DiffQuery>,
+) -> Result<Json<RuntimeDiff>, ReleaseError> {
+    crate::metrics::record_api_request();
+    let principal = principal(&headers, &state).await?;
+    let limit = limit(query.limit)?;
+    let target = fetch_release(
+        &state.pool,
+        principal.organization_id,
+        project_id,
+        application_id,
+        target_id,
+    )
+    .await?
+    .ok_or(ReleaseError::NotFound)?;
+    let baseline = if let Some(id) = query.baseline_id {
+        Some(
+            fetch_release(
+                &state.pool,
+                principal.organization_id,
+                project_id,
+                application_id,
+                id,
+            )
+            .await?
+            .ok_or(ReleaseError::NotFound)?,
+        )
+    } else {
+        sqlx::query_as::<_, Release>("SELECT id,project_id,application_id,version,description,deployed_at,created_at FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND (deployed_at,id)<($4,$5) ORDER BY deployed_at DESC,id DESC LIMIT 1")
+            .bind(principal.organization_id).bind(project_id).bind(application_id).bind(target.deployed_at).bind(target.id).fetch_optional(&state.pool).await?
+    };
+    let baseline_id = baseline.as_ref().map(|release| release.id);
+    let mut items = sqlx::query_as::<_, DiffEntry>(
+        "WITH b AS (SELECT * FROM runtime_event_group_releases WHERE release_id=$1), t AS (SELECT * FROM runtime_event_group_releases WHERE release_id=$2) SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification,g.event_kind,g.semantic_summary,b.occurrence_count baseline_occurrence_count,b.first_seen_at baseline_first_seen_at,b.last_seen_at baseline_last_seen_at,t.occurrence_count target_occurrence_count,t.first_seen_at target_first_seen_at,t.last_seen_at target_last_seen_at FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5 AND ($6::uuid IS NULL OR g.id>$6) ORDER BY g.id LIMIT $7",
+    ).bind(baseline_id).bind(target.id).bind(principal.organization_id).bind(project_id).bind(application_id).bind(query.cursor).bind(limit+1).fetch_all(&state.pool).await?;
+    let next_cursor = if i64::try_from(items.len()).unwrap_or(i64::MAX) > limit {
+        items.pop();
+        items.last().map(|item| item.group_id)
+    } else {
+        None
+    };
+    crate::metrics::record_release_diff();
+    Ok(Json(RuntimeDiff {
+        baseline,
+        target,
+        items,
+        next_cursor,
+    }))
+}

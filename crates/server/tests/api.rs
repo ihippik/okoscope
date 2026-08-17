@@ -52,6 +52,7 @@ fn event(project_id: Uuid, application_id: Uuid) -> RuntimeEvent {
             workload_uid: "workload-uid".into(),
             workload_kind: "Deployment".into(),
             workload_name: "payment-api".into(),
+            release: None,
         },
         process: ProcessIdentity {
             cgroup_id: 42,
