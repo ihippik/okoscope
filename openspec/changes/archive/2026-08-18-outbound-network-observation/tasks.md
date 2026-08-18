@@ -47,6 +47,6 @@
 ## 7. End-to-End Acceptance and Release
 
 - [x] 7.1 Add a controlled acceptance fixture that produces selected IPv4 success, deterministic failure, IPv6 behavior where available, unsupported-family traffic, duplicate replay, and unselected-workload traffic.
-- [ ] 7.2 Trace accepted fixture events through eBPF, agent session, PostgreSQL, grouping, release summaries, first-seen notification, API, and Web UI while asserting excluded data is absent.
-- [ ] 7.3 Run Rust formatting/lint/unit/integration checks, eBPF build and platform tests, OpenAPI validation, frontend quality gates, container smoke tests, and Kubernetes manifest validation.
-- [ ] 7.4 Publish immutable server, agent, and Web images; roll out compatible server/Web first, enable network observation only for the fixture workload, and record rollout, counters, cardinality, smoke, and rollback evidence.
+- [x] 7.2 Trace accepted fixture events through eBPF, agent session, PostgreSQL, grouping, release summaries, first-seen notification, API, and Web UI while asserting excluded data is absent.
+- [x] 7.3 Run Rust formatting/lint/unit/integration checks, eBPF build and platform tests, OpenAPI validation, frontend quality gates, container smoke tests, and Kubernetes manifest validation.
+- [x] 7.4 Publish immutable server, agent, and Web images; roll out compatible server/Web first, enable network observation only for the fixture workload, and record rollout, counters, cardinality, smoke, and rollback evidence.

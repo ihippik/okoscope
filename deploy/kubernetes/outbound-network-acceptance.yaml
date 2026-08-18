@@ -27,23 +27,32 @@ spec:
               import threading
               import time
 
-              def listen(family, address):
+              # Allow the agent's Kubernetes watch to index this new container before traffic.
+              time.sleep(20)
+
+              def listen_once(family, address):
                   server = socket.socket(family, socket.SOCK_STREAM)
                   server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                   server.bind(address)
                   server.listen(4)
                   port = server.getsockname()[1]
-                  threading.Thread(target=lambda: server.accept()[0].close(), daemon=True).start()
-                  return server, port
+                  def accept_and_close():
+                      connection, _ = server.accept()
+                      connection.close()
+                      server.close()
+                  thread = threading.Thread(target=accept_and_close)
+                  thread.start()
+                  return port, thread
 
-              ipv4_server, ipv4_port = listen(socket.AF_INET, ("127.0.0.1", 0))
+              ipv4_port, ipv4_thread = listen_once(socket.AF_INET, ("127.0.0.1", 0))
               client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
               client.connect(("127.0.0.1", ipv4_port))
               client.close()
+              ipv4_thread.join()
 
               failed = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
               try:
-                  failed.connect(("127.0.0.1", ipv4_port + 1))
+                  failed.connect(("127.0.0.1", ipv4_port))
               except OSError:
                   pass
               failed.close()
@@ -56,11 +65,11 @@ spec:
 
               if socket.has_ipv6:
                   try:
-                      ipv6_server, ipv6_port = listen(socket.AF_INET6, ("::1", 0))
+                      ipv6_port, ipv6_thread = listen_once(socket.AF_INET6, ("::1", 0))
                       ipv6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
                       ipv6.connect(("::1", ipv6_port))
                       ipv6.close()
-                      ipv6_server.close()
+                      ipv6_thread.join()
                   except OSError:
                       pass
 
@@ -71,7 +80,6 @@ spec:
                   pass
               unsupported.close()
 
-              ipv4_server.close()
               time.sleep(120)
 ---
 apiVersion: batch/v1
@@ -91,4 +99,4 @@ spec:
         - name: fixture
           image: busybox:1.37
           command: [sh, -c]
-          args: ["wget -T 1 -q -O /dev/null http://127.0.0.1:1 || true; sleep 120"]
+          args: ["sleep 20; wget -T 1 -q -O /dev/null http://127.0.0.1:1 || true; sleep 120"]

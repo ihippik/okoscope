@@ -350,6 +350,8 @@ components:
         - {$ref: '#/components/schemas/ProcessExecSemanticSummary'}
         - {$ref: '#/components/schemas/SyscallSemanticSummary'}
         - {$ref: '#/components/schemas/NetworkConnectSemanticSummary'}
+        - {$ref: '#/components/schemas/NetworkDnsQuerySemanticSummary'}
+        - {$ref: '#/components/schemas/NetworkDnsResponseSemanticSummary'}
     ProcessExecSemanticSummary:
       type: object
       additionalProperties: false
@@ -372,11 +374,35 @@ components:
         address_family: {type: string, enum: [ipv4, ipv6]}
         destination_address: {type: string, format: ip, example: 203.0.113.7}
         destination_port: {type: integer, minimum: 1, maximum: 65535, example: 443}
+        dns_context: {$ref: '#/components/schemas/DnsContext'}
+    NetworkDnsQuerySemanticSummary:
+      type: object
+      additionalProperties: false
+      required: [process_command, name, query_type, transport, direction]
+      properties:
+        process_command: {type: string, minLength: 1}
+        name: {$ref: '#/components/schemas/DnsName'}
+        query_type: {$ref: '#/components/schemas/DnsQueryType'}
+        transport: {$ref: '#/components/schemas/DnsTransport'}
+        direction: {$ref: '#/components/schemas/DnsDirection'}
+    NetworkDnsResponseSemanticSummary:
+      type: object
+      additionalProperties: false
+      required: [process_command, name, query_type, response_code, transport, direction]
+      properties:
+        process_command: {type: string, minLength: 1}
+        name: {$ref: '#/components/schemas/DnsName'}
+        query_type: {$ref: '#/components/schemas/DnsQueryType'}
+        response_code: {$ref: '#/components/schemas/DnsResponseCode'}
+        transport: {$ref: '#/components/schemas/DnsTransport'}
+        direction: {$ref: '#/components/schemas/DnsDirection'}
     RuntimeEventPayload:
       oneOf:
         - {$ref: '#/components/schemas/ProcessExecPayload'}
         - {$ref: '#/components/schemas/SyscallPayload'}
         - {$ref: '#/components/schemas/NetworkConnectPayload'}
+        - {$ref: '#/components/schemas/NetworkDnsQueryPayload'}
+        - {$ref: '#/components/schemas/NetworkDnsResponsePayload'}
     ProcessExecPayload:
       type: object
       additionalProperties: false
@@ -418,6 +444,83 @@ components:
             destination_port: {type: integer, minimum: 1, maximum: 65535, example: 443}
             outcome: {type: string, enum: [succeeded, in_progress, failed]}
             errno: {type: integer, minimum: 1, maximum: 4095, example: 111}
+            dns_context: {$ref: '#/components/schemas/DnsContext'}
+    NetworkDnsQueryPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: {type: string, const: NetworkDnsQuery}
+        data:
+          type: object
+          additionalProperties: false
+          required: [transaction_id, direction, transport, resolver_address, name, query_type]
+          properties:
+            transaction_id: {type: integer, minimum: 0, maximum: 65535}
+            direction: {$ref: '#/components/schemas/DnsDirection'}
+            transport: {$ref: '#/components/schemas/DnsTransport'}
+            resolver_address: {type: string, format: ip}
+            name: {$ref: '#/components/schemas/DnsName'}
+            query_type: {$ref: '#/components/schemas/DnsQueryType'}
+    NetworkDnsResponsePayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: {type: string, const: NetworkDnsResponse}
+        data:
+          type: object
+          additionalProperties: false
+          required: [transaction_id, direction, transport, resolver_address, name, query_type, response_code, truncated, answers, cname_chain, effective_ttl_seconds]
+          properties:
+            transaction_id: {type: integer, minimum: 0, maximum: 65535}
+            direction: {$ref: '#/components/schemas/DnsDirection'}
+            transport: {$ref: '#/components/schemas/DnsTransport'}
+            resolver_address: {type: string, format: ip}
+            name: {$ref: '#/components/schemas/DnsName'}
+            query_type: {$ref: '#/components/schemas/DnsQueryType'}
+            response_code: {$ref: '#/components/schemas/DnsResponseCode'}
+            truncated: {type: boolean}
+            answers: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/DnsAddressAnswer'}}
+            cname_chain: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/DnsCname'}}
+            effective_ttl_seconds: {type: [integer, 'null'], minimum: 1, maximum: 86400}
+    DnsName:
+      type: string
+      minLength: 1
+      maxLength: 253
+      pattern: '^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$'
+      example: api.example.com
+    DnsQueryType: {type: string, enum: [A, AAAA]}
+    DnsTransport: {type: string, enum: [udp, tcp]}
+    DnsDirection: {type: string, enum: [egress, ingress]}
+    DnsResponseCode: {type: string, enum: [no_error, form_err, serv_fail, nx_domain, not_imp, refused]}
+    DnsConfidence: {type: string, enum: [observed_recently]}
+    DnsAddressAnswer:
+      type: object
+      additionalProperties: false
+      required: [name, address, ttl_seconds]
+      properties:
+        name: {$ref: '#/components/schemas/DnsName'}
+        address: {type: string, format: ip}
+        ttl_seconds: {type: integer, minimum: 1, maximum: 86400}
+    DnsCname:
+      type: object
+      additionalProperties: false
+      required: [alias, canonical, ttl_seconds]
+      properties:
+        alias: {$ref: '#/components/schemas/DnsName'}
+        canonical: {$ref: '#/components/schemas/DnsName'}
+        ttl_seconds: {type: integer, minimum: 1, maximum: 86400}
+    DnsContext:
+      type: object
+      additionalProperties: false
+      required: [names, observed_at, expires_at, confidence, ambiguous]
+      properties:
+        names: {type: array, minItems: 1, maxItems: 8, uniqueItems: true, items: {$ref: '#/components/schemas/DnsName'}}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+        expires_at: {$ref: '#/components/schemas/Timestamp'}
+        confidence: {$ref: '#/components/schemas/DnsConfidence'}
+        ambiguous: {type: boolean}
     FirstSeenNotificationSummary:
       type: object
       additionalProperties: false

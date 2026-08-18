@@ -121,6 +121,19 @@ impl From<CounterSnapshot> for DropCounters {
             connect_decode_failed: value.connect_decode_failed,
             connect_unsupported_family: value.connect_unsupported_family,
             connect_kernel_lost: value.connect_kernel_lost,
+            dns_packet_decode_failed: value.dns_packet_decode_failed,
+            dns_malformed_compression: value.dns_malformed_compression,
+            dns_truncated: value.dns_truncated,
+            dns_unsupported_record: value.dns_unsupported_record,
+            dns_correlation_miss: value.dns_correlation_miss,
+            dns_correlation_capacity: value.dns_correlation_capacity,
+            dns_tcp_reassembly: value.dns_tcp_reassembly,
+            dns_rate_limited: value.dns_rate_limited,
+            dns_capacity: value.dns_capacity,
+            dns_kernel_lost: value.dns_kernel_lost,
+            dns_kernel_unsupported_framing: value.dns_kernel_unsupported_framing,
+            dns_attribution_failed: value.dns_attribution_failed,
+            dns_oversize: value.dns_oversize,
         }
     }
 }
@@ -153,5 +166,32 @@ mod tests {
         assert_eq!(wire.connect_decode_failed, 3);
         assert_eq!(wire.connect_unsupported_family, 4);
         assert_eq!(wire.connect_kernel_lost, 5);
+    }
+
+    #[test]
+    fn dns_drop_counters_are_transported_additively() {
+        let wire = DropCounters::from(CounterSnapshot {
+            dns_packet_decode_failed: 1,
+            dns_malformed_compression: 2,
+            dns_truncated: 3,
+            dns_unsupported_record: 4,
+            dns_correlation_miss: 5,
+            dns_correlation_capacity: 6,
+            dns_tcp_reassembly: 7,
+            dns_rate_limited: 8,
+            dns_capacity: 9,
+            dns_kernel_lost: 10,
+            ..CounterSnapshot::default()
+        });
+        assert_eq!(wire.dns_packet_decode_failed, 1);
+        assert_eq!(wire.dns_malformed_compression, 2);
+        assert_eq!(wire.dns_truncated, 3);
+        assert_eq!(wire.dns_unsupported_record, 4);
+        assert_eq!(wire.dns_correlation_miss, 5);
+        assert_eq!(wire.dns_correlation_capacity, 6);
+        assert_eq!(wire.dns_tcp_reassembly, 7);
+        assert_eq!(wire.dns_rate_limited, 8);
+        assert_eq!(wire.dns_capacity, 9);
+        assert_eq!(wire.dns_kernel_lost, 10);
     }
 }

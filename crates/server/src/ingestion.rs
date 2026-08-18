@@ -25,6 +25,8 @@ pub enum IngestionError {
     Database(#[from] sqlx::Error),
     #[error("event payload serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("DNS evidence violates bounded canonical invariants")]
+    InvalidDns,
 }
 
 pub async fn persist_batch(
@@ -46,6 +48,7 @@ async fn persist_event(
     context: IngestionContext,
     event: &RuntimeEvent,
 ) -> Result<u32, IngestionError> {
+    validate_dns_event(event)?;
     if event.schema_version != EVENT_SCHEMA_VERSION {
         return Err(IngestionError::UnsupportedSchema(event.schema_version));
     }
@@ -117,11 +120,40 @@ async fn persist_event(
     .await?;
     if matches!(&event.payload, EventPayload::NetworkConnect(_)) {
         crate::metrics::record_network_event(grouping.group_created);
+        if matches!(&event.payload, EventPayload::NetworkConnect(connect) if connect.dns_context.as_ref().is_some_and(|context| context.ambiguous))
+        {
+            crate::metrics::record_dns_ambiguous_context();
+        }
         tracing::debug!(
             outcome = "accepted",
             group_created = grouping.group_created,
             "network connect event ingested"
         );
     }
+    if matches!(
+        &event.payload,
+        EventPayload::NetworkDnsQuery(_) | EventPayload::NetworkDnsResponse(_)
+    ) {
+        crate::metrics::record_dns_event(grouping.group_created);
+        tracing::debug!(
+            outcome = "accepted",
+            group_created = grouping.group_created,
+            "DNS event ingested"
+        );
+    }
     Ok(1)
+}
+
+fn validate_dns_event(event: &RuntimeEvent) -> Result<(), IngestionError> {
+    let valid = match &event.payload {
+        EventPayload::NetworkDnsResponse(response) => response.validate().is_ok(),
+        EventPayload::NetworkConnect(connect) => connect
+            .dns_context
+            .as_ref()
+            .is_none_or(|context| context.validate().is_ok()),
+        EventPayload::ProcessExec(_)
+        | EventPayload::Syscall(_)
+        | EventPayload::NetworkDnsQuery(_) => true,
+    };
+    valid.then_some(()).ok_or(IngestionError::InvalidDns)
 }

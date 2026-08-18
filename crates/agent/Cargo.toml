@@ -26,6 +26,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+hex.workspace = true
+
 [target.'cfg(target_os = "linux")'.dependencies]
 aya.workspace = true
 

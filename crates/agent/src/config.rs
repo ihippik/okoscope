@@ -93,6 +93,39 @@ pub struct ObservationConfig {
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct NetworkObservationConfig {
     pub connect: bool,
+    pub dns: DnsObservationConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct DnsObservationConfig {
+    pub enabled: bool,
+    pub udp: bool,
+    pub tcp: bool,
+    pub max_captured_bytes: usize,
+    pub max_pending_transactions: usize,
+    pub max_tcp_streams: usize,
+    pub max_answers_per_response: usize,
+    pub max_names_per_address: usize,
+    pub max_ttl_seconds: u32,
+    pub max_events_per_second: u32,
+}
+
+impl Default for DnsObservationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            udp: true,
+            tcp: true,
+            max_captured_bytes: 1232,
+            max_pending_transactions: 4096,
+            max_tcp_streams: 1024,
+            max_answers_per_response: event_model::MAX_DNS_ANSWERS,
+            max_names_per_address: event_model::MAX_DNS_CONTEXT_NAMES,
+            max_ttl_seconds: event_model::MAX_DNS_TTL_SECONDS,
+            max_events_per_second: 1000,
+        }
+    }
 }
 
 impl ObservationConfig {
@@ -109,6 +142,12 @@ impl ObservationConfig {
         );
         if self.network.connect {
             capabilities.push(protocol::NETWORK_CONNECT_CAPABILITY.into());
+        }
+        if self.network.dns.enabled && self.network.dns.udp {
+            capabilities.push(protocol::NETWORK_DNS_UDP_CAPABILITY.into());
+        }
+        if self.network.dns.enabled && self.network.dns.tcp {
+            capabilities.push(protocol::NETWORK_DNS_TCP_CAPABILITY.into());
         }
         capabilities
     }
@@ -177,6 +216,7 @@ impl AgentConfig {
         if !self.observation.process_exec
             && self.observation.syscalls.is_empty()
             && !self.observation.network.connect
+            && !self.observation.network.dns.enabled
         {
             return Err(ConfigError::MissingObservation);
         }
@@ -196,6 +236,21 @@ impl AgentConfig {
         {
             return Err(ConfigError::InvalidSelector(
                 "safety limits must be non-zero and batchSize must not exceed queueCapacity".into(),
+            ));
+        }
+        let dns = &self.observation.network.dns;
+        if dns.enabled
+            && (!dns.udp && !dns.tcp
+                || !(512..=4096).contains(&dns.max_captured_bytes)
+                || dns.max_pending_transactions == 0
+                || dns.max_tcp_streams == 0
+                || !(1..=event_model::MAX_DNS_ANSWERS).contains(&dns.max_answers_per_response)
+                || !(1..=event_model::MAX_DNS_CONTEXT_NAMES).contains(&dns.max_names_per_address)
+                || !(1..=event_model::MAX_DNS_TTL_SECONDS).contains(&dns.max_ttl_seconds)
+                || dns.max_events_per_second == 0)
+        {
+            return Err(ConfigError::InvalidSelector(
+                "DNS limits or transports are outside platform bounds".into(),
             ));
         }
         for selector in &self.scope.workloads {
@@ -335,6 +390,39 @@ observation:
                 .capabilities()
                 .contains(&protocol::NETWORK_CONNECT_CAPABILITY.to_owned())
         );
+    }
+
+    #[test]
+    fn dns_is_default_disabled_strict_and_capability_versioned() {
+        let defaulted = AgentConfig::from_yaml(VALID, Architecture::X86_64).unwrap();
+        assert!(!defaulted.observation.network.dns.enabled);
+        assert!(
+            !defaulted
+                .observation
+                .capabilities()
+                .iter()
+                .any(|value| value.starts_with("network.dns."))
+        );
+
+        let enabled = VALID.replace(
+            "  syscalls: [ptrace, setns]",
+            "  syscalls: [ptrace, setns]\n  network:\n    dns:\n      enabled: true\n      udp: true\n      tcp: true",
+        );
+        let config = AgentConfig::from_yaml(&enabled, Architecture::X86_64).unwrap();
+        let capabilities = config.observation.capabilities();
+        assert!(capabilities.contains(&protocol::NETWORK_DNS_UDP_CAPABILITY.to_owned()));
+        assert!(capabilities.contains(&protocol::NETWORK_DNS_TCP_CAPABILITY.to_owned()));
+
+        let invalid = enabled.replace(
+            "      tcp: true",
+            "      tcp: true\n      maxCapturedBytes: 10",
+        );
+        assert!(AgentConfig::from_yaml(&invalid, Architecture::X86_64).is_err());
+        let unknown = enabled.replace(
+            "      tcp: true",
+            "      tcp: true\n      packetPayloads: true",
+        );
+        assert!(AgentConfig::from_yaml(&unknown, Architecture::X86_64).is_err());
     }
 
     #[test]

@@ -66,6 +66,8 @@ message RuntimeEvent {
     ProcessExec process_exec = 10;
     Syscall syscall = 11;
     NetworkConnect network_connect = 12;
+    NetworkDnsQuery network_dns_query = 13;
+    NetworkDnsResponse network_dns_response = 14;
   }
 }
 
@@ -106,6 +108,83 @@ message NetworkConnect {
   uint32 destination_port = 3;
   NetworkConnectOutcome outcome = 4;
   optional uint32 errno = 5;
+  DnsContext dns_context = 6;
+}
+
+message NetworkDnsQuery {
+  uint32 transaction_id = 1;
+  DnsDirection direction = 2;
+  DnsTransport transport = 3;
+  bytes resolver_address = 4;
+  string name = 5;
+  DnsQueryType query_type = 6;
+}
+
+message NetworkDnsResponse {
+  uint32 transaction_id = 1;
+  DnsDirection direction = 2;
+  DnsTransport transport = 3;
+  bytes resolver_address = 4;
+  string name = 5;
+  DnsQueryType query_type = 6;
+  DnsResponseCode response_code = 7;
+  bool truncated = 8;
+  repeated DnsAddressAnswer answers = 9;
+  repeated DnsCname cname_chain = 10;
+  optional uint32 effective_ttl_seconds = 11;
+}
+
+message DnsAddressAnswer {
+  string name = 1;
+  bytes address = 2;
+  uint32 ttl_seconds = 3;
+}
+
+message DnsCname {
+  string alias = 1;
+  string canonical = 2;
+  uint32 ttl_seconds = 3;
+}
+
+message DnsContext {
+  repeated string names = 1;
+  int64 observed_at_unix_nanos = 2;
+  int64 expires_at_unix_nanos = 3;
+  DnsConfidence confidence = 4;
+  bool ambiguous = 5;
+}
+
+enum DnsQueryType {
+  DNS_QUERY_TYPE_UNSPECIFIED = 0;
+  DNS_QUERY_TYPE_A = 1;
+  DNS_QUERY_TYPE_AAAA = 2;
+}
+
+enum DnsTransport {
+  DNS_TRANSPORT_UNSPECIFIED = 0;
+  DNS_TRANSPORT_UDP = 1;
+  DNS_TRANSPORT_TCP = 2;
+}
+
+enum DnsDirection {
+  DNS_DIRECTION_UNSPECIFIED = 0;
+  DNS_DIRECTION_EGRESS = 1;
+  DNS_DIRECTION_INGRESS = 2;
+}
+
+enum DnsResponseCode {
+  DNS_RESPONSE_CODE_UNSPECIFIED = 0;
+  DNS_RESPONSE_CODE_NO_ERROR = 1;
+  DNS_RESPONSE_CODE_FORM_ERR = 2;
+  DNS_RESPONSE_CODE_SERV_FAIL = 3;
+  DNS_RESPONSE_CODE_NX_DOMAIN = 4;
+  DNS_RESPONSE_CODE_NOT_IMP = 5;
+  DNS_RESPONSE_CODE_REFUSED = 6;
+}
+
+enum DnsConfidence {
+  DNS_CONFIDENCE_UNSPECIFIED = 0;
+  DNS_CONFIDENCE_OBSERVED_RECENTLY = 1;
 }
 
 enum NetworkAddressFamily {
@@ -133,6 +212,19 @@ message DropCounters {
   uint64 connect_decode_failed = 9;
   uint64 connect_unsupported_family = 10;
   uint64 connect_kernel_lost = 11;
+  uint64 dns_packet_decode_failed = 12;
+  uint64 dns_malformed_compression = 13;
+  uint64 dns_truncated = 14;
+  uint64 dns_unsupported_record = 15;
+  uint64 dns_correlation_miss = 16;
+  uint64 dns_correlation_capacity = 17;
+  uint64 dns_tcp_reassembly = 18;
+  uint64 dns_rate_limited = 19;
+  uint64 dns_capacity = 20;
+  uint64 dns_kernel_lost = 21;
+  uint64 dns_kernel_unsupported_framing = 22;
+  uint64 dns_attribution_failed = 23;
+  uint64 dns_oversize = 24;
 }
 
 message ControlMessage {

@@ -2,6 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: okoscope-agent
+  namespace: okoscope
 data:
   agent.yaml: |
     apiVersion: okoscope.io/v1alpha1
@@ -17,26 +18,15 @@ data:
       workloads:
         - projectId: 018f4f9c-3f9a-7de1-8000-000000000001
           applicationId: 018f4f9c-3f9a-7de1-8000-000000000002
-          namespace: okoscope-demo
-          kind: Deployment
-          name: payment-api
-          labels: {app: payment-api}
+          namespace: okoscope-network-acceptance
+          kind: Job
+          name: selected-network-fixture
+          release: smoke-v2-20260817
     observation:
       processExec: true
       syscalls: [ptrace, setns]
       network:
         connect: true
-        dns:
-          enabled: false
-          udp: true
-          tcp: true
-          maxCapturedBytes: 1232
-          maxPendingTransactions: 4096
-          maxTcpStreams: 1024
-          maxAnswersPerResponse: 16
-          maxNamesPerAddress: 8
-          maxTtlSeconds: 86400
-          maxEventsPerSecond: 1000
     safety:
       queueCapacity: 4096
       batchSize: 256

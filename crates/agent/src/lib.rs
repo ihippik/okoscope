@@ -3,6 +3,10 @@ pub mod cgroup;
 pub mod config;
 pub mod counters;
 pub mod delivery;
+pub mod dns;
+pub mod dns_runtime;
+pub mod dns_state;
+pub mod dns_tcp;
 pub mod kernel_event;
 #[cfg(target_os = "linux")]
 pub mod observer;

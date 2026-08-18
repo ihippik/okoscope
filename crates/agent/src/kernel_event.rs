@@ -1,6 +1,9 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use agent_ebpf_common::{COMMAND_LEN, KernelEvent, NETWORK_ADDRESS_LEN};
+use agent_ebpf_common::{
+    COMMAND_LEN, DNS_ADDRESS_LEN, DNS_CAPTURE_BYTES, DnsPacketRecord, KernelEvent,
+    NETWORK_ADDRESS_LEN,
+};
 use event_model::{
     NetworkAddressFamily, NetworkConnect, NetworkConnectError, NetworkConnectOutcome,
 };
@@ -78,6 +81,58 @@ pub fn decode(bytes: &[u8]) -> Result<KernelEvent, DecodeError> {
     })
 }
 
+pub fn decode_dns_packet(bytes: &[u8]) -> Result<DnsPacketRecord, DecodeError> {
+    if bytes.len() != DnsPacketRecord::SIZE {
+        return Err(DecodeError::InvalidSize {
+            actual: bytes.len(),
+            expected: DnsPacketRecord::SIZE,
+        });
+    }
+    let u64_at = |offset: usize| {
+        u64::from_ne_bytes(
+            bytes[offset..offset + 8]
+                .try_into()
+                .expect("validated fixed layout"),
+        )
+    };
+    let u32_at = |offset: usize| {
+        u32::from_ne_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .expect("validated fixed layout"),
+        )
+    };
+    let u16_at = |offset: usize| {
+        u16::from_ne_bytes(
+            bytes[offset..offset + 2]
+                .try_into()
+                .expect("validated fixed layout"),
+        )
+    };
+    let mut resolver_address = [0; DNS_ADDRESS_LEN];
+    resolver_address.copy_from_slice(&bytes[44..60]);
+    let mut command = [0; COMMAND_LEN];
+    command.copy_from_slice(&bytes[60..76]);
+    let mut payload = [0; DNS_CAPTURE_BYTES];
+    payload.copy_from_slice(&bytes[76..76 + DNS_CAPTURE_BYTES]);
+    Ok(DnsPacketRecord {
+        timestamp_ns: u64_at(0),
+        cgroup_id: u64_at(8),
+        socket_cookie: u64_at(16),
+        pid_tgid: u64_at(24),
+        sequence: u32_at(32),
+        payload_len: u16_at(36),
+        resolver_port: u16_at(38),
+        address_family: bytes[40],
+        transport: bytes[41],
+        direction: bytes[42],
+        tcp_flags: bytes[43],
+        resolver_address,
+        command,
+        payload,
+    })
+}
+
 pub fn network_connect(event: &KernelEvent) -> Result<NetworkConnect, NetworkDecodeError> {
     let (address_family, destination_address) = match event.address_family {
         agent_ebpf_common::ADDRESS_FAMILY_IPV4 => (
@@ -126,6 +181,47 @@ mod tests {
             decode(&[0; 4]),
             Err(DecodeError::InvalidSize { .. })
         ));
+        assert!(matches!(
+            decode_dns_packet(&[0; 4]),
+            Err(DecodeError::InvalidSize { .. })
+        ));
+    }
+
+    #[test]
+    fn decodes_dns_packet_record_with_fixed_native_layout() {
+        let mut bytes = [0_u8; DnsPacketRecord::SIZE];
+        bytes[0..8].copy_from_slice(&17_u64.to_ne_bytes());
+        bytes[8..16].copy_from_slice(&23_u64.to_ne_bytes());
+        bytes[16..24].copy_from_slice(&29_u64.to_ne_bytes());
+        bytes[24..32].copy_from_slice(&31_u64.to_ne_bytes());
+        bytes[32..36].copy_from_slice(&37_u32.to_ne_bytes());
+        bytes[36..38].copy_from_slice(&4_u16.to_ne_bytes());
+        bytes[38..40].copy_from_slice(&53_u16.to_ne_bytes());
+        bytes[40] = agent_ebpf_common::ADDRESS_FAMILY_IPV6;
+        bytes[41] = agent_ebpf_common::DNS_TRANSPORT_TCP;
+        bytes[42] = agent_ebpf_common::DNS_DIRECTION_INGRESS;
+        bytes[43] = 0x18;
+        bytes[44..60].copy_from_slice(&Ipv6Addr::LOCALHOST.octets());
+        bytes[60..68].copy_from_slice(b"resolver");
+        bytes[76..80].copy_from_slice(&[0x12, 0x34, 0x01, 0x00]);
+
+        let decoded = decode_dns_packet(&bytes).unwrap();
+        assert_eq!(decoded.timestamp_ns, 17);
+        assert_eq!(decoded.cgroup_id, 23);
+        assert_eq!(decoded.socket_cookie, 29);
+        assert_eq!(decoded.pid_tgid, 31);
+        assert_eq!(decoded.sequence, 37);
+        assert_eq!(decoded.payload_len, 4);
+        assert_eq!(decoded.resolver_port, 53);
+        assert_eq!(
+            decoded.address_family,
+            agent_ebpf_common::ADDRESS_FAMILY_IPV6
+        );
+        assert_eq!(decoded.transport, agent_ebpf_common::DNS_TRANSPORT_TCP);
+        assert_eq!(decoded.direction, agent_ebpf_common::DNS_DIRECTION_INGRESS);
+        assert_eq!(decoded.resolver_address, Ipv6Addr::LOCALHOST.octets());
+        assert_eq!(&decoded.command[..8], b"resolver");
+        assert_eq!(&decoded.payload[..4], &[0x12, 0x34, 0x01, 0x00]);
     }
 
     #[test]

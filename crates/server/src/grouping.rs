@@ -282,11 +282,43 @@ pub fn fingerprint_v1(
                 std::net::IpAddr::V6(address) => encoder.field(&address.octets()),
             }
             encoder.field(&network.destination_port.to_be_bytes());
-            json!({
+            let mut semantic = json!({
                 "process_command": command,
                 "address_family": family,
                 "destination_address": network.destination_address,
                 "destination_port": network.destination_port
+            });
+            if let Some(context) = &network.dns_context {
+                semantic["dns_context"] = json!(context);
+            }
+            semantic
+        }
+        EventPayload::NetworkDnsQuery(query) => {
+            let command = required("process_command", &event.process.command)?;
+            encoder.field(command.as_bytes());
+            encoder.field(query.name.as_str().as_bytes());
+            encoder.field(format!("{:?}", query.query_type).as_bytes());
+            json!({
+                "process_command": command,
+                "name": query.name,
+                "query_type": query.query_type,
+                "transport": query.transport,
+                "direction": query.direction
+            })
+        }
+        EventPayload::NetworkDnsResponse(response) => {
+            let command = required("process_command", &event.process.command)?;
+            encoder.field(command.as_bytes());
+            encoder.field(response.name.as_str().as_bytes());
+            encoder.field(format!("{:?}", response.query_type).as_bytes());
+            encoder.field(format!("{:?}", response.response_code).as_bytes());
+            json!({
+                "process_command": command,
+                "name": response.name,
+                "query_type": response.query_type,
+                "response_code": response.response_code,
+                "transport": response.transport,
+                "direction": response.direction
             })
         }
     };
@@ -334,8 +366,10 @@ impl CanonicalEncoder {
 mod tests {
     use chrono::Utc;
     use event_model::{
-        EventPayload, KubernetesAttribution, NetworkAddressFamily, NetworkConnect,
-        NetworkConnectOutcome, ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
+        DnsAddressAnswer, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
+        DnsTransport, EventPayload, KubernetesAttribution, NetworkAddressFamily, NetworkConnect,
+        NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, ProcessExec, ProcessIdentity,
+        RuntimeEvent, SyscallEvent,
     };
 
     use super::*;
@@ -499,6 +533,89 @@ mod tests {
                 "destination_address": "203.0.113.7",
                 "destination_port": 443
             })
+        );
+    }
+
+    #[test]
+    fn dns_fingerprint_excludes_transaction_and_answers() {
+        let name = DnsName::new("api.example.com").unwrap();
+        let query = event(EventPayload::NetworkDnsQuery(NetworkDnsQuery {
+            transaction_id: 1,
+            direction: DnsDirection::Egress,
+            transport: DnsTransport::Udp,
+            resolver_address: "10.96.0.10".parse().unwrap(),
+            name: name.clone(),
+            query_type: DnsQueryType::A,
+        }));
+        let mut repeated = query.clone();
+        let EventPayload::NetworkDnsQuery(value) = &mut repeated.payload else {
+            unreachable!()
+        };
+        value.transaction_id = 99;
+        assert_eq!(
+            fingerprint_v1(&scope(&query), &query).unwrap().digest,
+            fingerprint_v1(&scope(&repeated), &repeated).unwrap().digest
+        );
+
+        let response = event(EventPayload::NetworkDnsResponse(NetworkDnsResponse {
+            transaction_id: 1,
+            direction: DnsDirection::Ingress,
+            transport: DnsTransport::Udp,
+            resolver_address: "10.96.0.10".parse().unwrap(),
+            name: name.clone(),
+            query_type: DnsQueryType::A,
+            response_code: DnsResponseCode::NoError,
+            truncated: false,
+            answers: vec![DnsAddressAnswer::new(name, "203.0.113.7".parse().unwrap(), 60).unwrap()],
+            cname_chain: vec![],
+            effective_ttl_seconds: Some(60),
+        }));
+        let mut changed_answer = response.clone();
+        let EventPayload::NetworkDnsResponse(value) = &mut changed_answer.payload else {
+            unreachable!()
+        };
+        value.transaction_id = 2;
+        value.answers[0].address = "203.0.113.8".parse().unwrap();
+        assert_eq!(
+            fingerprint_v1(&scope(&response), &response).unwrap().digest,
+            fingerprint_v1(&scope(&changed_answer), &changed_answer)
+                .unwrap()
+                .digest
+        );
+    }
+
+    #[test]
+    fn connection_context_changes_summary_but_not_ip_first_fingerprint() {
+        let plain = network("203.0.113.7", 443, NetworkConnectOutcome::Succeeded);
+        let mut qualified = plain.clone();
+        let observed_at = Utc::now();
+        let EventPayload::NetworkConnect(connect) = &mut qualified.payload else {
+            unreachable!()
+        };
+        connect.dns_context = Some(
+            DnsContext::new(
+                vec![DnsName::new("api.example.com").unwrap()],
+                observed_at,
+                observed_at + chrono::Duration::seconds(60),
+            )
+            .unwrap(),
+        );
+        let plain_fingerprint = fingerprint_v1(&scope(&plain), &plain).unwrap();
+        let qualified_fingerprint = fingerprint_v1(&scope(&qualified), &qualified).unwrap();
+        assert_eq!(plain_fingerprint.digest, qualified_fingerprint.digest);
+        assert!(
+            plain_fingerprint
+                .summary
+                .semantic
+                .get("dns_context")
+                .is_none()
+        );
+        assert!(
+            qualified_fingerprint
+                .summary
+                .semantic
+                .get("dns_context")
+                .is_some()
         );
     }
 }

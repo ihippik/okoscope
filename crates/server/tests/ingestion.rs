@@ -1,8 +1,9 @@
 use chrono::{Duration, Utc};
 use event_model::{
-    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAddressFamily,
-    NetworkConnect, NetworkConnectOutcome, ProcessExec, ProcessIdentity, RuntimeEvent,
-    SyscallEvent,
+    DnsAddressAnswer, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
+    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAddressFamily,
+    NetworkConnect, NetworkConnectOutcome, NetworkDnsResponse, ProcessExec, ProcessIdentity,
+    RuntimeEvent, SyscallEvent,
 };
 use server::{
     auth::SessionScope,
@@ -280,6 +281,12 @@ async fn network_events_persist_canonically_replay_and_share_safe_group(pool: sq
         agent_id,
     };
     let mut succeeded = event(ids.project_id, ids.application_id);
+    let dns_context = DnsContext::new(
+        vec![DnsName::new("api.example.com").unwrap()],
+        succeeded.observed_at - Duration::seconds(1),
+        succeeded.observed_at + Duration::seconds(59),
+    )
+    .unwrap();
     succeeded.payload = EventPayload::NetworkConnect(
         NetworkConnect::new(
             NetworkAddressFamily::Ipv6,
@@ -288,7 +295,8 @@ async fn network_events_persist_canonically_replay_and_share_safe_group(pool: sq
             NetworkConnectOutcome::Succeeded,
             None,
         )
-        .unwrap(),
+        .unwrap()
+        .with_dns_context(dns_context.clone()),
     );
     assert_eq!(
         persist_batch(&pool, context, std::slice::from_ref(&succeeded))
@@ -345,9 +353,85 @@ async fn network_events_persist_canonically_replay_and_share_safe_group(pool: sq
             "process_command": "sh",
             "address_family": "ipv6",
             "destination_address": "2001:db8::7",
-            "destination_port": 443
+            "destination_port": 443,
+            "dns_context": dns_context
         })
     );
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn dns_events_persist_replay_and_group_without_answer_identity(pool: sqlx::PgPool) {
+    let ids = bootstrap(&pool, &config("dns-storage")).await.unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents (id,organization_id,cluster_id,node_name,agent_version) VALUES ($1,$2,$3,'node-1','test')")
+        .bind(agent_id).bind(ids.organization_id).bind(ids.cluster_id).execute(&pool).await.unwrap();
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id,
+    };
+    let name = DnsName::new("api.example.com").unwrap();
+    let mut first = event(ids.project_id, ids.application_id);
+    first.payload = EventPayload::NetworkDnsResponse(NetworkDnsResponse {
+        transaction_id: 1,
+        direction: DnsDirection::Ingress,
+        transport: DnsTransport::Udp,
+        resolver_address: "10.96.0.10".parse().unwrap(),
+        name: name.clone(),
+        query_type: DnsQueryType::A,
+        response_code: DnsResponseCode::NoError,
+        truncated: false,
+        answers: vec![
+            DnsAddressAnswer::new(name.clone(), "203.0.113.7".parse().unwrap(), 60).unwrap(),
+        ],
+        cname_chain: vec![],
+        effective_ttl_seconds: Some(60),
+    });
+    assert_eq!(
+        persist_batch(&pool, context, std::slice::from_ref(&first))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        persist_batch(&pool, context, std::slice::from_ref(&first))
+            .await
+            .unwrap(),
+        0
+    );
+    let mut varied = first.clone();
+    varied.id = Uuid::new_v4();
+    let EventPayload::NetworkDnsResponse(response) = &mut varied.payload else {
+        unreachable!()
+    };
+    response.transaction_id = 2;
+    response.answers[0].address = "203.0.113.8".parse().unwrap();
+    assert_eq!(persist_batch(&pool, context, &[varied]).await.unwrap(), 1);
+
+    let (events, groups, occurrences, outbox): (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM runtime_events), (SELECT count(*) FROM runtime_event_groups), (SELECT occurrence_count FROM runtime_event_groups), (SELECT count(*) FROM outbox_messages)",
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!((events, groups, occurrences, outbox), (2, 1, 2, 1));
+    let payload: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM runtime_events WHERE event_id=$1")
+            .bind(first.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(payload["data"]["name"], "api.example.com");
+    assert_eq!(payload["data"]["answers"][0]["address"], "203.0.113.7");
+    assert!(payload.get("packet").is_none());
+    let semantic: serde_json::Value =
+        sqlx::query_scalar("SELECT payload->'semantic' FROM outbox_messages")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(semantic["name"], "api.example.com");
+    assert!(semantic.get("answers").is_none());
+    assert!(semantic.get("transaction_id").is_none());
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]

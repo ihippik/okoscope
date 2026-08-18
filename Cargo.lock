@@ -24,6 +24,7 @@ dependencies = [
  "dashmap",
  "event-model",
  "futures",
+ "hex",
  "k8s-openapi",
  "kube",
  "protocol",

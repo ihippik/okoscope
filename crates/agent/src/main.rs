@@ -17,6 +17,7 @@ mod linux {
         config::AgentConfig,
         counters::Counters,
         delivery::{EventBuffer, EventRateLimiter, PendingBatch},
+        dns_runtime::DnsProcessor,
         observer::Observer,
         session::{connect_with_backoff, handle_control},
         syscall::{self, Architecture},
@@ -58,16 +59,7 @@ mod linux {
             .init();
         let args = Args::parse();
         let architecture = Architecture::current().context("unsupported CPU architecture")?;
-        let yaml = tokio::fs::read_to_string(&args.config)
-            .await
-            .context("read agent configuration")?;
-        let mut config = AgentConfig::from_yaml(&yaml, architecture)?;
-        if let Ok(node_name) = std::env::var("OKOSCOPE_NODE_NAME") {
-            config.identity.node_name = node_name;
-        }
-        let credential = tokio::fs::read_to_string(&config.server.credential_file)
-            .await
-            .context("read cluster credential")?;
+        let (config, credential) = load_config(&args, architecture).await?;
         let counters = Arc::new(Counters::default());
         let cache = Arc::new(AttributionCache::new(Duration::from_secs(30)));
         let watch_cache = cache.clone();
@@ -81,12 +73,16 @@ mod linux {
             &args.ebpf_object,
             &config.observation.syscalls,
             config.observation.network.connect,
+            config.observation.network.dns.enabled,
             architecture,
         )?;
         let mut cgroup_resolver =
             cgroup::CgroupResolver::new("/sys/fs/cgroup").context("index host cgroup hierarchy")?;
         let mut buffer = EventBuffer::new(config.safety.queue_capacity, config.safety.batch_size);
         let mut rate_limiter = EventRateLimiter::new(config.safety.max_events_per_second);
+        let mut dns_rate_limiter =
+            EventRateLimiter::new(config.observation.network.dns.max_events_per_second);
+        let mut dns_processor = DnsProcessor::new(&config.observation.network.dns);
         loop {
             let hello = hello(&config, counters.snapshot());
             let mut session =
@@ -99,8 +95,25 @@ mod linux {
             loop {
                 tokio::select! {
                     _ = poll.tick() => {
+                        while let Some(packet) = observer.next_dns_packet()? {
+                            let Some((process, payload)) = dns_processor.process(&packet, &counters) else { continue };
+                            let container = cgroup_resolver.resolve(process.pid, process.cgroup_id).ok();
+                            let Some(attribution) = resolve_and_count(
+                                &cache, &counters, container.as_deref(), &config.identity.node_name,
+                                &config.scope.workloads,
+                            ) else { continue };
+                            let event = RuntimeEvent {
+                                id: Uuid::new_v4(), observed_at: Utc::now(),
+                                schema_version: EVENT_SCHEMA_VERSION, attribution, process, payload,
+                            };
+                            if dns_rate_limiter.allow() && rate_limiter.allow() {
+                                buffer.push(event, &counters);
+                            } else {
+                                counters.dns_rate_limited.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
                         while let Some(kernel) = observer.next_event()? {
-                            let Some(event) = runtime_event(&kernel, architecture, &mut cgroup_resolver, &cache, &counters, &config) else { continue };
+                            let Some(event) = runtime_event(&kernel, architecture, &mut cgroup_resolver, &cache, &counters, &config, &mut dns_processor) else { continue };
                             if rate_limiter.allow() {
                                 buffer.push(event, &counters);
                             } else {
@@ -111,6 +124,7 @@ mod linux {
                     }
                     _ = heartbeat.tick() => {
                         counters.update_network_kernel(observer.network_counters()?);
+                        counters.update_dns_kernel(observer.dns_kernel_counters()?);
                         let snapshot = counters.snapshot();
                         tracing::info!(?snapshot, "agent status");
                         session.sender.send(AgentMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(agent_message::Message::Heartbeat(Heartbeat { sent_at_unix_nanos: Utc::now().timestamp_nanos_opt().unwrap_or_default(), drop_counters: Some(snapshot.into()) })) }).await?;
@@ -137,6 +151,20 @@ mod linux {
         }
     }
 
+    async fn load_config(args: &Args, architecture: Architecture) -> Result<(AgentConfig, String)> {
+        let yaml = tokio::fs::read_to_string(&args.config)
+            .await
+            .context("read agent configuration")?;
+        let mut config = AgentConfig::from_yaml(&yaml, architecture)?;
+        if let Ok(node_name) = std::env::var("OKOSCOPE_NODE_NAME") {
+            config.identity.node_name = node_name;
+        }
+        let credential = tokio::fs::read_to_string(&config.server.credential_file)
+            .await
+            .context("read cluster credential")?;
+        Ok((config, credential))
+    }
+
     fn runtime_event(
         kernel: &KernelEvent,
         architecture: Architecture,
@@ -144,6 +172,7 @@ mod linux {
         cache: &AttributionCache,
         counters: &Counters,
         config: &AgentConfig,
+        dns_processor: &mut DnsProcessor,
     ) -> Option<RuntimeEvent> {
         let pid = u32::try_from(kernel.pid_tgid & u64::from(u32::MAX))
             .expect("PID is encoded in the low 32 bits");
@@ -164,7 +193,7 @@ mod linux {
             &config.scope.workloads,
         )?;
         let command = command(&kernel.command);
-        let payload = if kernel.event_kind == agent_ebpf_common::EVENT_KIND_EXEC {
+        let mut payload = if kernel.event_kind == agent_ebpf_common::EVENT_KIND_EXEC {
             let executable = std::fs::read_link(format!("/proc/{pid}/exe")).map_or_else(
                 |_| command.clone(),
                 |path| path.to_string_lossy().into_owned(),
@@ -191,6 +220,7 @@ mod linux {
             counters.unsupported.fetch_add(1, Ordering::Relaxed);
             return None;
         };
+        dns_processor.attach_context(kernel.cgroup_id, &mut payload);
         Some(RuntimeEvent {
             id: Uuid::new_v4(),
             observed_at: Utc::now(),
