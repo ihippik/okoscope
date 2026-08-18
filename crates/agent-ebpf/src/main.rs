@@ -165,13 +165,18 @@ fn capture_dns(ctx: &SkBuffContext, direction: u8) -> Result<(), ()> {
     record.resolver_address = resolver_address;
     record.command = [0; 16];
     record.payload = [0; DNS_CAPTURE_BYTES];
-    if ctx
-        .load_bytes(payload_offset, &mut record.payload[..captured_len])
-        .is_err()
-    {
-        increment_dns_counter(DNS_COUNTER_DECODE_FAILED);
-        slot.discard(0);
-        return Ok(());
+    let mut index = 0;
+    while index < DNS_CAPTURE_BYTES {
+        if index >= captured_len {
+            break;
+        }
+        let Ok(byte) = ctx.load::<u8>(payload_offset + index) else {
+            increment_dns_counter(DNS_COUNTER_DECODE_FAILED);
+            slot.discard(0);
+            return Ok(());
+        };
+        record.payload[index] = byte;
+        index += 1;
     }
     slot.submit(0);
     Ok(())
