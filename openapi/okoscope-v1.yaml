@@ -60,7 +60,37 @@ paths:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
     get:
       operationId: getApplicationRuntimeInventorySummary
-      responses: {"200": {$ref: '#/components/responses/InventorySummary'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+      parameters:
+        - {name: release_id, in: query, schema: {type: string, format: uuid}}
+        - {name: cluster_id, in: query, schema: {type: string, format: uuid}}
+        - {name: namespace, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
+        - {name: workload_kind, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
+        - {name: workload_name, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
+        - {name: container_name, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
+        - {name: observed_from, in: query, schema: {type: string, format: date-time}}
+        - {name: observed_to, in: query, schema: {type: string, format: date-time}}
+        - {name: search, in: query, schema: {type: string, minLength: 1, maxLength: 200}}
+      responses: {"200": {$ref: '#/components/responses/InventorySummary'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/facets/{facet}:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {name: facet, in: path, required: true, schema: {$ref: '#/components/schemas/InventoryFacet'}}]
+    get:
+      operationId: listApplicationRuntimeInventoryFacetOptions
+      description: Returns bounded dependent options. Every active filter except the requested facet's own value is applied. Cursors are opaque and valid only for the exact Application, facet, and normalized filter scope.
+      parameters:
+        - {name: kind, in: query, schema: {$ref: '#/components/schemas/InventoryKind'}}
+        - {name: release_id, in: query, schema: {type: string, format: uuid}}
+        - {name: cluster_id, in: query, schema: {type: string, format: uuid}}
+        - {name: namespace, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
+        - {name: workload_kind, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
+        - {name: workload_name, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
+        - {name: container_name, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
+        - {name: observed_from, in: query, schema: {type: string, format: date-time}}
+        - {name: observed_to, in: query, schema: {type: string, format: date-time}}
+        - {name: search, in: query, schema: {type: string, minLength: 1, maxLength: 200}}
+        - {name: facet_search, in: query, schema: {type: string, minLength: 1, maxLength: 200}}
+        - {$ref: '#/components/parameters/OpaqueCursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses: {"200": {$ref: '#/components/responses/InventoryFacetPage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}, "500": {$ref: '#/components/responses/Error'}}
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}:
     parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
     get:
@@ -944,15 +974,34 @@ components:
         first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
         last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
         kinds: {type: array, maxItems: 4, items: {$ref: '#/components/schemas/InventoryKindCount'}}
+    InventoryFacet:
+      type: string
+      enum: [cluster, namespace, workload_kind, workload_name, container_name]
+    InventoryFacetOption:
+      type: object
+      additionalProperties: false
+      required: [value, label, item_count, occurrence_count]
+      properties:
+        value: {type: string, minLength: 1}
+        label: {type: string, minLength: 1}
+        item_count: {type: integer, format: int64, minimum: 0}
+        occurrence_count: {type: integer, format: int64, minimum: 0}
+    InventoryFacetPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryFacetOption'}}
+        next_cursor: {type: [string, 'null'], description: Opaque cursor bound to the exact Application, facet, and filter scope.}
     InventoryEvidenceLinks:
       type: object
       additionalProperties: false
       required: [releases, sightings, groups, occurrences]
       properties:
-        releases: {type: string}
-        sightings: {type: string}
-        groups: {type: string}
-        occurrences: {type: string}
+        releases: {type: string, pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/releases$'}
+        sightings: {type: string, pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/sightings$'}
+        groups: {type: string, pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/groups$'}
+        occurrences: {type: string, pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/occurrences$'}
     InventoryItemDetail:
       unevaluatedProperties: false
       allOf:
@@ -1076,6 +1125,7 @@ components:
     Application: {description: Application summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Application'}}}}
     ApplicationPage: {description: Application page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ApplicationPage'}}}}
     InventorySummary: {description: Application runtime inventory aggregate, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventorySummary'}}}}
+    InventoryFacetPage: {description: Bounded runtime inventory facet options, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryFacetPage'}}}}
     InventoryItemPage: {description: Bounded application runtime inventory page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryItemPage'}}}}
     InventoryItemDetail: {description: Runtime inventory item with evidence navigation, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryItemDetail'}}}}
     InventoryReleasePresencePage: {description: Evidence-qualified release presence page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryReleasePresencePage'}}}}

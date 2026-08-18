@@ -19,6 +19,10 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "get",
     ),
     (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/facets/{facet}",
+        "get",
+    ),
+    (
         "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}",
         "get",
     ),
