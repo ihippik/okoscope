@@ -47,6 +47,17 @@ static API_CLIENT_ERRORS: AtomicU64 = AtomicU64::new(0);
 static API_SERVER_ERRORS: AtomicU64 = AtomicU64::new(0);
 static CORS_DENIALS: AtomicU64 = AtomicU64::new(0);
 static WEB_API_DURATION_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_PROJECTION_EVENTS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_PROJECTION_SKIPS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_ITEMS_CREATED: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_PROJECTION_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_BACKFILL_SCANNED: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_BACKFILL_PROJECTED: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_BACKFILL_SKIPPED: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_RECONCILIATIONS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_RECONCILIATION_MISMATCHES: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_QUERY_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_QUERY_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
 
 pub fn record_grouping(elapsed_micros: u64, group_created: bool) {
     GROUPING_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -176,6 +187,35 @@ pub fn record_cors_denial() {
     CORS_DENIALS.fetch_add(1, Ordering::Relaxed);
 }
 
+pub fn record_inventory_projection(
+    elapsed_micros: u64,
+    item_created: bool,
+    membership_created: bool,
+) {
+    INVENTORY_PROJECTION_EVENTS.fetch_add(u64::from(membership_created), Ordering::Relaxed);
+    INVENTORY_PROJECTION_SKIPS.fetch_add(u64::from(!membership_created), Ordering::Relaxed);
+    INVENTORY_ITEMS_CREATED.fetch_add(u64::from(item_created), Ordering::Relaxed);
+    INVENTORY_PROJECTION_MICROSECONDS.fetch_add(elapsed_micros, Ordering::Relaxed);
+}
+
+pub fn record_inventory_backfill(stats: crate::inventory_operations::InventoryBackfillStats) {
+    INVENTORY_BACKFILL_SCANNED.store(stats.scanned, Ordering::Relaxed);
+    INVENTORY_BACKFILL_PROJECTED.store(stats.projected, Ordering::Relaxed);
+    INVENTORY_BACKFILL_SKIPPED.store(stats.skipped, Ordering::Relaxed);
+}
+
+pub fn record_inventory_reconciliation(
+    reconciliation: crate::inventory_operations::InventoryReconciliation,
+) {
+    INVENTORY_RECONCILIATIONS.fetch_add(1, Ordering::Relaxed);
+    INVENTORY_RECONCILIATION_MISMATCHES.fetch_add(reconciliation.mismatch_count, Ordering::Relaxed);
+}
+
+pub fn record_inventory_query(elapsed_micros: u64) {
+    INVENTORY_QUERY_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    INVENTORY_QUERY_MICROSECONDS.fetch_add(elapsed_micros, Ordering::Relaxed);
+}
+
 #[derive(Clone)]
 struct MetricsState {
     pool: PgPool,
@@ -230,6 +270,17 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
             "database metrics unavailable\n".to_owned(),
         );
     };
+    let inventory_snapshot = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT count(*)::bigint,COALESCE(EXTRACT(EPOCH FROM (now()-max(updated_at)))::bigint,0) FROM runtime_inventory_items",
+    )
+    .fetch_one(pool)
+    .await;
+    let Ok((inventory_item_count, inventory_freshness_seconds)) = inventory_snapshot else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database metrics unavailable\n".to_owned(),
+        );
+    };
     let metrics = [
         (
             "okoscope_grouping_operations_total",
@@ -278,6 +329,58 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         (
             "okoscope_backfill_grouped",
             BACKFILL_GROUPED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_projection_events_total",
+            INVENTORY_PROJECTION_EVENTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_projection_skips_total",
+            INVENTORY_PROJECTION_SKIPS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_items_created_total",
+            INVENTORY_ITEMS_CREATED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_projection_duration_microseconds_total",
+            INVENTORY_PROJECTION_MICROSECONDS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_backfill_scanned",
+            INVENTORY_BACKFILL_SCANNED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_backfill_projected",
+            INVENTORY_BACKFILL_PROJECTED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_backfill_skipped",
+            INVENTORY_BACKFILL_SKIPPED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_reconciliations_total",
+            INVENTORY_RECONCILIATIONS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_reconciliation_mismatches_total",
+            INVENTORY_RECONCILIATION_MISMATCHES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_query_requests_total",
+            INVENTORY_QUERY_REQUESTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_query_duration_microseconds_total",
+            INVENTORY_QUERY_MICROSECONDS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_items",
+            u64::try_from(inventory_item_count).unwrap_or_default(),
+        ),
+        (
+            "okoscope_inventory_projection_freshness_seconds",
+            u64::try_from(inventory_freshness_seconds).unwrap_or_default(),
         ),
         (
             "okoscope_outbox_pending",

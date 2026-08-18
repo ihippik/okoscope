@@ -2,7 +2,7 @@ use sqlx::{PgPool, Row};
 use thiserror::Error;
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
-pub const REQUIRED_MIGRATION: i64 = 7;
+pub const REQUIRED_MIGRATION: i64 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -62,8 +62,8 @@ mod tests {
     #[test]
     fn additive_newer_schema_supports_image_rollback() {
         assert!(!schema_is_compatible(None, 7));
-        assert!(!schema_is_compatible(Some(6), 7));
-        assert!(schema_is_compatible(Some(7), 7));
-        assert!(schema_is_compatible(Some(8), 7));
+        assert!(!schema_is_compatible(Some(7), 8));
+        assert!(schema_is_compatible(Some(8), 8));
+        assert!(schema_is_compatible(Some(9), 8));
     }
 }

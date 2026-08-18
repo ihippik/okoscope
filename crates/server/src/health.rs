@@ -39,6 +39,7 @@ pub fn router(
                 .is_some_and(|service| service.config.enabled),
         ));
     let api_router = api::router((*pool).clone())
+        .merge(crate::inventory_api::router((*pool).clone()))
         .merge(crate::releases::router((*pool).clone()))
         .merge(crate::navigation::router((*pool).clone()));
     let api_router = if let Some(notifications) = notifications {

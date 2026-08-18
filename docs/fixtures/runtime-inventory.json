@@ -1,0 +1,107 @@
+{
+  "summary": {
+    "identity_version": 1,
+    "item_count": 4,
+    "occurrence_count": 126,
+    "first_seen_at": "2026-08-17T10:00:00Z",
+    "last_seen_at": "2026-08-18T10:00:00Z",
+    "kinds": [
+      {"kind": "process", "item_count": 1, "occurrence_count": 12},
+      {"kind": "destination", "item_count": 1, "occurrence_count": 24},
+      {"kind": "domain", "item_count": 1, "occurrence_count": 30},
+      {"kind": "syscall", "item_count": 1, "occurrence_count": 60}
+    ]
+  },
+  "page": {
+    "items": [
+      {
+        "id": "10000000-0000-4000-8000-000000000001",
+        "project_id": "20000000-0000-4000-8000-000000000001",
+        "application_id": "30000000-0000-4000-8000-000000000001",
+        "inventory_kind": "process",
+        "identity_version": 1,
+        "semantic_summary": {"executable": "/app/payments"},
+        "first_seen_at": "2026-08-17T10:00:00Z",
+        "last_seen_at": "2026-08-18T10:00:00Z",
+        "occurrence_count": 12,
+        "release_count": 2,
+        "cluster_count": 2,
+        "namespace_count": 2,
+        "workload_count": 2,
+        "pod_count": 8,
+        "container_count": 1,
+        "group_count": 2
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000002",
+        "project_id": "20000000-0000-4000-8000-000000000001",
+        "application_id": "30000000-0000-4000-8000-000000000001",
+        "inventory_kind": "destination",
+        "identity_version": 1,
+        "semantic_summary": {"process_command": "payments", "address_family": "ipv4", "destination_address": "203.0.113.7", "destination_port": 443},
+        "first_seen_at": "2026-08-17T10:01:00Z",
+        "last_seen_at": "2026-08-18T09:59:00Z",
+        "occurrence_count": 24,
+        "release_count": 2,
+        "cluster_count": 2,
+        "namespace_count": 2,
+        "workload_count": 2,
+        "pod_count": 8,
+        "container_count": 1,
+        "group_count": 2
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000003",
+        "project_id": "20000000-0000-4000-8000-000000000001",
+        "application_id": "30000000-0000-4000-8000-000000000001",
+        "inventory_kind": "domain",
+        "identity_version": 1,
+        "semantic_summary": {"process_command": "payments", "name": "api.example.com", "query_type": "A"},
+        "first_seen_at": "2026-08-17T10:01:00Z",
+        "last_seen_at": "2026-08-18T09:59:00Z",
+        "occurrence_count": 30,
+        "release_count": 2,
+        "cluster_count": 2,
+        "namespace_count": 2,
+        "workload_count": 2,
+        "pod_count": 8,
+        "container_count": 1,
+        "group_count": 4
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000004",
+        "project_id": "20000000-0000-4000-8000-000000000001",
+        "application_id": "30000000-0000-4000-8000-000000000001",
+        "inventory_kind": "syscall",
+        "identity_version": 1,
+        "semantic_summary": {"process_command": "payments", "syscall": "epoll_wait"},
+        "first_seen_at": "2026-08-17T10:01:00Z",
+        "last_seen_at": "2026-08-18T09:59:00Z",
+        "occurrence_count": 60,
+        "release_count": 2,
+        "cluster_count": 2,
+        "namespace_count": 2,
+        "workload_count": 2,
+        "pod_count": 8,
+        "container_count": 1,
+        "group_count": 2
+      }
+    ],
+    "next_cursor": "10000000-0000-4000-8000-000000000004"
+  },
+  "next_page": {"items": [], "next_cursor": null},
+  "empty": {"items": [], "next_cursor": null},
+  "release_presence": {
+    "items": [
+      {"release_id": "40000000-0000-4000-8000-000000000001", "version": "2.14.0", "deployed_at": "2026-08-18T09:00:00Z", "presence": "observed", "occurrence_count": 8, "first_seen_at": "2026-08-18T09:01:00Z", "last_seen_at": "2026-08-18T10:00:00Z", "release_evidence_count": 55},
+      {"release_id": "40000000-0000-4000-8000-000000000002", "version": "2.13.0", "deployed_at": "2026-08-17T09:00:00Z", "presence": "not_observed", "occurrence_count": null, "first_seen_at": null, "last_seen_at": null, "release_evidence_count": 48},
+      {"release_id": "40000000-0000-4000-8000-000000000003", "version": "2.12.0", "deployed_at": "2026-08-16T09:00:00Z", "presence": "unknown", "occurrence_count": null, "first_seen_at": null, "last_seen_at": null, "release_evidence_count": 0}
+    ],
+    "next_cursor": null
+  },
+  "unsafe_display_text": {
+    "semantic_summary": {"executable": "<img src=x onerror=alert('inventory')>"},
+    "namespace": "<script>alert('scope')</script>",
+    "workload_name": "javascript:alert('workload')"
+  }
+}

@@ -1,4 +1,25 @@
+use server::bootstrap::{BootstrapConfig, bootstrap};
 use server::database::{MIGRATOR, REQUIRED_MIGRATION, migrate, verify_schema};
+use uuid::Uuid;
+
+fn config(name: &str) -> BootstrapConfig {
+    BootstrapConfig {
+        organization_id: Uuid::new_v4(),
+        project_id: Uuid::new_v4(),
+        cluster_id: Uuid::new_v4(),
+        application_id: Uuid::new_v4(),
+        organization_slug: name.into(),
+        organization_name: name.into(),
+        project_slug: "project".into(),
+        project_name: "Project".into(),
+        cluster_external_id: "cluster".into(),
+        cluster_name: "Cluster".into(),
+        application_slug: "app".into(),
+        application_name: "Application".into(),
+        cluster_credential: format!("cluster-{name}"),
+        api_credential: format!("api-{name}"),
+    }
+}
 
 #[sqlx::test]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
@@ -53,4 +74,65 @@ async fn migration_only_can_retry_after_failure_is_repaired(pool: sqlx::PgPool) 
     let report = migrate(&pool).await.expect("retry succeeds after repair");
 
     assert_eq!(report.applied, REQUIRED_MIGRATION);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn inventory_schema_enforces_identity_tenant_scope_and_indexes(pool: sqlx::PgPool) {
+    let first = bootstrap(&pool, &config("inventory-first")).await.unwrap();
+    let second = bootstrap(&pool, &config("inventory-second")).await.unwrap();
+    let digest = vec![7_u8; 32];
+    let item_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO runtime_inventory_items(id,organization_id,project_id,application_id,inventory_kind,identity_version,identity_digest,semantic_summary,first_seen_at,last_seen_at,occurrence_count) VALUES($1,$2,$3,$4,'process',1,$5,'{\"executable\":\"/app\"}'::jsonb,now(),now(),1)")
+        .bind(item_id)
+        .bind(first.organization_id)
+        .bind(first.project_id)
+        .bind(first.application_id)
+        .bind(&digest)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let duplicate = sqlx::query("INSERT INTO runtime_inventory_items(id,organization_id,project_id,application_id,inventory_kind,identity_version,identity_digest,semantic_summary,first_seen_at,last_seen_at,occurrence_count) VALUES($1,$2,$3,$4,'process',1,$5,'{}'::jsonb,now(),now(),1)")
+        .bind(Uuid::new_v4())
+        .bind(first.organization_id)
+        .bind(first.project_id)
+        .bind(first.application_id)
+        .bind(&digest)
+        .execute(&pool)
+        .await;
+    assert!(
+        duplicate.is_err(),
+        "semantic identity must be unique per application and version"
+    );
+
+    let cross_tenant = sqlx::query("INSERT INTO runtime_inventory_items(id,organization_id,project_id,application_id,inventory_kind,identity_version,identity_digest,semantic_summary,first_seen_at,last_seen_at,occurrence_count) VALUES($1,$2,$3,$4,'process',1,$5,'{}'::jsonb,now(),now(),1)")
+        .bind(Uuid::new_v4())
+        .bind(first.organization_id)
+        .bind(first.project_id)
+        .bind(second.application_id)
+        .bind(vec![8_u8; 32])
+        .execute(&pool)
+        .await;
+    assert!(
+        cross_tenant.is_err(),
+        "application foreign key must preserve tenant scope"
+    );
+
+    let indexes: Vec<String> = sqlx::query_scalar("SELECT indexname FROM pg_indexes WHERE schemaname=current_schema() AND tablename LIKE 'runtime_inventory_%'")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    for required in [
+        "runtime_inventory_items_recent_idx",
+        "runtime_inventory_items_kind_recent_idx",
+        "runtime_inventory_releases_release_idx",
+        "runtime_inventory_sightings_filter_idx",
+        "runtime_inventory_sightings_item_recent_idx",
+    ] {
+        assert!(
+            indexes.iter().any(|index| index == required),
+            "missing index {required}"
+        );
+    }
 }

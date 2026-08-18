@@ -38,6 +38,58 @@ paths:
     get:
       operationId: getApplication
       responses: {"200": {$ref: '#/components/responses/Application'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
+    get:
+      operationId: listApplicationRuntimeInventory
+      parameters:
+        - {name: kind, in: query, schema: {$ref: '#/components/schemas/InventoryKind'}}
+        - {name: release_id, in: query, schema: {type: string, format: uuid}}
+        - {name: cluster_id, in: query, schema: {type: string, format: uuid}}
+        - {name: namespace, in: query, schema: {type: string}}
+        - {name: workload_kind, in: query, schema: {type: string}}
+        - {name: workload_name, in: query, schema: {type: string}}
+        - {name: container_name, in: query, schema: {type: string}}
+        - {name: observed_from, in: query, schema: {type: string, format: date-time}}
+        - {name: observed_to, in: query, schema: {type: string, format: date-time}}
+        - {name: search, in: query, schema: {type: string, minLength: 1, maxLength: 200}, description: Case-insensitive search over allowlisted safe semantic identity fields only.}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses: {"200": {$ref: '#/components/responses/InventoryItemPage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/summary:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
+    get:
+      operationId: getApplicationRuntimeInventorySummary
+      responses: {"200": {$ref: '#/components/responses/InventorySummary'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    get:
+      operationId: getApplicationRuntimeInventoryItem
+      responses: {"200": {$ref: '#/components/responses/InventoryItemDetail'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/releases:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    get:
+      operationId: listApplicationRuntimeInventoryItemReleases
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {"200": {$ref: '#/components/responses/InventoryReleasePresencePage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/sightings:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    get:
+      operationId: listApplicationRuntimeInventoryItemSightings
+      parameters: [{$ref: '#/components/parameters/OpaqueCursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {"200": {$ref: '#/components/responses/InventorySightingPage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/groups:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    get:
+      operationId: listApplicationRuntimeInventoryItemGroups
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {"200": {$ref: '#/components/responses/InventoryGroupPage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+  /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/occurrences:
+    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    get:
+      operationId: listApplicationRuntimeInventoryItemOccurrences
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {"200": {$ref: '#/components/responses/InventoryOccurrencePage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
   /api/v1/runtime-groups:
     get:
       operationId: listRuntimeGroups
@@ -213,9 +265,11 @@ components:
     bearerAuth: {type: http, scheme: bearer}
   parameters:
     Cursor: {name: cursor, in: query, schema: {type: string, format: uuid}, description: Opaque cursor scoped to the authenticated collection.}
+    OpaqueCursor: {name: cursor, in: query, schema: {type: string}, description: Opaque cursor scoped to the authenticated collection; clients must not parse it.}
     Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
     ProjectId: {name: project_id, in: path, required: true, schema: {type: string, format: uuid}}
     ApplicationId: {name: application_id, in: path, required: true, schema: {type: string, format: uuid}}
+    InventoryItemId: {name: item_id, in: path, required: true, schema: {type: string, format: uuid}}
     GroupId: {name: group_id, in: path, required: true, schema: {type: string, format: uuid}}
     ReleaseId: {name: release_id, in: path, required: true, schema: {type: string, format: uuid}}
     TargetId: {name: target_id, in: path, required: true, schema: {type: string, format: uuid}}
@@ -806,8 +860,199 @@ components:
           required: [affected_deliveries]
           properties:
             affected_deliveries: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/RecoveryOperationDelivery'}}
+    InventoryKind: {type: string, enum: [process, destination, domain, syscall]}
+    InventoryReleasePresence: {type: string, enum: [observed, not_observed, unknown], description: Evidence-qualified state; not_observed does not prove behavior cannot occur.}
+    InventorySemanticSummary:
+      oneOf:
+        - {$ref: '#/components/schemas/InventoryProcessIdentity'}
+        - {$ref: '#/components/schemas/InventoryDestinationIdentity'}
+        - {$ref: '#/components/schemas/InventoryDomainIdentity'}
+        - {$ref: '#/components/schemas/InventorySyscallIdentity'}
+    InventoryProcessIdentity:
+      type: object
+      additionalProperties: false
+      required: [executable]
+      properties: {executable: {type: string, minLength: 1, example: /app/payments}}
+    InventoryDestinationIdentity:
+      type: object
+      additionalProperties: false
+      required: [process_command, address_family, destination_address, destination_port]
+      properties:
+        process_command: {type: string, minLength: 1, example: payments}
+        address_family: {type: string, enum: [ipv4, ipv6]}
+        destination_address: {type: string, format: ip, example: 203.0.113.7}
+        destination_port: {type: integer, minimum: 1, maximum: 65535, example: 443}
+    InventoryDomainIdentity:
+      type: object
+      additionalProperties: false
+      required: [process_command, name, query_type]
+      properties:
+        process_command: {type: string, minLength: 1, example: payments}
+        name: {type: string, minLength: 1, maxLength: 253, example: api.example.com}
+        query_type: {type: string, enum: [A, AAAA]}
+    InventorySyscallIdentity:
+      type: object
+      additionalProperties: false
+      required: [process_command, syscall]
+      properties:
+        process_command: {type: string, minLength: 1, example: payments}
+        syscall: {type: string, minLength: 1, example: epoll_wait}
+    InventoryItem:
+      type: object
+      additionalProperties: false
+      required: [id, project_id, application_id, inventory_kind, identity_version, semantic_summary, first_seen_at, last_seen_at, occurrence_count, release_count, cluster_count, namespace_count, workload_count, pod_count, container_count, group_count]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        project_id: {$ref: '#/components/schemas/Uuid'}
+        application_id: {$ref: '#/components/schemas/Uuid'}
+        inventory_kind: {$ref: '#/components/schemas/InventoryKind'}
+        identity_version: {type: integer, format: int32, minimum: 1, example: 1}
+        semantic_summary: {$ref: '#/components/schemas/InventorySemanticSummary'}
+        first_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        last_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        occurrence_count: {type: integer, format: int64, minimum: 1}
+        release_count: {type: integer, format: int64, minimum: 0}
+        cluster_count: {type: integer, format: int64, minimum: 0}
+        namespace_count: {type: integer, format: int64, minimum: 0}
+        workload_count: {type: integer, format: int64, minimum: 0}
+        pod_count: {type: integer, format: int64, minimum: 0}
+        container_count: {type: integer, format: int64, minimum: 0}
+        group_count: {type: integer, format: int64, minimum: 0}
+    InventoryItemPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryItem'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    InventoryKindCount:
+      type: object
+      additionalProperties: false
+      required: [kind, item_count, occurrence_count]
+      properties:
+        kind: {$ref: '#/components/schemas/InventoryKind'}
+        item_count: {type: integer, format: int64, minimum: 0}
+        occurrence_count: {type: integer, format: int64, minimum: 0}
+    InventorySummary:
+      type: object
+      additionalProperties: false
+      required: [identity_version, item_count, occurrence_count, first_seen_at, last_seen_at, kinds]
+      properties:
+        identity_version: {type: integer, format: int32, minimum: 1}
+        item_count: {type: integer, format: int64, minimum: 0}
+        occurrence_count: {type: integer, format: int64, minimum: 0}
+        first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        kinds: {type: array, maxItems: 4, items: {$ref: '#/components/schemas/InventoryKindCount'}}
+    InventoryEvidenceLinks:
+      type: object
+      additionalProperties: false
+      required: [releases, sightings, groups, occurrences]
+      properties:
+        releases: {type: string}
+        sightings: {type: string}
+        groups: {type: string}
+        occurrences: {type: string}
+    InventoryItemDetail:
+      unevaluatedProperties: false
+      allOf:
+        - {$ref: '#/components/schemas/InventoryItem'}
+        - type: object
+          required: [evidence]
+          properties: {evidence: {$ref: '#/components/schemas/InventoryEvidenceLinks'}}
+    InventoryReleaseEvidence:
+      type: object
+      additionalProperties: false
+      required: [release_id, version, deployed_at, presence, occurrence_count, first_seen_at, last_seen_at, release_evidence_count]
+      properties:
+        release_id: {$ref: '#/components/schemas/Uuid'}
+        version: {type: string, minLength: 1, maxLength: 200}
+        deployed_at: {$ref: '#/components/schemas/Timestamp'}
+        presence: {$ref: '#/components/schemas/InventoryReleasePresence'}
+        occurrence_count: {type: [integer, 'null'], format: int64, minimum: 1}
+        first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        release_evidence_count: {type: integer, format: int64, minimum: 0}
+    InventoryReleasePresencePage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryReleaseEvidence'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    InventorySighting:
+      type: object
+      additionalProperties: false
+      required: [cluster_id, namespace, workload_kind, workload_name, pod_uid, pod_name, container_name, occurrence_count, first_seen_at, last_seen_at]
+      properties:
+        cluster_id: {$ref: '#/components/schemas/Uuid'}
+        namespace: {type: string}
+        workload_kind: {type: string}
+        workload_name: {type: string}
+        pod_uid: {type: string}
+        pod_name: {type: string}
+        container_name: {type: string}
+        occurrence_count: {type: integer, format: int64, minimum: 1}
+        first_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        last_seen_at: {$ref: '#/components/schemas/Timestamp'}
+    InventorySightingPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventorySighting'}}
+        next_cursor: {$ref: '#/components/schemas/NullableOpaqueCursor'}
+    InventoryGroup:
+      type: object
+      additionalProperties: false
+      required: [id, cluster_id, namespace, workload_kind, workload_name, event_kind, status, first_seen_at, last_seen_at, occurrence_count]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        cluster_id: {$ref: '#/components/schemas/Uuid'}
+        namespace: {type: string}
+        workload_kind: {type: string}
+        workload_name: {type: string}
+        event_kind: {type: string}
+        status: {type: string, enum: [open, acknowledged, resolved]}
+        first_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        last_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        occurrence_count: {type: integer, format: int64, minimum: 1}
+    InventoryGroupPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryGroup'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    InventoryOccurrence:
+      type: object
+      additionalProperties: false
+      required: [id, event_id, observed_at, cluster_id, node_name, namespace, pod_uid, pod_name, container_name, process_command, event_kind, payload, release_id, release_version]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        event_id: {$ref: '#/components/schemas/Uuid'}
+        observed_at: {$ref: '#/components/schemas/Timestamp'}
+        cluster_id: {$ref: '#/components/schemas/Uuid'}
+        node_name: {type: string}
+        namespace: {type: string}
+        pod_uid: {type: string}
+        pod_name: {type: string}
+        container_name: {type: string}
+        process_command: {type: string}
+        event_kind: {type: string}
+        payload: {$ref: '#/components/schemas/RuntimeEventPayload'}
+        release_id: {$ref: '#/components/schemas/NullableUuid'}
+        release_version: {type: [string, 'null']}
+    InventoryOccurrencePage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryOccurrence'}}
+        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
     Uuid: {type: string, format: uuid}
     NullableUuid: {type: [string, 'null'], format: uuid}
+    NullableOpaqueCursor: {type: [string, 'null']}
     Timestamp: {type: string, format: date-time, example: '2026-08-17T12:00:00Z'}
     NullableTimestamp: {type: [string, 'null'], format: date-time}
   requestBodies:
@@ -830,6 +1075,13 @@ components:
     ProjectPage: {description: Project page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPage'}}}}
     Application: {description: Application summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Application'}}}}
     ApplicationPage: {description: Application page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ApplicationPage'}}}}
+    InventorySummary: {description: Application runtime inventory aggregate, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventorySummary'}}}}
+    InventoryItemPage: {description: Bounded application runtime inventory page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryItemPage'}}}}
+    InventoryItemDetail: {description: Runtime inventory item with evidence navigation, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryItemDetail'}}}}
+    InventoryReleasePresencePage: {description: Evidence-qualified release presence page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryReleasePresencePage'}}}}
+    InventorySightingPage: {description: Bounded Kubernetes sighting page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventorySightingPage'}}}}
+    InventoryGroupPage: {description: Contributing runtime group page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryGroupPage'}}}}
+    InventoryOccurrencePage: {description: Raw inventory evidence page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryOccurrencePage'}}}}
     RuntimeGroupPage: {description: Runtime group page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroupPage'}}}}
     RuntimeGroup: {description: Runtime group, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroup'}}}}
     RuntimeGroupDetail: {description: Runtime group detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroupDetail'}}}}

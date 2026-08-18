@@ -7,7 +7,11 @@ use server::{
     backfill::{BackfillOptions, run as run_backfill},
     bootstrap::{BootstrapConfig, bootstrap},
     database::{migrate, verify_schema},
-    health, metrics,
+    health,
+    inventory_operations::{
+        InventoryBackfillOptions, backfill as backfill_inventory, reconcile as reconcile_inventory,
+    },
+    metrics,
     notification::NotificationService,
     notification_config::NotificationArgs,
     session::AgentSessionService,
@@ -219,6 +223,32 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         throttle_ms: u64,
     },
+    /// Project existing grouped events into the application runtime inventory.
+    InventoryBackfill {
+        #[arg(long)]
+        organization_id: Uuid,
+        #[arg(long)]
+        project_id: Uuid,
+        #[arg(long)]
+        application_id: Option<Uuid>,
+        #[arg(long, default_value_t = 1)]
+        identity_version: i16,
+        #[arg(long, default_value_t = 500)]
+        batch_size: i64,
+        #[arg(long, default_value_t = 0)]
+        throttle_ms: u64,
+    },
+    /// Compare one Application inventory projection with its source events.
+    InventoryReconcile {
+        #[arg(long)]
+        organization_id: Uuid,
+        #[arg(long)]
+        project_id: Uuid,
+        #[arg(long)]
+        application_id: Uuid,
+        #[arg(long, default_value_t = 1)]
+        identity_version: i16,
+    },
 }
 
 async fn check_notifications(
@@ -282,6 +312,53 @@ async fn run_command(
                     .await
                     .context("notification retention batch")?;
             tracing::info!(?stats, "notification retention command complete");
+            Ok(true)
+        }
+        Some(Command::InventoryBackfill {
+            organization_id,
+            project_id,
+            application_id,
+            identity_version,
+            batch_size,
+            throttle_ms,
+        }) => {
+            let stats = backfill_inventory(
+                pool,
+                InventoryBackfillOptions {
+                    organization_id,
+                    project_id,
+                    application_id,
+                    identity_version,
+                    batch_size,
+                    throttle: std::time::Duration::from_millis(throttle_ms),
+                },
+            )
+            .await
+            .context("backfill application runtime inventory")?;
+            tracing::info!(?stats, "runtime inventory backfill complete");
+            Ok(true)
+        }
+        Some(Command::InventoryReconcile {
+            organization_id,
+            project_id,
+            application_id,
+            identity_version,
+        }) => {
+            let result = reconcile_inventory(
+                pool,
+                organization_id,
+                project_id,
+                application_id,
+                identity_version,
+            )
+            .await
+            .context("reconcile application runtime inventory")?;
+            anyhow::ensure!(
+                result.is_consistent(),
+                "runtime inventory reconciliation found {} mismatches",
+                result.mismatch_count
+            );
+            tracing::info!(?result, "runtime inventory reconciliation passed");
             Ok(true)
         }
         Some(Command::Migrate | Command::NotificationCheck) | None => Ok(false),

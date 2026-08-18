@@ -10,6 +10,10 @@ use server::{
     backfill::{BackfillOptions, run as run_backfill},
     bootstrap::{BootstrapConfig, bootstrap},
     ingestion::{IngestionContext, IngestionError, persist_batch},
+    inventory_operations::{
+        InventoryBackfillOptions, InventoryBackfillStats, backfill as backfill_inventory,
+        reconcile as reconcile_inventory,
+    },
 };
 use uuid::Uuid;
 
@@ -62,6 +66,170 @@ fn event(project_id: Uuid, application_id: Uuid) -> RuntimeEvent {
             parent_command: None,
         }),
     }
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn inventory_projection_is_concurrent_idempotent_scoped_and_transactional(
+    pool: sqlx::PgPool,
+) {
+    let ids = bootstrap(&pool, &config("inventory-projection"))
+        .await
+        .unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,'node-inventory','test')")
+        .bind(agent_id)
+        .bind(ids.organization_id)
+        .bind(ids.cluster_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id,
+    };
+    let now = Utc::now();
+    let release_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO releases(id,organization_id,project_id,application_id,version,deployed_at) VALUES($1,$2,$3,$4,'inventory-v1',$5)")
+        .bind(release_id)
+        .bind(ids.organization_id)
+        .bind(ids.project_id)
+        .bind(ids.application_id)
+        .bind(now - Duration::days(1))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut first = event(ids.project_id, ids.application_id);
+    first.observed_at = now;
+    first.attribution.release = Some("inventory-v1".into());
+    first.attribution.pod_uid = "inventory-pod-a".into();
+    let mut second = first.clone();
+    second.id = Uuid::new_v4();
+    second.observed_at = now + Duration::seconds(1);
+    second.attribution.namespace = "canary".into();
+    second.attribution.workload_name = "payment-api-canary".into();
+    second.attribution.pod_uid = "inventory-pod-b".into();
+    second.attribution.pod_name = "payment-api-canary-1".into();
+
+    let (first_result, second_result) = tokio::join!(
+        persist_batch(&pool, context, std::slice::from_ref(&first)),
+        persist_batch(&pool, context, std::slice::from_ref(&second))
+    );
+    assert_eq!(first_result.unwrap(), 1);
+    assert_eq!(second_result.unwrap(), 1);
+
+    let (item_count, membership_count, group_count, group_link_count, sighting_count, occurrence_count): (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM runtime_inventory_items),(SELECT count(*) FROM runtime_inventory_event_memberships),(SELECT count(*) FROM runtime_event_groups),(SELECT count(*) FROM runtime_inventory_group_links),(SELECT count(*) FROM runtime_inventory_sightings),(SELECT occurrence_count FROM runtime_inventory_items)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (
+            item_count,
+            membership_count,
+            group_count,
+            group_link_count,
+            sighting_count,
+            occurrence_count
+        ),
+        (1, 2, 2, 2, 2, 2)
+    );
+    let release_occurrences: i64 = sqlx::query_scalar(
+        "SELECT occurrence_count FROM runtime_inventory_releases WHERE release_id=$1",
+    )
+    .bind(release_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(release_occurrences, 2);
+
+    assert_eq!(
+        persist_batch(&pool, context, std::slice::from_ref(&first))
+            .await
+            .unwrap(),
+        0
+    );
+    let unchanged: i64 = sqlx::query_scalar("SELECT occurrence_count FROM runtime_inventory_items")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(unchanged, 2);
+
+    let mut delayed = first.clone();
+    delayed.id = Uuid::new_v4();
+    delayed.observed_at = now - Duration::hours(1);
+    delayed.attribution.pod_uid = "inventory-pod-c".into();
+    delayed.attribution.pod_name = "payment-api-old".into();
+    persist_batch(&pool, context, &[delayed]).await.unwrap();
+    let (count, first_seen, last_seen): (i64, chrono::DateTime<Utc>, chrono::DateTime<Utc>) =
+        sqlx::query_as(
+            "SELECT occurrence_count,first_seen_at,last_seen_at FROM runtime_inventory_items",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+    assert_eq!(first_seen, now - Duration::hours(1));
+    assert_eq!(last_seen, now + Duration::seconds(1));
+
+    let mut rejected = first.clone();
+    rejected.id = Uuid::new_v4();
+    rejected.attribution.application_id = Uuid::new_v4();
+    let mut valid_before_rejection = first.clone();
+    valid_before_rejection.id = Uuid::new_v4();
+    valid_before_rejection.attribution.pod_uid = "rolled-back-pod".into();
+    let before_events: i64 = sqlx::query_scalar("SELECT count(*) FROM runtime_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        persist_batch(&pool, context, &[valid_before_rejection, rejected])
+            .await
+            .is_err()
+    );
+    let (after_events, after_inventory): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM runtime_events),(SELECT occurrence_count FROM runtime_inventory_items)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(after_events, before_events);
+    assert_eq!(after_inventory, 3);
+
+    sqlx::query("DELETE FROM runtime_inventory_items WHERE application_id=$1")
+        .bind(ids.application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let backfill_options = InventoryBackfillOptions {
+        organization_id: ids.organization_id,
+        project_id: ids.project_id,
+        application_id: Some(ids.application_id),
+        identity_version: 1,
+        batch_size: 2,
+        throttle: std::time::Duration::ZERO,
+    };
+    let backfilled = backfill_inventory(&pool, backfill_options).await.unwrap();
+    assert_eq!(backfilled.scanned, 3);
+    assert_eq!(backfilled.projected, 3);
+    assert_eq!(backfilled.skipped, 0);
+    assert_eq!(backfilled.items_created, 1);
+    let resumed = backfill_inventory(&pool, backfill_options).await.unwrap();
+    assert_eq!(resumed, InventoryBackfillStats::default());
+    let reconciliation = reconcile_inventory(
+        &pool,
+        ids.organization_id,
+        ids.project_id,
+        ids.application_id,
+        1,
+    )
+    .await
+    .unwrap();
+    assert!(reconciliation.is_consistent());
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]

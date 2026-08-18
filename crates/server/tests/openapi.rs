@@ -10,6 +10,34 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "/api/v1/projects/{project_id}/applications/{application_id}",
         "get",
     ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/summary",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/releases",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/sightings",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/groups",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/occurrences",
+        "get",
+    ),
     ("/api/v1/runtime-groups", "get"),
     ("/api/v1/runtime-groups/{group_id}", "get"),
     ("/api/v1/runtime-groups/{group_id}/occurrences", "get"),
@@ -176,6 +204,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         );
     }
     assert_network_contract(&document);
+    assert_inventory_contract(&document);
     assert_notification_health_contract(&document);
     assert_delivery_contract(&document);
     assert_recovery_contract(&document);
@@ -185,6 +214,60 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         "get",
         &["baseline_id", "cursor", "limit"],
     );
+}
+
+fn assert_inventory_contract(document: &serde_json::Value) {
+    assert_query_parameters(
+        document,
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory",
+        "get",
+        &[
+            "kind",
+            "release_id",
+            "cluster_id",
+            "namespace",
+            "workload_kind",
+            "workload_name",
+            "container_name",
+            "observed_from",
+            "observed_to",
+            "search",
+            "cursor",
+            "limit",
+        ],
+    );
+    let schemas = &document["components"]["schemas"];
+    assert_eq!(
+        schemas["InventoryKind"]["enum"],
+        serde_json::json!(["process", "destination", "domain", "syscall"])
+    );
+    assert_eq!(
+        schemas["InventoryReleasePresence"]["enum"],
+        serde_json::json!(["observed", "not_observed", "unknown"])
+    );
+    for schema in [
+        "InventoryProcessIdentity",
+        "InventoryDestinationIdentity",
+        "InventoryDomainIdentity",
+        "InventorySyscallIdentity",
+        "InventoryItem",
+        "InventoryReleaseEvidence",
+        "InventorySighting",
+    ] {
+        assert_eq!(
+            schemas[schema]["additionalProperties"], false,
+            "{schema} must remain a closed safe contract"
+        );
+    }
+    for page in [
+        "InventoryItemPage",
+        "InventoryReleasePresencePage",
+        "InventorySightingPage",
+        "InventoryGroupPage",
+        "InventoryOccurrencePage",
+    ] {
+        assert_eq!(schemas[page]["properties"]["items"]["maxItems"], 200);
+    }
 }
 
 fn assert_network_contract(document: &serde_json::Value) {

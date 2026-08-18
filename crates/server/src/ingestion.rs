@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::auth::SessionScope;
 use crate::grouping::{GroupingSource, TrustedGroupingScope, assign_event};
+use crate::inventory::project_event;
 
 #[derive(Clone, Copy, Debug)]
 pub struct IngestionContext {
@@ -43,6 +44,7 @@ pub async fn persist_batch(
     Ok(accepted)
 }
 
+#[allow(clippy::too_many_lines)]
 async fn persist_event(
     tx: &mut Transaction<'_, Postgres>,
     context: IngestionContext,
@@ -116,6 +118,16 @@ async fn persist_event(
         &scope,
         event,
         GroupingSource::Live,
+    )
+    .await?;
+    project_event(
+        tx,
+        raw_event_id,
+        grouping.group_id,
+        release_id,
+        context.scope.cluster_id,
+        context.scope.organization_id,
+        event,
     )
     .await?;
     if matches!(&event.payload, EventPayload::NetworkConnect(_)) {
