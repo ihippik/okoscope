@@ -21,7 +21,7 @@ data:
           namespace: okoscope-dns-acceptance
           kind: Job
           name: selected-dns-fixture
-          release: dns-acceptance-20260818
+          release: smoke-v2-20260817
     observation:
       processExec: false
       syscalls: []

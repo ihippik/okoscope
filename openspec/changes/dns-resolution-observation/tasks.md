@@ -11,7 +11,7 @@
 - [x] 2.2 Attach opt-in ingress and egress packet programs that reject non-IPv4/IPv6 and non-port-53 traffic before bounded payload access and preserve trusted cgroup identity.
 - [x] 2.3 Parse only bounded IP/UDP/TCP framing in kernel space, safely handle IPv4 options and IPv6 extension/fragment cases, and send candidate DNS prefixes through the existing bounded ring buffer.
 - [x] 2.4 Add kernel-side counters for unsupported framing, attribution failure, decode failure, oversize input, and ring-buffer reservation failure without destination or name labels.
-- [ ] 2.5 Add Linux build/verifier and packet-layout tests for IPv4/IPv6, UDP/TCP, ingress/egress, fragmentation, truncation, malformed lengths, non-DNS traffic, and probe cleanup.
+- [x] 2.5 Add Linux build/verifier and packet-layout tests for IPv4/IPv6, UDP/TCP, ingress/egress, fragmentation, truncation, malformed lengths, non-DNS traffic, and probe cleanup.
 
 ## 3. Agent DNS Parsing and Correlation
 
@@ -49,6 +49,6 @@
 ## 7. End-to-End Acceptance and Release
 
 - [x] 7.1 Add controlled selected/unselected fixtures for UDP and TCP DNS, IPv4/IPv6 answers, success/NXDOMAIN, CNAME, shared-IP ambiguity, cached connections, malformed packets, encrypted DNS, and replay.
-- [ ] 7.2 Trace fixture evidence through eBPF, agent parsing/correlation, PostgreSQL, grouping, release summaries, first-seen notification, API, and Web UI while asserting forbidden and unselected data is absent.
-- [ ] 7.3 Run Rust formatting/lint/unit/integration/fuzz checks, Linux eBPF build/verifier tests, OpenAPI validation, frontend quality gates, container smoke tests, and Kubernetes manifest validation.
-- [ ] 7.4 Publish immutable server, agent, and Web images; roll out server/Web first, enable DNS only for the fixture, record counters/cardinality/privacy/smoke evidence, and restore DNS-disabled configuration.
+- [x] 7.2 Trace fixture evidence through eBPF, agent parsing/correlation, PostgreSQL, grouping, release summaries, first-seen notification, API, and Web UI while asserting forbidden and unselected data is absent.
+- [x] 7.3 Run Rust formatting/lint/unit/integration/fuzz checks, Linux eBPF build/verifier tests, OpenAPI validation, frontend quality gates, container smoke tests, and Kubernetes manifest validation.
+- [x] 7.4 Publish immutable server, agent, and Web images; roll out server/Web first, enable DNS only for the fixture, record counters/cardinality/privacy/smoke evidence, and restore DNS-disabled configuration.
