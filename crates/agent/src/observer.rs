@@ -160,7 +160,7 @@ fn attach_cgroup(
         .load()
         .with_context(|| format!("load {program_name}"))?;
     program
-        .attach(cgroup, attach_type, CgroupAttachMode::Single)
+        .attach(cgroup, attach_type, CgroupAttachMode::AllowMulti)
         .with_context(|| format!("attach {program_name} to cgroup v2 root"))?;
     Ok(())
 }
