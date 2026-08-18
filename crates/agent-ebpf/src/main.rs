@@ -152,11 +152,9 @@ fn capture_dns(ctx: &SkBuffContext, direction: u8) -> Result<(), ()> {
     record.timestamp_ns = unsafe { bpf_ktime_get_ns() };
     record.cgroup_id = cgroup_id;
     record.socket_cookie = unsafe { bpf_get_socket_cookie(ctx.as_ptr()) };
-    record.pid_tgid = if direction == DNS_DIRECTION_EGRESS {
-        bpf_get_current_pid_tgid()
-    } else {
-        0
-    };
+    // Cgroup skb programs cannot call current-task helpers on all supported kernels.
+    // Workload attribution therefore relies on the trusted cgroup id for both directions.
+    record.pid_tgid = 0;
     record.sequence = sequence;
     record.payload_len = captured_len as u16;
     record.resolver_port = resolver_port;
@@ -165,11 +163,7 @@ fn capture_dns(ctx: &SkBuffContext, direction: u8) -> Result<(), ()> {
     record.direction = direction;
     record.tcp_flags = tcp_flags;
     record.resolver_address = resolver_address;
-    record.command = if direction == DNS_DIRECTION_EGRESS {
-        bpf_get_current_comm().unwrap_or([0; 16])
-    } else {
-        [0; 16]
-    };
+    record.command = [0; 16];
     record.payload = [0; DNS_CAPTURE_BYTES];
     if ctx
         .load_bytes(payload_offset, &mut record.payload[..captured_len])

@@ -150,7 +150,7 @@ impl DnsProcessor {
             query_type: parsed.query_type,
         };
         if !parsed.is_response {
-            if context.direction != DnsDirection::Egress || packet.pid_tgid == 0 {
+            if context.direction != DnsDirection::Egress {
                 counters
                     .dns_correlation_miss
                     .fetch_add(1, Ordering::Relaxed);
@@ -242,13 +242,18 @@ fn direction(value: u8) -> Option<DnsDirection> {
 }
 
 fn command(bytes: &[u8; 16]) -> String {
-    String::from_utf8_lossy(
+    let command = String::from_utf8_lossy(
         &bytes[..bytes
             .iter()
             .position(|byte| *byte == 0)
             .unwrap_or(bytes.len())],
     )
-    .into_owned()
+    .into_owned();
+    if command.is_empty() {
+        "dns".into()
+    } else {
+        command
+    }
 }
 
 #[cfg(test)]

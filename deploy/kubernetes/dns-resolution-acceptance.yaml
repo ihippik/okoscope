@@ -69,6 +69,7 @@ metadata:
   name: selected-dns-fixture
   namespace: okoscope-dns-acceptance
 spec:
+  suspend: true
   backoffLimit: 0
   template:
     metadata:
@@ -104,6 +105,7 @@ metadata:
   name: unselected-dns-fixture
   namespace: okoscope-dns-acceptance
 spec:
+  suspend: true
   backoffLimit: 0
   template:
     metadata:
