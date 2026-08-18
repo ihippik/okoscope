@@ -4,8 +4,8 @@ use axum::{
 };
 use chrono::Utc;
 use event_model::{
-    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, ProcessExec, ProcessIdentity,
-    RuntimeEvent,
+    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAddressFamily,
+    NetworkConnect, NetworkConnectOutcome, ProcessExec, ProcessIdentity, RuntimeEvent,
 };
 use server::{
     api,
@@ -88,6 +88,16 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
         .bind(agent_id).bind(first.organization_id).bind(first.cluster_id).execute(&pool).await.unwrap();
     let mut first_event = event(first.project_id, first.application_id);
     first_event.attribution.release = Some("v1".into());
+    first_event.payload = EventPayload::NetworkConnect(
+        NetworkConnect::new(
+            NetworkAddressFamily::Ipv4,
+            "203.0.113.7".parse().unwrap(),
+            443,
+            NetworkConnectOutcome::Succeeded,
+            None,
+        )
+        .unwrap(),
+    );
     let mut second_event = first_event.clone();
     second_event.id = Uuid::new_v4();
     persist_batch(
@@ -113,7 +123,7 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
     let list_uri = format!(
-        "/api/v1/runtime-groups?project_id={}&application_id={}&event_kind=process.exec&status=open&release_id={}&first_seen_from=2020-01-01T00:00:00Z&first_seen_to=2100-01-01T00:00:00Z&last_seen_to=2100-01-01T00:00:00Z&limit=1",
+        "/api/v1/runtime-groups?project_id={}&application_id={}&event_kind=network.connect&status=open&release_id={}&first_seen_from=2020-01-01T00:00:00Z&first_seen_to=2100-01-01T00:00:00Z&last_seen_to=2100-01-01T00:00:00Z&limit=1",
         first.project_id, first.application_id, release_id
     );
     let listed = app
@@ -134,6 +144,11 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
     let listed_body: serde_json::Value =
         serde_json::from_slice(&to_bytes(listed.into_body(), usize::MAX).await.unwrap()).unwrap();
     assert_eq!(listed_body["items"].as_array().unwrap().len(), 1);
+    assert_eq!(listed_body["items"][0]["event_kind"], "network.connect");
+    assert_eq!(
+        listed_body["items"][0]["semantic_summary"]["destination_address"],
+        "203.0.113.7"
+    );
 
     let detail = app
         .clone()
@@ -156,6 +171,10 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
     assert_eq!(detail_body["status"], "open");
     assert_eq!(detail_body["notification"]["state"], "pending");
     assert!(detail_body["first_seen_event_id"].is_string());
+    assert_eq!(
+        detail_body["representative_event"]["payload"]["data"]["outcome"],
+        "succeeded"
+    );
     sqlx::query("UPDATE outbox_messages SET materialized_at=now(),processed_at=now(),completion_reason='no_destinations' WHERE aggregate_id=$1")
         .bind(group_id)
         .execute(&pool)
@@ -312,6 +331,16 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
     assert_eq!(resolved.status(), StatusCode::OK);
     let mut repeated_after_resolution = event(first.project_id, first.application_id);
     repeated_after_resolution.attribution.release = Some("v1".into());
+    repeated_after_resolution.payload = EventPayload::NetworkConnect(
+        NetworkConnect::new(
+            NetworkAddressFamily::Ipv4,
+            "203.0.113.7".parse().unwrap(),
+            443,
+            NetworkConnectOutcome::Failed,
+            Some(111),
+        )
+        .unwrap(),
+    );
     persist_batch(
         &pool,
         IngestionContext {

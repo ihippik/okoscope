@@ -65,6 +65,7 @@ message RuntimeEvent {
   oneof payload {
     ProcessExec process_exec = 10;
     Syscall syscall = 11;
+    NetworkConnect network_connect = 12;
   }
 }
 
@@ -99,6 +100,27 @@ message Syscall {
   string name = 1;
 }
 
+message NetworkConnect {
+  NetworkAddressFamily address_family = 1;
+  bytes destination_address = 2;
+  uint32 destination_port = 3;
+  NetworkConnectOutcome outcome = 4;
+  optional uint32 errno = 5;
+}
+
+enum NetworkAddressFamily {
+  NETWORK_ADDRESS_FAMILY_UNSPECIFIED = 0;
+  NETWORK_ADDRESS_FAMILY_IPV4 = 1;
+  NETWORK_ADDRESS_FAMILY_IPV6 = 2;
+}
+
+enum NetworkConnectOutcome {
+  NETWORK_CONNECT_OUTCOME_UNSPECIFIED = 0;
+  NETWORK_CONNECT_OUTCOME_SUCCEEDED = 1;
+  NETWORK_CONNECT_OUTCOME_IN_PROGRESS = 2;
+  NETWORK_CONNECT_OUTCOME_FAILED = 3;
+}
+
 message DropCounters {
   uint64 filtered = 1;
   uint64 unattributed = 2;
@@ -106,6 +128,11 @@ message DropCounters {
   uint64 decode_failed = 4;
   uint64 capacity = 5;
   uint64 kernel_lost = 6;
+  uint64 connect_correlation_capacity = 7;
+  uint64 connect_correlation_miss = 8;
+  uint64 connect_decode_failed = 9;
+  uint64 connect_unsupported_family = 10;
+  uint64 connect_kernel_lost = 11;
 }
 
 message ControlMessage {

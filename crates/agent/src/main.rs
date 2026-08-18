@@ -16,7 +16,7 @@ mod linux {
         cgroup,
         config::AgentConfig,
         counters::Counters,
-        delivery::{EventBuffer, PendingBatch},
+        delivery::{EventBuffer, EventRateLimiter, PendingBatch},
         observer::Observer,
         session::{connect_with_backoff, handle_control},
         syscall::{self, Architecture},
@@ -79,11 +79,13 @@ mod linux {
         let mut observer = Observer::load(
             &args.ebpf_object,
             &config.observation.syscalls,
+            config.observation.network.connect,
             architecture,
         )?;
         let mut cgroup_resolver =
             cgroup::CgroupResolver::new("/sys/fs/cgroup").context("index host cgroup hierarchy")?;
         let mut buffer = EventBuffer::new(config.safety.queue_capacity, config.safety.batch_size);
+        let mut rate_limiter = EventRateLimiter::new(config.safety.max_events_per_second);
         loop {
             let hello = hello(&config, counters.snapshot());
             let mut session =
@@ -116,14 +118,24 @@ mod linux {
                             } else if kernel.event_kind == agent_ebpf_common::EVENT_KIND_SYSCALL {
                                 let Some(name) = syscall::name_for_number(kernel.syscall_id, architecture) else { counters.unsupported.fetch_add(1, Ordering::Relaxed); continue };
                                 EventPayload::Syscall(SyscallEvent { name: name.into() })
+                            } else if kernel.event_kind == agent_ebpf_common::EVENT_KIND_NETWORK_CONNECT {
+                                match agent::kernel_event::network_connect(&kernel) {
+                                    Ok(network) => EventPayload::NetworkConnect(network),
+                                    Err(_) => { counters.connect_decode_failed.fetch_add(1, Ordering::Relaxed); continue; }
+                                }
                             } else { counters.unsupported.fetch_add(1, Ordering::Relaxed); continue };
                             let event = RuntimeEvent { id: Uuid::new_v4(), observed_at: Utc::now(), schema_version: EVENT_SCHEMA_VERSION, attribution,
                                 process: ProcessIdentity { cgroup_id: kernel.cgroup_id, pid, tgid, command }, payload };
-                            buffer.push(event, &counters);
+                            if rate_limiter.allow() {
+                                buffer.push(event, &counters);
+                            } else {
+                                counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                         if let Some(batch) = buffer.next_batch(&counters) { send_batch(&session.sender, batch).await?; }
                     }
                     _ = heartbeat.tick() => {
+                        counters.update_network_kernel(observer.network_counters()?);
                         let snapshot = counters.snapshot();
                         tracing::info!(?snapshot, "agent status");
                         session.sender.send(AgentMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(agent_message::Message::Heartbeat(Heartbeat { sent_at_unix_nanos: Utc::now().timestamp_nanos_opt().unwrap_or_default(), drop_counters: Some(snapshot.into()) })) }).await?;
@@ -151,23 +163,12 @@ mod linux {
     }
 
     fn hello(config: &AgentConfig, snapshot: agent::counters::CounterSnapshot) -> AgentHello {
-        let mut capabilities = Vec::new();
-        if config.observation.process_exec {
-            capabilities.push("process.exec/v1".into());
-        }
-        capabilities.extend(
-            config
-                .observation
-                .syscalls
-                .iter()
-                .map(|name| format!("syscall.{name}/v1")),
-        );
         AgentHello {
             agent_version: env!("CARGO_PKG_VERSION").into(),
             node_name: config.identity.node_name.clone(),
             architecture: std::env::consts::ARCH.into(),
             kernel_release: kernel_release(),
-            capabilities,
+            capabilities: config.observation.capabilities(),
             drop_counters: Some(snapshot.into()),
         }
     }

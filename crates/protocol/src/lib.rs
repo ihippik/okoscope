@@ -5,13 +5,18 @@ pub mod v1 {
     tonic::include_proto!("okoscope.v1");
 }
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
 use chrono::{DateTime, Utc};
 use event_model::{
-    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, PROTOCOL_VERSION, ProcessExec,
-    ProcessIdentity, RuntimeEvent, SyscallEvent,
+    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAddressFamily,
+    NetworkConnect, NetworkConnectOutcome, PROTOCOL_VERSION, ProcessExec, ProcessIdentity,
+    RuntimeEvent, SyscallEvent,
 };
 use thiserror::Error;
 use uuid::Uuid;
+
+pub const NETWORK_CONNECT_CAPABILITY: &str = "network.connect/v1";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProtocolError {
@@ -25,6 +30,8 @@ pub enum ProtocolError {
     InvalidUuid { field: &'static str, value: String },
     #[error("invalid observation timestamp")]
     InvalidTimestamp,
+    #[error("invalid network field: {0}")]
+    InvalidNetwork(&'static str),
 }
 
 /// Validates the wire protocol version.
@@ -51,6 +58,28 @@ impl From<RuntimeEvent> for v1::RuntimeEvent {
             }
             EventPayload::Syscall(syscall) => {
                 v1::runtime_event::Payload::Syscall(v1::Syscall { name: syscall.name })
+            }
+            EventPayload::NetworkConnect(network) => {
+                let (address_family, destination_address) = match network.destination_address {
+                    IpAddr::V4(address) => {
+                        (v1::NetworkAddressFamily::Ipv4, address.octets().to_vec())
+                    }
+                    IpAddr::V6(address) => {
+                        (v1::NetworkAddressFamily::Ipv6, address.octets().to_vec())
+                    }
+                };
+                let outcome = match network.outcome {
+                    NetworkConnectOutcome::Succeeded => v1::NetworkConnectOutcome::Succeeded,
+                    NetworkConnectOutcome::InProgress => v1::NetworkConnectOutcome::InProgress,
+                    NetworkConnectOutcome::Failed => v1::NetworkConnectOutcome::Failed,
+                };
+                v1::runtime_event::Payload::NetworkConnect(v1::NetworkConnect {
+                    address_family: address_family.into(),
+                    destination_address,
+                    destination_port: u32::from(network.destination_port),
+                    outcome: outcome.into(),
+                    errno: network.errno.map(u32::from),
+                })
             }
         };
         let a = event.attribution;
@@ -142,6 +171,7 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
                 require("syscall.name", &syscall.name)?;
                 EventPayload::Syscall(SyscallEvent { name: syscall.name })
             }
+            v1::runtime_event::Payload::NetworkConnect(network) => decode_network(&network)?,
         };
         Ok(Self {
             id,
@@ -152,6 +182,58 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
             payload,
         })
     }
+}
+
+fn decode_network(network: &v1::NetworkConnect) -> Result<EventPayload, ProtocolError> {
+    let (address_family, destination_address) =
+        match v1::NetworkAddressFamily::try_from(network.address_family)
+            .map_err(|_| ProtocolError::InvalidNetwork("address_family"))?
+        {
+            v1::NetworkAddressFamily::Ipv4 => (
+                NetworkAddressFamily::Ipv4,
+                IpAddr::V4(Ipv4Addr::from(
+                    <[u8; 4]>::try_from(network.destination_address.as_slice())
+                        .map_err(|_| ProtocolError::InvalidNetwork("destination_address"))?,
+                )),
+            ),
+            v1::NetworkAddressFamily::Ipv6 => (
+                NetworkAddressFamily::Ipv6,
+                IpAddr::V6(Ipv6Addr::from(
+                    <[u8; 16]>::try_from(network.destination_address.as_slice())
+                        .map_err(|_| ProtocolError::InvalidNetwork("destination_address"))?,
+                )),
+            ),
+            v1::NetworkAddressFamily::Unspecified => {
+                return Err(ProtocolError::InvalidNetwork("address_family"));
+            }
+        };
+    let destination_port = u16::try_from(network.destination_port)
+        .map_err(|_| ProtocolError::InvalidNetwork("destination_port"))?;
+    let outcome = match v1::NetworkConnectOutcome::try_from(network.outcome)
+        .map_err(|_| ProtocolError::InvalidNetwork("outcome"))?
+    {
+        v1::NetworkConnectOutcome::Succeeded => NetworkConnectOutcome::Succeeded,
+        v1::NetworkConnectOutcome::InProgress => NetworkConnectOutcome::InProgress,
+        v1::NetworkConnectOutcome::Failed => NetworkConnectOutcome::Failed,
+        v1::NetworkConnectOutcome::Unspecified => {
+            return Err(ProtocolError::InvalidNetwork("outcome"));
+        }
+    };
+    let errno = network
+        .errno
+        .map(u16::try_from)
+        .transpose()
+        .map_err(|_| ProtocolError::InvalidNetwork("errno"))?;
+    Ok(EventPayload::NetworkConnect(
+        NetworkConnect::new(
+            address_family,
+            destination_address,
+            destination_port,
+            outcome,
+            errno,
+        )
+        .map_err(|_| ProtocolError::InvalidNetwork("network_connect"))?,
+    ))
 }
 
 fn require(field: &'static str, value: &str) -> Result<(), ProtocolError> {
@@ -172,6 +254,7 @@ fn parse_uuid(field: &'static str, value: &str) -> Result<Uuid, ProtocolError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prost::Message;
 
     fn event() -> RuntimeEvent {
         RuntimeEvent {
@@ -253,5 +336,65 @@ mod tests {
             validate_protocol(999),
             Err(ProtocolError::UnsupportedProtocol(999))
         );
+    }
+
+    fn network_event() -> RuntimeEvent {
+        let mut event = event();
+        event.payload = EventPayload::NetworkConnect(
+            NetworkConnect::new(
+                NetworkAddressFamily::Ipv6,
+                "2001:db8::7".parse().unwrap(),
+                443,
+                NetworkConnectOutcome::Failed,
+                Some(111),
+            )
+            .unwrap(),
+        );
+        event
+    }
+
+    #[test]
+    fn network_event_round_trips_and_unknown_fields_are_ignored() {
+        let original = network_event();
+        let wire = v1::RuntimeEvent::from(original.clone());
+        let mut encoded = wire.encode_to_vec();
+        encoded.extend_from_slice(&[0xa0, 0x06, 0x01]);
+        let decoded_wire = v1::RuntimeEvent::decode(encoded.as_slice()).unwrap();
+        assert_eq!(RuntimeEvent::try_from(decoded_wire).unwrap(), original);
+        let legacy = event();
+        assert_eq!(
+            RuntimeEvent::try_from(v1::RuntimeEvent::from(legacy.clone())).unwrap(),
+            legacy
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_network_fields() {
+        let cases = [
+            (0, vec![203, 0, 113, 1], 443, 1, None),
+            (1, vec![203, 0, 113], 443, 1, None),
+            (1, vec![203, 0, 113, 1], 0, 1, None),
+            (1, vec![203, 0, 113, 1], 443, 0, None),
+            (1, vec![203, 0, 113, 1], 443, 1, Some(1)),
+            (1, vec![203, 0, 113, 1], 443, 2, Some(111)),
+            (1, vec![203, 0, 113, 1], 443, 3, None),
+            (1, vec![203, 0, 113, 1], 443, 3, Some(4096)),
+        ];
+        for (family, address, port, outcome, errno) in cases {
+            let mut wire = v1::RuntimeEvent::from(event());
+            wire.payload = Some(v1::runtime_event::Payload::NetworkConnect(
+                v1::NetworkConnect {
+                    address_family: family,
+                    destination_address: address,
+                    destination_port: port,
+                    outcome,
+                    errno,
+                },
+            ));
+            assert!(matches!(
+                RuntimeEvent::try_from(wire),
+                Err(ProtocolError::InvalidNetwork(_))
+            ));
+        }
     }
 }

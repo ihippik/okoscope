@@ -305,7 +305,7 @@ components:
         workload_name: {type: string}
         fingerprint_version: {type: integer}
         event_kind: {type: string}
-        semantic_summary: {type: object, additionalProperties: true}
+        semantic_summary: {$ref: '#/components/schemas/RuntimeEventSemanticSummary'}
         status: {type: string, enum: [open, acknowledged, resolved]}
         first_seen_at: {$ref: '#/components/schemas/Timestamp'}
         first_seen_event_id: {$ref: '#/components/schemas/Uuid'}
@@ -335,7 +335,7 @@ components:
         container_name: {type: string}
         process_command: {type: string}
         event_kind: {type: string}
-        payload: {type: object, additionalProperties: true}
+        payload: {$ref: '#/components/schemas/RuntimeEventPayload'}
         release_id: {$ref: '#/components/schemas/NullableUuid'}
         release_version: {type: [string, 'null']}
     OccurrencePage:
@@ -345,6 +345,79 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/EventOccurrence'}}
         next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+    RuntimeEventSemanticSummary:
+      oneOf:
+        - {$ref: '#/components/schemas/ProcessExecSemanticSummary'}
+        - {$ref: '#/components/schemas/SyscallSemanticSummary'}
+        - {$ref: '#/components/schemas/NetworkConnectSemanticSummary'}
+    ProcessExecSemanticSummary:
+      type: object
+      additionalProperties: false
+      required: [executable]
+      properties:
+        executable: {type: string, minLength: 1}
+    SyscallSemanticSummary:
+      type: object
+      additionalProperties: false
+      required: [process_command, syscall]
+      properties:
+        process_command: {type: string, minLength: 1}
+        syscall: {type: string, minLength: 1}
+    NetworkConnectSemanticSummary:
+      type: object
+      additionalProperties: false
+      required: [process_command, address_family, destination_address, destination_port]
+      properties:
+        process_command: {type: string, minLength: 1, example: curl}
+        address_family: {type: string, enum: [ipv4, ipv6]}
+        destination_address: {type: string, format: ip, example: 203.0.113.7}
+        destination_port: {type: integer, minimum: 1, maximum: 65535, example: 443}
+    RuntimeEventPayload:
+      oneOf:
+        - {$ref: '#/components/schemas/ProcessExecPayload'}
+        - {$ref: '#/components/schemas/SyscallPayload'}
+        - {$ref: '#/components/schemas/NetworkConnectPayload'}
+    ProcessExecPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: {type: string, const: ProcessExec}
+        data:
+          type: object
+          additionalProperties: false
+          required: [executable, parent_command]
+          properties:
+            executable: {type: string, minLength: 1}
+            parent_command: {type: [string, 'null']}
+    SyscallPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: {type: string, const: Syscall}
+        data:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name: {type: string, minLength: 1}
+    NetworkConnectPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: {type: string, const: NetworkConnect}
+        data:
+          type: object
+          additionalProperties: false
+          required: [address_family, destination_address, destination_port, outcome]
+          properties:
+            address_family: {type: string, enum: [ipv4, ipv6]}
+            destination_address: {type: string, format: ip, example: '2001:db8::7'}
+            destination_port: {type: integer, minimum: 1, maximum: 65535, example: 443}
+            outcome: {type: string, enum: [succeeded, in_progress, failed]}
+            errno: {type: integer, minimum: 1, maximum: 4095, example: 111}
     FirstSeenNotificationSummary:
       type: object
       additionalProperties: false
@@ -398,7 +471,7 @@ components:
         group_id: {$ref: '#/components/schemas/Uuid'}
         classification: {type: string, enum: [new, disappeared, unchanged]}
         event_kind: {type: string}
-        semantic_summary: {type: object, additionalProperties: true}
+        semantic_summary: {$ref: '#/components/schemas/RuntimeEventSemanticSummary'}
         baseline_occurrence_count: {type: [integer, 'null'], format: int64}
         baseline_first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
         baseline_last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}

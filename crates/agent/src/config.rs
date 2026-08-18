@@ -85,6 +85,33 @@ pub struct ObservationConfig {
     pub process_exec: bool,
     #[serde(default)]
     pub syscalls: Vec<String>,
+    #[serde(default)]
+    pub network: NetworkObservationConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct NetworkObservationConfig {
+    pub connect: bool,
+}
+
+impl ObservationConfig {
+    #[must_use]
+    pub fn capabilities(&self) -> Vec<String> {
+        let mut capabilities = Vec::new();
+        if self.process_exec {
+            capabilities.push("process.exec/v1".into());
+        }
+        capabilities.extend(
+            self.syscalls
+                .iter()
+                .map(|name| format!("syscall.{name}/v1")),
+        );
+        if self.network.connect {
+            capabilities.push(protocol::NETWORK_CONNECT_CAPABILITY.into());
+        }
+        capabilities
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -147,7 +174,10 @@ impl AgentConfig {
         if self.scope.workloads.is_empty() {
             return Err(ConfigError::MissingWorkload);
         }
-        if !self.observation.process_exec && self.observation.syscalls.is_empty() {
+        if !self.observation.process_exec
+            && self.observation.syscalls.is_empty()
+            && !self.observation.network.connect
+        {
             return Err(ConfigError::MissingObservation);
         }
         if !self.server.development_plaintext
@@ -222,6 +252,7 @@ observation:
     fn parses_strict_valid_configuration() {
         let config = AgentConfig::from_yaml(VALID, Architecture::X86_64).unwrap();
         assert_eq!(config.scope.workloads.len(), 1);
+        assert!(!config.observation.network.connect);
     }
 
     #[test]
@@ -261,6 +292,48 @@ observation:
         );
         assert!(
             AgentConfig::from_yaml(&VALID.replace("ptrace", "101"), Architecture::X86_64).is_err()
+        );
+        assert!(
+            AgentConfig::from_yaml(
+                &VALID.replace(
+                    "  syscalls: [ptrace, setns]",
+                    "  syscalls: [ptrace, setns]\n  network:\n    connect: true\n    payloads: true"
+                ),
+                Architecture::X86_64
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn network_connect_is_strict_opt_in_and_counts_as_observation() {
+        let enabled = VALID.replace(
+            "  syscalls: [ptrace, setns]",
+            "  syscalls: []\n  network:\n    connect: true",
+        );
+        let config = AgentConfig::from_yaml(&enabled, Architecture::X86_64).unwrap();
+        assert!(config.observation.network.connect);
+        assert!(
+            config
+                .observation
+                .capabilities()
+                .contains(&protocol::NETWORK_CONNECT_CAPABILITY.to_owned())
+        );
+
+        let network_only = enabled.replace("  processExec: true", "  processExec: false");
+        assert!(AgentConfig::from_yaml(&network_only, Architecture::X86_64).is_ok());
+
+        let disabled = network_only.replace("    connect: true", "    connect: false");
+        assert!(matches!(
+            AgentConfig::from_yaml(&disabled, Architecture::X86_64),
+            Err(ConfigError::MissingObservation)
+        ));
+        let defaulted = AgentConfig::from_yaml(VALID, Architecture::X86_64).unwrap();
+        assert!(
+            !defaulted
+                .observation
+                .capabilities()
+                .contains(&protocol::NETWORK_CONNECT_CAPABILITY.to_owned())
         );
     }
 

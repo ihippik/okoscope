@@ -175,10 +175,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
             "RuntimeGroup must require {field}"
         );
     }
-    assert_eq!(
-        document["components"]["schemas"]["FirstSeenNotificationSummary"]["additionalProperties"],
-        false
-    );
+    assert_network_contract(&document);
     assert_notification_health_contract(&document);
     assert_delivery_contract(&document);
     assert_recovery_contract(&document);
@@ -188,6 +185,29 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         "get",
         &["baseline_id", "cursor", "limit"],
     );
+}
+
+fn assert_network_contract(document: &serde_json::Value) {
+    let schemas = &document["components"]["schemas"];
+    assert_eq!(
+        schemas["NetworkConnectSemanticSummary"]["additionalProperties"],
+        false
+    );
+    assert_eq!(
+        schemas["NetworkConnectPayload"]["properties"]["data"]["additionalProperties"],
+        false
+    );
+    for forbidden in ["payload", "dns_name", "source_port", "url", "http"] {
+        assert!(
+            schemas["NetworkConnectSemanticSummary"]["properties"][forbidden].is_null(),
+            "network semantic summary must not expose {forbidden}"
+        );
+        assert!(
+            schemas["NetworkConnectPayload"]["properties"]["data"]["properties"][forbidden]
+                .is_null(),
+            "network occurrence payload must not expose {forbidden}"
+        );
+    }
 }
 
 fn assert_recovery_contract(document: &serde_json::Value) {

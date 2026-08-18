@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::atomic::Ordering,
+    time::{Duration, Instant},
 };
 
 use event_model::RuntimeEvent;
@@ -11,6 +12,41 @@ use crate::counters::Counters;
 pub struct PendingBatch {
     pub sequence: u64,
     pub events: Vec<RuntimeEvent>,
+}
+
+#[derive(Debug)]
+pub struct EventRateLimiter {
+    max_events_per_second: u32,
+    window_started: Instant,
+    accepted: u32,
+}
+
+impl EventRateLimiter {
+    #[must_use]
+    pub fn new(max_events_per_second: u32) -> Self {
+        assert!(max_events_per_second > 0);
+        Self {
+            max_events_per_second,
+            window_started: Instant::now(),
+            accepted: 0,
+        }
+    }
+
+    pub fn allow(&mut self) -> bool {
+        self.allow_at(Instant::now())
+    }
+
+    fn allow_at(&mut self, now: Instant) -> bool {
+        if now.duration_since(self.window_started) >= Duration::from_secs(1) {
+            self.window_started = now;
+            self.accepted = 0;
+        }
+        if self.accepted >= self.max_events_per_second {
+            return false;
+        }
+        self.accepted += 1;
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -145,5 +181,19 @@ mod tests {
         assert_eq!(snapshot.capacity_dropped, 1);
         assert_eq!(snapshot.acknowledged, 2);
         assert_eq!(snapshot.retried, 2);
+    }
+
+    #[test]
+    fn rate_limiter_bounds_each_one_second_window() {
+        let start = Instant::now();
+        let mut limiter = EventRateLimiter {
+            max_events_per_second: 2,
+            window_started: start,
+            accepted: 0,
+        };
+        assert!(limiter.allow_at(start));
+        assert!(limiter.allow_at(start + Duration::from_millis(500)));
+        assert!(!limiter.allow_at(start + Duration::from_millis(999)));
+        assert!(limiter.allow_at(start + Duration::from_secs(1)));
     }
 }

@@ -149,6 +149,8 @@ data:
     observation:
       processExec: true
       syscalls: [ptrace, setns]
+      network:
+        connect: false
     safety: {queueCapacity: 4096, batchSize: 256, maxEventsPerSecond: 10000}
 ---
 apiVersion: apps/v1

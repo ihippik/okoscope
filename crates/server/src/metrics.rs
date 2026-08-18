@@ -9,6 +9,8 @@ static GROUPING_COUNT: AtomicU64 = AtomicU64::new(0);
 static GROUPING_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
 static GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_EVENTS: AtomicU64 = AtomicU64::new(0);
+static NETWORK_EVENTS_ACCEPTED: AtomicU64 = AtomicU64::new(0);
+static NETWORK_GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
 static API_REQUESTS: AtomicU64 = AtomicU64::new(0);
 static BACKFILL_SCANNED: AtomicU64 = AtomicU64::new(0);
 static BACKFILL_GROUPED: AtomicU64 = AtomicU64::new(0);
@@ -51,6 +53,11 @@ pub fn record_grouping(elapsed_micros: u64, group_created: bool) {
 
 pub fn record_duplicate_event() {
     DUPLICATE_EVENTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_network_event(group_created: bool) {
+    NETWORK_EVENTS_ACCEPTED.fetch_add(1, Ordering::Relaxed);
+    NETWORK_GROUPS_CREATED.fetch_add(u64::from(group_created), Ordering::Relaxed);
 }
 
 pub fn record_api_request() {
@@ -227,6 +234,14 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         (
             "okoscope_ingestion_duplicate_events_total",
             DUPLICATE_EVENTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_network_connect_events_accepted_total",
+            NETWORK_EVENTS_ACCEPTED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_network_connect_groups_created_total",
+            NETWORK_GROUPS_CREATED.load(Ordering::Relaxed),
         ),
         (
             "okoscope_api_requests_total",

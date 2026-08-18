@@ -1,7 +1,8 @@
 use chrono::{Duration, Utc};
 use event_model::{
-    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, ProcessExec, ProcessIdentity,
-    RuntimeEvent, SyscallEvent,
+    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAddressFamily,
+    NetworkConnect, NetworkConnectOutcome, ProcessExec, ProcessIdentity, RuntimeEvent,
+    SyscallEvent,
 };
 use server::{
     auth::SessionScope,
@@ -257,6 +258,96 @@ async fn concurrent_first_occurrences_share_one_group(pool: sqlx::PgPool) {
     .await
     .unwrap();
     assert_eq!(totals, (2, 3, 3, 2));
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn network_events_persist_canonically_replay_and_share_safe_group(pool: sqlx::PgPool) {
+    let ids = bootstrap(&pool, &config("network-storage")).await.unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents (id, organization_id, cluster_id, node_name, agent_version) VALUES ($1,$2,$3,'node-1','test')")
+        .bind(agent_id)
+        .bind(ids.organization_id)
+        .bind(ids.cluster_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id,
+    };
+    let mut succeeded = event(ids.project_id, ids.application_id);
+    succeeded.payload = EventPayload::NetworkConnect(
+        NetworkConnect::new(
+            NetworkAddressFamily::Ipv6,
+            "2001:0db8::7".parse().unwrap(),
+            443,
+            NetworkConnectOutcome::Succeeded,
+            None,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        persist_batch(&pool, context, std::slice::from_ref(&succeeded))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        persist_batch(&pool, context, std::slice::from_ref(&succeeded))
+            .await
+            .unwrap(),
+        0
+    );
+    let mut failed = succeeded.clone();
+    failed.id = Uuid::new_v4();
+    failed.payload = EventPayload::NetworkConnect(
+        NetworkConnect::new(
+            NetworkAddressFamily::Ipv6,
+            "2001:db8::7".parse().unwrap(),
+            443,
+            NetworkConnectOutcome::Failed,
+            Some(111),
+        )
+        .unwrap(),
+    );
+    assert_eq!(persist_batch(&pool, context, &[failed]).await.unwrap(), 1);
+
+    let (event_kind, payload): (String, serde_json::Value) = sqlx::query_as(
+        "SELECT event_kind,payload FROM runtime_events WHERE agent_id=$1 AND event_id=$2",
+    )
+    .bind(agent_id)
+    .bind(succeeded.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(event_kind, "network.connect");
+    assert_eq!(payload["data"]["destination_address"], "2001:db8::7");
+    let (groups, occurrences, outbox): (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM runtime_event_groups), (SELECT occurrence_count FROM runtime_event_groups), (SELECT count(*) FROM outbox_messages)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((groups, occurrences, outbox), (1, 2, 1));
+    let semantic: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload->'semantic' FROM outbox_messages WHERE topic='runtime_group.first_seen'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        semantic,
+        serde_json::json!({
+            "process_command": "sh",
+            "address_family": "ipv6",
+            "destination_address": "2001:db8::7",
+            "destination_port": 443
+        })
+    );
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]

@@ -29,6 +29,8 @@ data:
       syscalls:
         - ptrace
         - setns
+      network:
+        connect: false
     safety:
       queueCapacity: 4096
       batchSize: 256

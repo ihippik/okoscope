@@ -1,6 +1,6 @@
 use std::fmt;
 
-use event_model::{EventPayload, RuntimeEvent};
+use event_model::{EventPayload, NetworkAddressFamily, RuntimeEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -269,6 +269,26 @@ pub fn fingerprint_v1(
             encoder.field(syscall_name.as_bytes());
             json!({"process_command": command, "syscall": syscall_name})
         }
+        EventPayload::NetworkConnect(network) => {
+            let command = required("process_command", &event.process.command)?;
+            let family = match network.address_family {
+                NetworkAddressFamily::Ipv4 => "ipv4",
+                NetworkAddressFamily::Ipv6 => "ipv6",
+            };
+            encoder.field(command.as_bytes());
+            encoder.field(family.as_bytes());
+            match network.destination_address {
+                std::net::IpAddr::V4(address) => encoder.field(&address.octets()),
+                std::net::IpAddr::V6(address) => encoder.field(&address.octets()),
+            }
+            encoder.field(&network.destination_port.to_be_bytes());
+            json!({
+                "process_command": command,
+                "address_family": family,
+                "destination_address": network.destination_address,
+                "destination_port": network.destination_port
+            })
+        }
     };
 
     Ok(EventFingerprint {
@@ -314,8 +334,8 @@ impl CanonicalEncoder {
 mod tests {
     use chrono::Utc;
     use event_model::{
-        EventPayload, KubernetesAttribution, ProcessExec, ProcessIdentity, RuntimeEvent,
-        SyscallEvent,
+        EventPayload, KubernetesAttribution, NetworkAddressFamily, NetworkConnect,
+        NetworkConnectOutcome, ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
     };
 
     use super::*;
@@ -419,6 +439,66 @@ mod tests {
         assert_eq!(
             fingerprint_v1(&scope(&invalid), &invalid),
             Err(FingerprintError::EmptyField("syscall_name"))
+        );
+    }
+
+    fn network(address: &str, port: u16, outcome: NetworkConnectOutcome) -> RuntimeEvent {
+        let errno = match outcome {
+            NetworkConnectOutcome::Succeeded => None,
+            NetworkConnectOutcome::InProgress => Some(event_model::LINUX_EINPROGRESS),
+            NetworkConnectOutcome::Failed => Some(111),
+        };
+        let address: std::net::IpAddr = address.parse().unwrap();
+        let family = if address.is_ipv4() {
+            NetworkAddressFamily::Ipv4
+        } else {
+            NetworkAddressFamily::Ipv6
+        };
+        event(EventPayload::NetworkConnect(
+            NetworkConnect::new(family, address, port, outcome, errno).unwrap(),
+        ))
+    }
+
+    #[test]
+    fn network_fingerprint_uses_endpoint_but_not_outcome() {
+        let succeeded = network("203.0.113.7", 443, NetworkConnectOutcome::Succeeded);
+        let failed = network("203.0.113.7", 443, NetworkConnectOutcome::Failed);
+        let other_address = network("203.0.113.8", 443, NetworkConnectOutcome::Succeeded);
+        let other_port = network("203.0.113.7", 8443, NetworkConnectOutcome::Succeeded);
+        let mut other_process = succeeded.clone();
+        other_process.process.command = "wget".into();
+
+        let fingerprint = fingerprint_v1(&scope(&succeeded), &succeeded).unwrap();
+        assert_eq!(
+            fingerprint.digest,
+            fingerprint_v1(&scope(&failed), &failed).unwrap().digest
+        );
+        assert_ne!(
+            fingerprint.digest,
+            fingerprint_v1(&scope(&other_address), &other_address)
+                .unwrap()
+                .digest
+        );
+        assert_ne!(
+            fingerprint.digest,
+            fingerprint_v1(&scope(&other_port), &other_port)
+                .unwrap()
+                .digest
+        );
+        assert_ne!(
+            fingerprint.digest,
+            fingerprint_v1(&scope(&other_process), &other_process)
+                .unwrap()
+                .digest
+        );
+        assert_eq!(
+            fingerprint.summary.semantic,
+            serde_json::json!({
+                "process_command": "curl",
+                "address_family": "ipv4",
+                "destination_address": "203.0.113.7",
+                "destination_port": 443
+            })
         );
     }
 }

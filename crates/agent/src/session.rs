@@ -116,6 +116,11 @@ impl From<CounterSnapshot> for DropCounters {
             decode_failed: value.decode_failed,
             capacity: value.capacity_dropped,
             kernel_lost: value.kernel_lost,
+            connect_correlation_capacity: value.connect_correlation_capacity,
+            connect_correlation_miss: value.connect_correlation_miss,
+            connect_decode_failed: value.connect_decode_failed,
+            connect_unsupported_family: value.connect_unsupported_family,
+            connect_kernel_lost: value.connect_kernel_lost,
         }
     }
 }
@@ -131,5 +136,22 @@ mod tests {
             command: None,
         });
         assert_eq!(result.status, i32::from(ControlStatus::Unsupported));
+    }
+
+    #[test]
+    fn network_drop_counters_are_transported_additively() {
+        let wire = DropCounters::from(CounterSnapshot {
+            connect_correlation_capacity: 1,
+            connect_correlation_miss: 2,
+            connect_decode_failed: 3,
+            connect_unsupported_family: 4,
+            connect_kernel_lost: 5,
+            ..CounterSnapshot::default()
+        });
+        assert_eq!(wire.connect_correlation_capacity, 1);
+        assert_eq!(wire.connect_correlation_miss, 2);
+        assert_eq!(wire.connect_decode_failed, 3);
+        assert_eq!(wire.connect_unsupported_family, 4);
+        assert_eq!(wire.connect_kernel_lost, 5);
     }
 }

@@ -1,4 +1,4 @@
-use event_model::{EVENT_SCHEMA_VERSION, RuntimeEvent};
+use event_model::{EVENT_SCHEMA_VERSION, EventPayload, RuntimeEvent};
 use serde_json::to_value;
 use sqlx::{PgPool, Postgres, Transaction};
 use thiserror::Error;
@@ -106,7 +106,7 @@ async fn persist_event(
         workload_kind: &event.attribution.workload_kind,
         workload_name: &event.attribution.workload_name,
     };
-    assign_event(
+    let grouping = assign_event(
         tx,
         raw_event_id,
         release_id,
@@ -115,5 +115,13 @@ async fn persist_event(
         GroupingSource::Live,
     )
     .await?;
+    if matches!(&event.payload, EventPayload::NetworkConnect(_)) {
+        crate::metrics::record_network_event(grouping.group_created);
+        tracing::debug!(
+            outcome = "accepted",
+            group_created = grouping.group_created,
+            "network connect event ingested"
+        );
+    }
     Ok(1)
 }
