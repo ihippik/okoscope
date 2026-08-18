@@ -55,8 +55,9 @@ impl Observer {
             )?;
         }
         if dns_enabled {
-            let cgroup =
-                File::open("/sys/fs/cgroup").context("open cgroup v2 root for DNS observation")?;
+            let cgroup = File::open("/sys/fs/cgroup/kubepods")
+                .or_else(|_| File::open("/sys/fs/cgroup/kubepods.slice"))
+                .context("open Kubernetes cgroup v2 subtree for DNS observation")?;
             attach_cgroup(
                 &mut ebpf,
                 "okoscope_dns_egress",
