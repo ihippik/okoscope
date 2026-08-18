@@ -48,7 +48,7 @@
 
 ## 7. End-to-End Acceptance and Release
 
-- [ ] 7.1 Add controlled selected/unselected fixtures for UDP and TCP DNS, IPv4/IPv6 answers, success/NXDOMAIN, CNAME, shared-IP ambiguity, cached connections, malformed packets, encrypted DNS, and replay.
+- [x] 7.1 Add controlled selected/unselected fixtures for UDP and TCP DNS, IPv4/IPv6 answers, success/NXDOMAIN, CNAME, shared-IP ambiguity, cached connections, malformed packets, encrypted DNS, and replay.
 - [ ] 7.2 Trace fixture evidence through eBPF, agent parsing/correlation, PostgreSQL, grouping, release summaries, first-seen notification, API, and Web UI while asserting forbidden and unselected data is absent.
 - [ ] 7.3 Run Rust formatting/lint/unit/integration/fuzz checks, Linux eBPF build/verifier tests, OpenAPI validation, frontend quality gates, container smoke tests, and Kubernetes manifest validation.
 - [ ] 7.4 Publish immutable server, agent, and Web images; roll out server/Web first, enable DNS only for the fixture, record counters/cardinality/privacy/smoke evidence, and restore DNS-disabled configuration.
