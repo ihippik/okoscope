@@ -21,6 +21,7 @@ mod linux {
         session::{connect_with_backoff, handle_control},
         syscall::{self, Architecture},
     };
+    use agent_ebpf_common::KernelEvent;
     use anyhow::{Context, Result};
     use chrono::Utc;
     use clap::Parser;
@@ -99,33 +100,7 @@ mod linux {
                 tokio::select! {
                     _ = poll.tick() => {
                         while let Some(kernel) = observer.next_event()? {
-                            let pid = u32::try_from(kernel.pid_tgid & u64::from(u32::MAX))
-                                .expect("PID is encoded in the low 32 bits");
-                            let tgid = u32::try_from(kernel.pid_tgid >> 32)
-                                .expect("TGID is encoded in the high 32 bits");
-                            let container = match cgroup_resolver.resolve(pid, kernel.cgroup_id) {
-                                Ok(container) => Some(container),
-                                Err(error) => {
-                                    tracing::debug!(pid, cgroup_id = kernel.cgroup_id, %error, "kernel event cgroup resolution failed");
-                                    None
-                                }
-                            };
-                            let Some(attribution) = resolve_and_count(&cache, &counters, container.as_deref(), &config.identity.node_name, &config.scope.workloads) else { continue };
-                            let command = command(&kernel.command);
-                            let payload = if kernel.event_kind == agent_ebpf_common::EVENT_KIND_EXEC {
-                                let executable = std::fs::read_link(format!("/proc/{pid}/exe")).map_or_else(|_| command.clone(), |path| path.to_string_lossy().into_owned());
-                                EventPayload::ProcessExec(ProcessExec { executable, parent_command: None })
-                            } else if kernel.event_kind == agent_ebpf_common::EVENT_KIND_SYSCALL {
-                                let Some(name) = syscall::name_for_number(kernel.syscall_id, architecture) else { counters.unsupported.fetch_add(1, Ordering::Relaxed); continue };
-                                EventPayload::Syscall(SyscallEvent { name: name.into() })
-                            } else if kernel.event_kind == agent_ebpf_common::EVENT_KIND_NETWORK_CONNECT {
-                                match agent::kernel_event::network_connect(&kernel) {
-                                    Ok(network) => EventPayload::NetworkConnect(network),
-                                    Err(_) => { counters.connect_decode_failed.fetch_add(1, Ordering::Relaxed); continue; }
-                                }
-                            } else { counters.unsupported.fetch_add(1, Ordering::Relaxed); continue };
-                            let event = RuntimeEvent { id: Uuid::new_v4(), observed_at: Utc::now(), schema_version: EVENT_SCHEMA_VERSION, attribution,
-                                process: ProcessIdentity { cgroup_id: kernel.cgroup_id, pid, tgid, command }, payload };
+                            let Some(event) = runtime_event(&kernel, architecture, &mut cgroup_resolver, &cache, &counters, &config) else { continue };
                             if rate_limiter.allow() {
                                 buffer.push(event, &counters);
                             } else {
@@ -160,6 +135,75 @@ mod linux {
                 }
             }
         }
+    }
+
+    fn runtime_event(
+        kernel: &KernelEvent,
+        architecture: Architecture,
+        cgroup_resolver: &mut cgroup::CgroupResolver,
+        cache: &AttributionCache,
+        counters: &Counters,
+        config: &AgentConfig,
+    ) -> Option<RuntimeEvent> {
+        let pid = u32::try_from(kernel.pid_tgid & u64::from(u32::MAX))
+            .expect("PID is encoded in the low 32 bits");
+        let tgid =
+            u32::try_from(kernel.pid_tgid >> 32).expect("TGID is encoded in the high 32 bits");
+        let container = match cgroup_resolver.resolve(pid, kernel.cgroup_id) {
+            Ok(container) => Some(container),
+            Err(error) => {
+                tracing::debug!(pid, cgroup_id = kernel.cgroup_id, %error, "kernel event cgroup resolution failed");
+                None
+            }
+        };
+        let attribution = resolve_and_count(
+            cache,
+            counters,
+            container.as_deref(),
+            &config.identity.node_name,
+            &config.scope.workloads,
+        )?;
+        let command = command(&kernel.command);
+        let payload = if kernel.event_kind == agent_ebpf_common::EVENT_KIND_EXEC {
+            let executable = std::fs::read_link(format!("/proc/{pid}/exe")).map_or_else(
+                |_| command.clone(),
+                |path| path.to_string_lossy().into_owned(),
+            );
+            EventPayload::ProcessExec(ProcessExec {
+                executable,
+                parent_command: None,
+            })
+        } else if kernel.event_kind == agent_ebpf_common::EVENT_KIND_SYSCALL {
+            let Some(name) = syscall::name_for_number(kernel.syscall_id, architecture) else {
+                counters.unsupported.fetch_add(1, Ordering::Relaxed);
+                return None;
+            };
+            EventPayload::Syscall(SyscallEvent { name: name.into() })
+        } else if kernel.event_kind == agent_ebpf_common::EVENT_KIND_NETWORK_CONNECT {
+            let Ok(network) = agent::kernel_event::network_connect(kernel) else {
+                counters
+                    .connect_decode_failed
+                    .fetch_add(1, Ordering::Relaxed);
+                return None;
+            };
+            EventPayload::NetworkConnect(network)
+        } else {
+            counters.unsupported.fetch_add(1, Ordering::Relaxed);
+            return None;
+        };
+        Some(RuntimeEvent {
+            id: Uuid::new_v4(),
+            observed_at: Utc::now(),
+            schema_version: EVENT_SCHEMA_VERSION,
+            attribution,
+            process: ProcessIdentity {
+                cgroup_id: kernel.cgroup_id,
+                pid,
+                tgid,
+                command,
+            },
+            payload,
+        })
     }
 
     fn hello(config: &AgentConfig, snapshot: agent::counters::CounterSnapshot) -> AgentHello {
