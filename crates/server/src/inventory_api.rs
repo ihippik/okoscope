@@ -775,60 +775,6 @@ async fn item_detail(
     }))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalized_scope_rejects_invalid_bounds() {
-        let mut scope = InventoryScope::default();
-        scope.search = Some(String::new());
-        assert!(scope.normalize().is_err());
-        let mut scope = InventoryScope::default();
-        scope.namespace = Some(" ".into());
-        assert!(scope.normalize().is_err());
-    }
-
-    #[test]
-    fn scope_fingerprint_is_stable_and_tenant_bound() {
-        let scope = InventoryScope {
-            namespace: Some(" production ".into()),
-            ..Default::default()
-        }
-        .normalize()
-        .unwrap();
-        let org = Uuid::from_u128(1);
-        let project = Uuid::from_u128(2);
-        let app = Uuid::from_u128(3);
-        assert_eq!(
-            scope.fingerprint((org, project, app), Some("process")),
-            scope.fingerprint((org, project, app), Some("process"))
-        );
-        assert_ne!(
-            scope.fingerprint((org, project, app), Some("process")),
-            scope.fingerprint((org, project, Uuid::from_u128(4)), Some("process"))
-        );
-    }
-
-    #[test]
-    fn evidence_hints_are_exact_root_relative_allowlisted_paths() {
-        let links =
-            EvidenceLinks::scoped(Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
-        for (path, suffix) in [
-            (links.releases, "releases"),
-            (links.sightings, "sightings"),
-            (links.groups, "groups"),
-            (links.occurrences, "occurrences"),
-        ] {
-            assert!(path.starts_with('/'));
-            assert!(path.ends_with(suffix));
-            assert!(!path.contains(['?', '#', '\\']));
-            assert!(!path.contains(".."));
-            assert!(!path.contains("://"));
-        }
-    }
-}
-
 async fn item_releases(
     State(state): State<InventoryApiState>,
     headers: HeaderMap,
@@ -957,4 +903,62 @@ async fn item_occurrences(
         None
     };
     Ok(Json(OccurrencePage { items, next_cursor }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalized_scope_rejects_invalid_bounds() {
+        let scope = InventoryScope {
+            search: Some(String::new()),
+            ..Default::default()
+        };
+        assert!(scope.normalize().is_err());
+        let scope = InventoryScope {
+            namespace: Some(" ".into()),
+            ..Default::default()
+        };
+        assert!(scope.normalize().is_err());
+    }
+
+    #[test]
+    fn scope_fingerprint_is_stable_and_tenant_bound() {
+        let scope = InventoryScope {
+            namespace: Some(" production ".into()),
+            ..Default::default()
+        }
+        .normalize()
+        .unwrap();
+        let org = Uuid::from_u128(1);
+        let project = Uuid::from_u128(2);
+        let app = Uuid::from_u128(3);
+        assert_eq!(
+            scope.fingerprint((org, project, app), Some("process")),
+            scope.fingerprint((org, project, app), Some("process"))
+        );
+        assert_ne!(
+            scope.fingerprint((org, project, app), Some("process")),
+            scope.fingerprint((org, project, Uuid::from_u128(4)), Some("process"))
+        );
+    }
+
+    #[test]
+    fn evidence_hints_are_exact_root_relative_allowlisted_paths() {
+        let links =
+            EvidenceLinks::scoped(Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        for (path, suffix) in [
+            (links.releases, "releases"),
+            (links.sightings, "sightings"),
+            (links.groups, "groups"),
+            (links.occurrences, "occurrences"),
+        ] {
+            assert!(path.starts_with('/'));
+            assert!(path.ends_with(suffix));
+            assert!(!path.contains(['?', '#', '\\']));
+            assert!(!path.contains(".."));
+            assert!(!path.contains("://"));
+        }
+    }
 }
