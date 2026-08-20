@@ -144,6 +144,20 @@ async fn persist_event(
     }
     if matches!(
         &event.payload,
+        EventPayload::NetworkListen(_) | EventPayload::NetworkAccept(_)
+    ) {
+        crate::metrics::record_inbound_event(
+            matches!(&event.payload, EventPayload::NetworkAccept(_)),
+            grouping.group_created,
+        );
+        tracing::debug!(
+            outcome = "accepted",
+            group_created = grouping.group_created,
+            "inbound network event ingested"
+        );
+    }
+    if matches!(
+        &event.payload,
         EventPayload::NetworkDnsQuery(_) | EventPayload::NetworkDnsResponse(_)
     ) {
         crate::metrics::record_dns_event(grouping.group_created);
@@ -165,6 +179,8 @@ fn validate_dns_event(event: &RuntimeEvent) -> Result<(), IngestionError> {
             .is_none_or(|context| context.validate().is_ok()),
         EventPayload::ProcessExec(_)
         | EventPayload::Syscall(_)
+        | EventPayload::NetworkListen(_)
+        | EventPayload::NetworkAccept(_)
         | EventPayload::NetworkDnsQuery(_) => true,
     };
     valid.then_some(()).ok_or(IngestionError::InvalidDns)

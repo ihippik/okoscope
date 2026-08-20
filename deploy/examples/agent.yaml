@@ -23,6 +23,9 @@ observation:
     - setns
   network:
     connect: false
+    listen: false
+    accept: false
+    maxAcceptedEventsPerSecond: 1000
 safety:
   queueCapacity: 4096
   batchSize: 256

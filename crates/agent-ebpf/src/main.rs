@@ -8,10 +8,13 @@ use agent_ebpf_common::{
     DNS_COUNTER_COUNT, DNS_COUNTER_DECODE_FAILED, DNS_COUNTER_OVERSIZE, DNS_COUNTER_RING_LOST,
     DNS_COUNTER_UNSUPPORTED_FRAMING, DNS_DIRECTION_EGRESS, DNS_DIRECTION_INGRESS,
     DNS_TRANSPORT_TCP, DNS_TRANSPORT_UDP, DnsPacketRecord, EVENT_KIND_EXEC,
-    EVENT_KIND_NETWORK_CONNECT, EVENT_KIND_SYSCALL, KernelEvent, NETWORK_ADDRESS_LEN,
-    NETWORK_COUNTER_CAPACITY, NETWORK_COUNTER_CORRELATION_MISS, NETWORK_COUNTER_COUNT,
-    NETWORK_COUNTER_DECODE_FAILED, NETWORK_COUNTER_KERNEL_LOST, NETWORK_COUNTER_UNSUPPORTED_FAMILY,
-    PendingConnect,
+    EVENT_KIND_NETWORK_ACCEPT, EVENT_KIND_NETWORK_CONNECT, EVENT_KIND_NETWORK_LISTEN,
+    EVENT_KIND_SYSCALL, INBOUND_COUNTER_ATTRIBUTION_FAILED, INBOUND_COUNTER_CORRELATION_MISS,
+    INBOUND_COUNTER_COUNT, INBOUND_COUNTER_DECODE_FAILED, INBOUND_COUNTER_KERNEL_LOST,
+    INBOUND_COUNTER_UNSUPPORTED_FAMILY, InboundEndpoints, InboundKernelEvent, KernelEvent,
+    NETWORK_ADDRESS_LEN, NETWORK_COUNTER_CAPACITY, NETWORK_COUNTER_CORRELATION_MISS,
+    NETWORK_COUNTER_COUNT, NETWORK_COUNTER_DECODE_FAILED, NETWORK_COUNTER_KERNEL_LOST,
+    NETWORK_COUNTER_UNSUPPORTED_FAMILY, PendingConnect,
 };
 use aya_ebpf::{
     EbpfContext,
@@ -19,9 +22,9 @@ use aya_ebpf::{
         bpf_get_current_cgroup_id, bpf_get_current_comm, bpf_get_current_pid_tgid,
         bpf_get_socket_cookie, bpf_ktime_get_ns, bpf_probe_read_user, bpf_skb_cgroup_id,
     },
-    macros::{cgroup_skb, map, tracepoint},
-    maps::{HashMap, PerCpuArray, RingBuf},
-    programs::{SkBuffContext, TracePointContext},
+    macros::{cgroup_skb, kretprobe, map, tracepoint},
+    maps::{HashMap, LruHashMap, PerCpuArray, RingBuf},
+    programs::{RetProbeContext, SkBuffContext, TracePointContext},
 };
 
 #[map]
@@ -38,6 +41,17 @@ static mut NETWORK_COUNTERS: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(NETWORK_COUNTER_COUNT, 0);
 
 #[map]
+static mut INBOUND_EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
+
+#[map]
+static mut PENDING_ACCEPTS: LruHashMap<u64, InboundEndpoints> =
+    LruHashMap::with_max_entries(16_384, 0);
+
+#[map]
+static mut INBOUND_COUNTERS: PerCpuArray<u64> =
+    PerCpuArray::with_max_entries(INBOUND_COUNTER_COUNT, 0);
+
+#[map]
 static mut DNS_EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 1024, 0);
 
 #[map]
@@ -51,6 +65,10 @@ const AF_INET6_U32: u32 = 10;
 const IPPROTO_TCP: u8 = 6;
 const IPPROTO_UDP: u8 = 17;
 const DNS_PORT: u16 = 53;
+const TCP_ESTABLISHED: i32 = 1;
+const TCP_SYN_RECV: i32 = 3;
+const TCP_LISTEN: i32 = 10;
+const TCP_NEW_SYN_RECV: i32 = 12;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -98,6 +116,22 @@ pub fn okoscope_connect_enter(ctx: TracePointContext) -> u32 {
 #[tracepoint]
 pub fn okoscope_connect_exit(ctx: TracePointContext) -> u32 {
     match try_connect_exit(&ctx) {
+        Ok(()) => 0,
+        Err(error) => error,
+    }
+}
+
+#[tracepoint]
+pub fn okoscope_inet_sock_set_state(ctx: TracePointContext) -> u32 {
+    match try_inet_sock_set_state(&ctx) {
+        Ok(()) => 0,
+        Err(error) => error,
+    }
+}
+
+#[kretprobe(function = "inet_csk_accept")]
+pub fn okoscope_inet_csk_accept_return(ctx: RetProbeContext) -> u32 {
+    match try_inet_csk_accept_return(&ctx) {
         Ok(()) => 0,
         Err(error) => error,
     }
@@ -426,8 +460,119 @@ fn try_connect_exit(ctx: &TracePointContext) -> Result<(), u32> {
     Ok(())
 }
 
+fn try_inet_sock_set_state(ctx: &TracePointContext) -> Result<(), u32> {
+    let skaddr: u64 = unsafe { ctx.read_at(8).map_err(|_| 1_u32)? };
+    let old_state: i32 = unsafe { ctx.read_at(16).map_err(|_| 1_u32)? };
+    let new_state: i32 = unsafe { ctx.read_at(20).map_err(|_| 1_u32)? };
+    let local_port: u16 = unsafe { ctx.read_at(24).map_err(|_| 1_u32)? };
+    let remote_port: u16 = unsafe { ctx.read_at(26).map_err(|_| 1_u32)? };
+    let family: u16 = unsafe { ctx.read_at(28).map_err(|_| 1_u32)? };
+    let protocol: u16 = unsafe { ctx.read_at(30).map_err(|_| 1_u32)? };
+    if protocol != u16::from(IPPROTO_TCP) {
+        return Ok(());
+    }
+    if local_port == 0 || skaddr == 0 {
+        increment_inbound_counter(INBOUND_COUNTER_DECODE_FAILED);
+        return Ok(());
+    }
+    let (address_family, local_address, remote_address) = match family {
+        AF_INET => {
+            let local: [u8; 4] = unsafe { ctx.read_at(32).map_err(|_| 1_u32)? };
+            let remote: [u8; 4] = unsafe { ctx.read_at(36).map_err(|_| 1_u32)? };
+            let mut local_address = [0; NETWORK_ADDRESS_LEN];
+            let mut remote_address = [0; NETWORK_ADDRESS_LEN];
+            local_address[..4].copy_from_slice(&local);
+            remote_address[..4].copy_from_slice(&remote);
+            (ADDRESS_FAMILY_IPV4, local_address, remote_address)
+        }
+        AF_INET6 => {
+            let local: [u8; 16] = unsafe { ctx.read_at(40).map_err(|_| 1_u32)? };
+            let remote: [u8; 16] = unsafe { ctx.read_at(56).map_err(|_| 1_u32)? };
+            (ADDRESS_FAMILY_IPV6, local, remote)
+        }
+        _ => {
+            increment_inbound_counter(INBOUND_COUNTER_UNSUPPORTED_FAMILY);
+            return Ok(());
+        }
+    };
+    let endpoints = InboundEndpoints {
+        observed_at_ns: unsafe { bpf_ktime_get_ns() },
+        local_address,
+        remote_address,
+        local_port,
+        remote_port,
+        address_family,
+        padding: [0; 3],
+    };
+    if new_state == TCP_LISTEN {
+        return emit_inbound(EVENT_KIND_NETWORK_LISTEN, &endpoints);
+    }
+    if new_state == TCP_ESTABLISHED && (old_state == TCP_SYN_RECV || old_state == TCP_NEW_SYN_RECV)
+    {
+        if remote_port == 0 {
+            increment_inbound_counter(INBOUND_COUNTER_DECODE_FAILED);
+            return Ok(());
+        }
+        let _ = unsafe { PENDING_ACCEPTS.insert(&skaddr, &endpoints, 0) };
+    }
+    Ok(())
+}
+
+fn try_inet_csk_accept_return(ctx: &RetProbeContext) -> Result<(), u32> {
+    let Some(skaddr) = ctx.ret::<u64>() else {
+        increment_inbound_counter(INBOUND_COUNTER_DECODE_FAILED);
+        return Ok(());
+    };
+    if skaddr == 0 {
+        return Ok(());
+    }
+    let Some(endpoints_ptr) = (unsafe { PENDING_ACCEPTS.get_ptr(&skaddr) }) else {
+        increment_inbound_counter(INBOUND_COUNTER_CORRELATION_MISS);
+        return Ok(());
+    };
+    let mut endpoints = unsafe { *endpoints_ptr };
+    let _ = unsafe { PENDING_ACCEPTS.remove(&skaddr) };
+    endpoints.observed_at_ns = unsafe { bpf_ktime_get_ns() };
+    emit_inbound(EVENT_KIND_NETWORK_ACCEPT, &endpoints)
+}
+
+fn emit_inbound(event_kind: u8, endpoints: &InboundEndpoints) -> Result<(), u32> {
+    let cgroup_id = unsafe { bpf_get_current_cgroup_id() };
+    if cgroup_id == 0 {
+        increment_inbound_counter(INBOUND_COUNTER_ATTRIBUTION_FAILED);
+        return Ok(());
+    }
+    let Some(mut slot) = (unsafe { INBOUND_EVENTS.reserve::<InboundKernelEvent>(0) }) else {
+        increment_inbound_counter(INBOUND_COUNTER_KERNEL_LOST);
+        return Ok(());
+    };
+    slot.write(InboundKernelEvent {
+        timestamp_ns: endpoints.observed_at_ns,
+        cgroup_id,
+        pid_tgid: bpf_get_current_pid_tgid(),
+        local_address: endpoints.local_address,
+        remote_address: endpoints.remote_address,
+        local_port: endpoints.local_port,
+        remote_port: endpoints.remote_port,
+        event_kind,
+        address_family: endpoints.address_family,
+        padding: [0; 2],
+        command: bpf_get_current_comm().unwrap_or([0; 16]),
+    });
+    slot.submit(0);
+    Ok(())
+}
+
 fn increment_counter(index: u32) {
     if let Some(value) = unsafe { NETWORK_COUNTERS.get_ptr_mut(index) } {
+        unsafe {
+            *value = (*value).saturating_add(1);
+        }
+    }
+}
+
+fn increment_inbound_counter(index: u32) {
+    if let Some(value) = unsafe { INBOUND_COUNTERS.get_ptr_mut(index) } {
         unsafe {
             *value = (*value).saturating_add(1);
         }

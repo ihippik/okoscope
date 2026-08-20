@@ -134,6 +134,12 @@ impl From<CounterSnapshot> for DropCounters {
             dns_kernel_unsupported_framing: value.dns_kernel_unsupported_framing,
             dns_attribution_failed: value.dns_attribution_failed,
             dns_oversize: value.dns_oversize,
+            inbound_decode_failed: value.inbound_decode_failed,
+            inbound_attribution_failed: value.inbound_attribution_failed,
+            inbound_unsupported_family: value.inbound_unsupported_family,
+            inbound_kernel_lost: value.inbound_kernel_lost,
+            inbound_rate_limited: value.inbound_rate_limited,
+            inbound_correlation_miss: value.inbound_correlation_miss,
         }
     }
 }
@@ -193,5 +199,24 @@ mod tests {
         assert_eq!(wire.dns_rate_limited, 8);
         assert_eq!(wire.dns_capacity, 9);
         assert_eq!(wire.dns_kernel_lost, 10);
+    }
+
+    #[test]
+    fn inbound_drop_counters_are_transported_additively() {
+        let wire = DropCounters::from(CounterSnapshot {
+            inbound_decode_failed: 1,
+            inbound_attribution_failed: 2,
+            inbound_unsupported_family: 3,
+            inbound_kernel_lost: 4,
+            inbound_rate_limited: 5,
+            inbound_correlation_miss: 6,
+            ..CounterSnapshot::default()
+        });
+        assert_eq!(wire.inbound_decode_failed, 1);
+        assert_eq!(wire.inbound_attribution_failed, 2);
+        assert_eq!(wire.inbound_unsupported_family, 3);
+        assert_eq!(wire.inbound_kernel_lost, 4);
+        assert_eq!(wire.inbound_rate_limited, 5);
+        assert_eq!(wire.inbound_correlation_miss, 6);
     }
 }

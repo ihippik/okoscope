@@ -13,6 +13,12 @@ pub struct Counters {
     pub connect_decode_failed: AtomicU64,
     pub connect_unsupported_family: AtomicU64,
     pub connect_kernel_lost: AtomicU64,
+    pub inbound_decode_failed: AtomicU64,
+    pub inbound_attribution_failed: AtomicU64,
+    pub inbound_unsupported_family: AtomicU64,
+    pub inbound_kernel_lost: AtomicU64,
+    pub inbound_rate_limited: AtomicU64,
+    pub inbound_correlation_miss: AtomicU64,
     pub dns_packet_decode_failed: AtomicU64,
     pub dns_malformed_compression: AtomicU64,
     pub dns_truncated: AtomicU64,
@@ -44,6 +50,12 @@ pub struct CounterSnapshot {
     pub connect_decode_failed: u64,
     pub connect_unsupported_family: u64,
     pub connect_kernel_lost: u64,
+    pub inbound_decode_failed: u64,
+    pub inbound_attribution_failed: u64,
+    pub inbound_unsupported_family: u64,
+    pub inbound_kernel_lost: u64,
+    pub inbound_rate_limited: u64,
+    pub inbound_correlation_miss: u64,
     pub dns_packet_decode_failed: u64,
     pub dns_malformed_compression: u64,
     pub dns_truncated: u64,
@@ -80,7 +92,29 @@ pub struct DnsKernelCounters {
     pub ring_lost: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InboundKernelCounters {
+    pub decode_failed: u64,
+    pub attribution_failed: u64,
+    pub unsupported_family: u64,
+    pub kernel_lost: u64,
+    pub correlation_miss: u64,
+}
+
 impl Counters {
+    pub fn update_inbound_kernel(&self, value: InboundKernelCounters) {
+        self.inbound_decode_failed
+            .store(value.decode_failed, Ordering::Relaxed);
+        self.inbound_attribution_failed
+            .store(value.attribution_failed, Ordering::Relaxed);
+        self.inbound_unsupported_family
+            .store(value.unsupported_family, Ordering::Relaxed);
+        self.inbound_kernel_lost
+            .store(value.kernel_lost, Ordering::Relaxed);
+        self.inbound_correlation_miss
+            .store(value.correlation_miss, Ordering::Relaxed);
+    }
+
     pub fn update_dns_kernel(&self, value: DnsKernelCounters) {
         self.dns_packet_decode_failed
             .store(value.decode_failed, Ordering::Relaxed);
@@ -121,6 +155,12 @@ impl Counters {
             connect_decode_failed: load(&self.connect_decode_failed),
             connect_unsupported_family: load(&self.connect_unsupported_family),
             connect_kernel_lost: load(&self.connect_kernel_lost),
+            inbound_decode_failed: load(&self.inbound_decode_failed),
+            inbound_attribution_failed: load(&self.inbound_attribution_failed),
+            inbound_unsupported_family: load(&self.inbound_unsupported_family),
+            inbound_kernel_lost: load(&self.inbound_kernel_lost),
+            inbound_rate_limited: load(&self.inbound_rate_limited),
+            inbound_correlation_miss: load(&self.inbound_correlation_miss),
             dns_packet_decode_failed: load(&self.dns_packet_decode_failed),
             dns_malformed_compression: load(&self.dns_malformed_compression),
             dns_truncated: load(&self.dns_truncated),

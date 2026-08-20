@@ -27,6 +27,8 @@ impl RuntimeEvent {
             EventPayload::ProcessExec(_) => "process.exec",
             EventPayload::Syscall(_) => "syscall",
             EventPayload::NetworkConnect(_) => "network.connect",
+            EventPayload::NetworkListen(_) => "network.listen",
+            EventPayload::NetworkAccept(_) => "network.accept",
             EventPayload::NetworkDnsQuery(_) => "network.dns.query",
             EventPayload::NetworkDnsResponse(_) => "network.dns.response",
         }
@@ -64,6 +66,8 @@ pub enum EventPayload {
     ProcessExec(ProcessExec),
     Syscall(SyscallEvent),
     NetworkConnect(NetworkConnect),
+    NetworkListen(NetworkListen),
+    NetworkAccept(NetworkAccept),
     NetworkDnsQuery(NetworkDnsQuery),
     NetworkDnsResponse(NetworkDnsResponse),
 }
@@ -77,6 +81,101 @@ pub struct ProcessExec {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyscallEvent {
     pub name: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkTransport {
+    Tcp,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkListen {
+    pub transport: NetworkTransport,
+    pub address_family: NetworkAddressFamily,
+    pub local_address: IpAddr,
+    pub local_port: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkAccept {
+    pub transport: NetworkTransport,
+    pub address_family: NetworkAddressFamily,
+    pub local_address: IpAddr,
+    pub local_port: u16,
+    pub remote_address: IpAddr,
+    pub remote_port: u16,
+}
+
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum InboundNetworkError {
+    #[error("local port must be non-zero")]
+    ZeroLocalPort,
+    #[error("remote port must be non-zero")]
+    ZeroRemotePort,
+    #[error("address family does not match endpoint address")]
+    AddressFamilyMismatch,
+}
+
+impl NetworkListen {
+    /// Constructs a validated TCP listener observation.
+    pub fn new(
+        address_family: NetworkAddressFamily,
+        local_address: IpAddr,
+        local_port: u16,
+    ) -> Result<Self, InboundNetworkError> {
+        validate_endpoint(address_family, local_address, local_port, true)?;
+        Ok(Self {
+            transport: NetworkTransport::Tcp,
+            address_family,
+            local_address,
+            local_port,
+        })
+    }
+}
+
+impl NetworkAccept {
+    /// Constructs a validated accepted TCP connection observation.
+    pub fn new(
+        address_family: NetworkAddressFamily,
+        local_address: IpAddr,
+        local_port: u16,
+        remote_address: IpAddr,
+        remote_port: u16,
+    ) -> Result<Self, InboundNetworkError> {
+        validate_endpoint(address_family, local_address, local_port, true)?;
+        validate_endpoint(address_family, remote_address, remote_port, false)?;
+        Ok(Self {
+            transport: NetworkTransport::Tcp,
+            address_family,
+            local_address,
+            local_port,
+            remote_address,
+            remote_port,
+        })
+    }
+}
+
+fn validate_endpoint(
+    family: NetworkAddressFamily,
+    address: IpAddr,
+    port: u16,
+    local: bool,
+) -> Result<(), InboundNetworkError> {
+    if port == 0 {
+        return Err(if local {
+            InboundNetworkError::ZeroLocalPort
+        } else {
+            InboundNetworkError::ZeroRemotePort
+        });
+    }
+    if !matches!(
+        (family, address),
+        (NetworkAddressFamily::Ipv4, IpAddr::V4(_)) | (NetworkAddressFamily::Ipv6, IpAddr::V6(_))
+    ) {
+        return Err(InboundNetworkError::AddressFamilyMismatch);
+    }
+    Ok(())
 }
 
 pub const LINUX_EINPROGRESS: u16 = 115;
@@ -591,5 +690,48 @@ mod tests {
             effective_ttl_seconds: None,
         });
         assert_eq!(event.kind(), "network.dns.response");
+    }
+
+    #[test]
+    fn inbound_tcp_endpoints_are_validated() {
+        let listen =
+            NetworkListen::new(NetworkAddressFamily::Ipv4, "0.0.0.0".parse().unwrap(), 8080)
+                .unwrap();
+        assert_eq!(listen.transport, NetworkTransport::Tcp);
+        assert_eq!(listen.local_port, 8080);
+
+        let accepted = NetworkAccept::new(
+            NetworkAddressFamily::Ipv6,
+            "::".parse().unwrap(),
+            8443,
+            "2001:db8::1".parse().unwrap(),
+            51_234,
+        )
+        .unwrap();
+        assert_eq!(accepted.remote_port, 51_234);
+        assert_eq!(
+            NetworkListen::new(NetworkAddressFamily::Ipv4, "0.0.0.0".parse().unwrap(), 0,),
+            Err(InboundNetworkError::ZeroLocalPort)
+        );
+        assert_eq!(
+            NetworkAccept::new(
+                NetworkAddressFamily::Ipv4,
+                "0.0.0.0".parse().unwrap(),
+                8080,
+                "::1".parse().unwrap(),
+                50_000,
+            ),
+            Err(InboundNetworkError::AddressFamilyMismatch)
+        );
+        assert_eq!(
+            NetworkAccept::new(
+                NetworkAddressFamily::Ipv4,
+                "0.0.0.0".parse().unwrap(),
+                8080,
+                "127.0.0.1".parse().unwrap(),
+                0,
+            ),
+            Err(InboundNetworkError::ZeroRemotePort)
+        );
     }
 }

@@ -1,15 +1,16 @@
 {
   "summary": {
     "identity_version": 1,
-    "item_count": 4,
-    "occurrence_count": 126,
+    "item_count": 5,
+    "occurrence_count": 144,
     "first_seen_at": "2026-08-17T10:00:00Z",
     "last_seen_at": "2026-08-18T10:00:00Z",
     "kinds": [
       {"kind": "process", "item_count": 1, "occurrence_count": 12},
       {"kind": "destination", "item_count": 1, "occurrence_count": 24},
       {"kind": "domain", "item_count": 1, "occurrence_count": 30},
-      {"kind": "syscall", "item_count": 1, "occurrence_count": 60}
+      {"kind": "syscall", "item_count": 1, "occurrence_count": 60},
+      {"kind": "inbound_endpoint", "item_count": 1, "occurrence_count": 18}
     ]
   },
   "page": {
@@ -85,9 +86,27 @@
         "pod_count": 8,
         "container_count": 1,
         "group_count": 2
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000005",
+        "project_id": "20000000-0000-4000-8000-000000000001",
+        "application_id": "30000000-0000-4000-8000-000000000001",
+        "inventory_kind": "inbound_endpoint",
+        "identity_version": 1,
+        "semantic_summary": {"transport": "tcp", "address_family": "ipv4", "local_address": "0.0.0.0", "local_port": 8080, "listener_observed": true, "accept_observed": true},
+        "first_seen_at": "2026-08-17T10:01:00Z",
+        "last_seen_at": "2026-08-18T09:59:00Z",
+        "occurrence_count": 18,
+        "release_count": 2,
+        "cluster_count": 2,
+        "namespace_count": 2,
+        "workload_count": 2,
+        "pod_count": 8,
+        "container_count": 1,
+        "group_count": 2
       }
     ],
-    "next_cursor": "10000000-0000-4000-8000-000000000004"
+    "next_cursor": "10000000-0000-4000-8000-000000000005"
   },
   "next_page": {"items": [], "next_cursor": null},
   "empty": {"items": [], "next_cursor": null},
@@ -102,6 +121,31 @@
   "unsafe_display_text": {
     "semantic_summary": {"executable": "<img src=x onerror=alert('inventory')>"},
     "namespace": "<script>alert('scope')</script>",
-    "workload_name": "javascript:alert('workload')"
+    "workload_name": "javascript:alert('workload')",
+    "inbound_endpoint": {"transport": "tcp", "address_family": "ipv4", "local_address": "0.0.0.0", "local_port": 65535, "listener_observed": true, "accept_observed": true}
+  },
+  "inbound_group": {
+    "event_kind": "network.accept",
+    "semantic_summary": {"process_command": "payments", "transport": "tcp", "address_family": "ipv4", "local_address": "0.0.0.0", "local_port": 8080},
+    "occurrence_count": 17
+  },
+  "inbound_occurrences": {
+    "items": [
+      {
+        "id": "50000000-0000-4000-8000-000000000001",
+        "event_id": "60000000-0000-4000-8000-000000000001",
+        "observed_at": "2026-08-18T09:59:00Z",
+        "node_name": "worker-a",
+        "namespace": "payments",
+        "pod_name": "payments-abc",
+        "container_name": "api",
+        "process_command": "payments",
+        "event_kind": "network.accept",
+        "payload": {"type": "NetworkAccept", "data": {"transport": "tcp", "address_family": "ipv4", "local_address": "0.0.0.0", "local_port": 8080, "remote_address": "203.0.113.9", "remote_port": 51234}},
+        "release_id": "40000000-0000-4000-8000-000000000001",
+        "release_version": "2.14.0"
+      }
+    ],
+    "next_cursor": null
   }
 }

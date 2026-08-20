@@ -4,11 +4,11 @@ use anyhow::{Context, Result};
 use aya::{
     Ebpf, EbpfLoader,
     maps::{HashMap, PerCpuArray, RingBuf},
-    programs::{CgroupAttachMode, CgroupSkb, CgroupSkbAttachType, TracePoint},
+    programs::{CgroupAttachMode, CgroupSkb, CgroupSkbAttachType, KProbe, TracePoint},
 };
 
 use crate::{
-    counters::{DnsKernelCounters, NetworkKernelCounters},
+    counters::{DnsKernelCounters, InboundKernelCounters, NetworkKernelCounters},
     kernel_event,
     syscall::Architecture,
 };
@@ -17,6 +17,8 @@ pub struct Observer {
     _ebpf: Ebpf,
     events: RingBuf<aya::maps::MapData>,
     network_counters: PerCpuArray<aya::maps::MapData, u64>,
+    inbound_events: RingBuf<aya::maps::MapData>,
+    inbound_counters: PerCpuArray<aya::maps::MapData, u64>,
     dns_events: RingBuf<aya::maps::MapData>,
     dns_counters: PerCpuArray<aya::maps::MapData, u64>,
 }
@@ -32,6 +34,8 @@ impl Observer {
         path: &Path,
         syscall_names: &[String],
         network_connect: bool,
+        network_listen: bool,
+        network_accept: bool,
         dns_enabled: bool,
         architecture: Architecture,
     ) -> Result<Self> {
@@ -52,6 +56,21 @@ impl Observer {
                 "okoscope_connect_exit",
                 "syscalls",
                 "sys_exit_connect",
+            )?;
+        }
+        if network_listen || network_accept {
+            attach(
+                &mut ebpf,
+                "okoscope_inet_sock_set_state",
+                "sock",
+                "inet_sock_set_state",
+            )?;
+        }
+        if network_accept {
+            attach_kretprobe(
+                &mut ebpf,
+                "okoscope_inet_csk_accept_return",
+                "inet_csk_accept",
             )?;
         }
         if dns_enabled {
@@ -90,6 +109,14 @@ impl Observer {
             .context("missing NETWORK_COUNTERS map")?;
         let network_counters = PerCpuArray::try_from(map)?;
         let map = ebpf
+            .take_map("INBOUND_EVENTS")
+            .context("missing INBOUND_EVENTS ring buffer")?;
+        let inbound_events = RingBuf::try_from(map)?;
+        let map = ebpf
+            .take_map("INBOUND_COUNTERS")
+            .context("missing INBOUND_COUNTERS map")?;
+        let inbound_counters = PerCpuArray::try_from(map)?;
+        let map = ebpf
             .take_map("DNS_EVENTS")
             .context("missing DNS_EVENTS ring buffer")?;
         let dns_events = RingBuf::try_from(map)?;
@@ -101,6 +128,8 @@ impl Observer {
             _ebpf: ebpf,
             events,
             network_counters,
+            inbound_events,
+            inbound_counters,
             dns_events,
             dns_counters,
         })
@@ -111,6 +140,26 @@ impl Observer {
             .next()
             .map(|item| kernel_event::decode_dns_packet(&item).map_err(Into::into))
             .transpose()
+    }
+
+    pub fn next_inbound_event(&mut self) -> Result<Option<agent_ebpf_common::InboundKernelEvent>> {
+        self.inbound_events
+            .next()
+            .map(|item| kernel_event::decode_inbound(&item).map_err(Into::into))
+            .transpose()
+    }
+
+    pub fn inbound_kernel_counters(&self) -> Result<InboundKernelCounters> {
+        let total = |index: u32| -> Result<u64> {
+            Ok(self.inbound_counters.get(&index, 0)?.iter().copied().sum())
+        };
+        Ok(InboundKernelCounters {
+            decode_failed: total(agent_ebpf_common::INBOUND_COUNTER_DECODE_FAILED)?,
+            attribution_failed: total(agent_ebpf_common::INBOUND_COUNTER_ATTRIBUTION_FAILED)?,
+            unsupported_family: total(agent_ebpf_common::INBOUND_COUNTER_UNSUPPORTED_FAMILY)?,
+            kernel_lost: total(agent_ebpf_common::INBOUND_COUNTER_KERNEL_LOST)?,
+            correlation_miss: total(agent_ebpf_common::INBOUND_COUNTER_CORRELATION_MISS)?,
+        })
     }
 
     pub fn dns_kernel_counters(&self) -> Result<DnsKernelCounters> {
@@ -177,5 +226,19 @@ fn attach(ebpf: &mut Ebpf, program_name: &str, category: &str, event: &str) -> R
     program
         .attach(category, event)
         .with_context(|| format!("attach {program_name} to {category}/{event}"))?;
+    Ok(())
+}
+
+fn attach_kretprobe(ebpf: &mut Ebpf, program_name: &str, function: &str) -> Result<()> {
+    let program: &mut KProbe = ebpf
+        .program_mut(program_name)
+        .with_context(|| format!("missing {program_name} program"))?
+        .try_into()?;
+    program
+        .load()
+        .with_context(|| format!("load {program_name}"))?;
+    program
+        .attach(function, 0)
+        .with_context(|| format!("attach {program_name} to {function}"))?;
     Ok(())
 }

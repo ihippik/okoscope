@@ -73,6 +73,8 @@ mod linux {
             &args.ebpf_object,
             &config.observation.syscalls,
             config.observation.network.connect,
+            config.observation.network.listen,
+            config.observation.network.accept,
             config.observation.network.dns.enabled,
             architecture,
         )?;
@@ -82,6 +84,8 @@ mod linux {
         let mut rate_limiter = EventRateLimiter::new(config.safety.max_events_per_second);
         let mut dns_rate_limiter =
             EventRateLimiter::new(config.observation.network.dns.max_events_per_second);
+        let mut inbound_rate_limiter =
+            EventRateLimiter::new(config.observation.network.max_accepted_events_per_second);
         let mut dns_processor = DnsProcessor::new(&config.observation.network.dns);
         loop {
             let hello = hello(&config, counters.snapshot());
@@ -112,6 +116,17 @@ mod linux {
                                 counters.dns_rate_limited.fetch_add(1, Ordering::Relaxed);
                             }
                         }
+                        while let Some(kernel) = observer.next_inbound_event()? {
+                            let is_accept = kernel.event_kind == agent_ebpf_common::EVENT_KIND_NETWORK_ACCEPT;
+                            let Some(event) = runtime_inbound_event(
+                                &kernel, &mut cgroup_resolver, &cache, &counters, &config,
+                            ) else { continue };
+                            if (!is_accept || inbound_rate_limiter.allow()) && rate_limiter.allow() {
+                                buffer.push(event, &counters);
+                            } else {
+                                counters.inbound_rate_limited.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
                         while let Some(kernel) = observer.next_event()? {
                             let Some(event) = runtime_event(&kernel, architecture, &mut cgroup_resolver, &cache, &counters, &config, &mut dns_processor) else { continue };
                             if rate_limiter.allow() {
@@ -124,6 +139,7 @@ mod linux {
                     }
                     _ = heartbeat.tick() => {
                         counters.update_network_kernel(observer.network_counters()?);
+                        counters.update_inbound_kernel(observer.inbound_kernel_counters()?);
                         counters.update_dns_kernel(observer.dns_kernel_counters()?);
                         let snapshot = counters.snapshot();
                         tracing::info!(?snapshot, "agent status");
@@ -231,6 +247,49 @@ mod linux {
                 pid,
                 tgid,
                 command,
+            },
+            payload,
+        })
+    }
+
+    fn runtime_inbound_event(
+        kernel: &agent_ebpf_common::InboundKernelEvent,
+        cgroup_resolver: &mut cgroup::CgroupResolver,
+        cache: &AttributionCache,
+        counters: &Counters,
+        config: &AgentConfig,
+    ) -> Option<RuntimeEvent> {
+        let pid = u32::try_from(kernel.pid_tgid & u64::from(u32::MAX))
+            .expect("PID is encoded in the low 32 bits");
+        let tgid =
+            u32::try_from(kernel.pid_tgid >> 32).expect("TGID is encoded in the high 32 bits");
+        let container = cgroup_resolver.resolve(pid, kernel.cgroup_id).ok();
+        let attribution = resolve_and_count(
+            cache,
+            counters,
+            container.as_deref(),
+            &config.identity.node_name,
+            &config.scope.workloads,
+        )?;
+        let payload = match agent::kernel_event::inbound_payload(kernel) {
+            Ok(payload) => payload,
+            Err(_) => {
+                counters
+                    .inbound_decode_failed
+                    .fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+        };
+        Some(RuntimeEvent {
+            id: Uuid::new_v4(),
+            observed_at: Utc::now(),
+            schema_version: EVENT_SCHEMA_VERSION,
+            attribution,
+            process: ProcessIdentity {
+                cgroup_id: kernel.cgroup_id,
+                pid,
+                tgid,
+                command: command(&kernel.command),
             },
             payload,
         })

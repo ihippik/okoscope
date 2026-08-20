@@ -11,6 +11,10 @@ static GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
 static DUPLICATE_EVENTS: AtomicU64 = AtomicU64::new(0);
 static NETWORK_EVENTS_ACCEPTED: AtomicU64 = AtomicU64::new(0);
 static NETWORK_GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
+static NETWORK_LISTEN_EVENTS_ACCEPTED: AtomicU64 = AtomicU64::new(0);
+static NETWORK_LISTEN_GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
+static NETWORK_ACCEPT_EVENTS_ACCEPTED: AtomicU64 = AtomicU64::new(0);
+static NETWORK_ACCEPT_GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
 static DNS_EVENTS_ACCEPTED: AtomicU64 = AtomicU64::new(0);
 static DNS_GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
 static DNS_AMBIGUOUS_CONTEXTS: AtomicU64 = AtomicU64::new(0);
@@ -74,6 +78,22 @@ pub fn record_duplicate_event() {
 pub fn record_network_event(group_created: bool) {
     NETWORK_EVENTS_ACCEPTED.fetch_add(1, Ordering::Relaxed);
     NETWORK_GROUPS_CREATED.fetch_add(u64::from(group_created), Ordering::Relaxed);
+}
+
+pub fn record_inbound_event(accepted_connection: bool, group_created: bool) {
+    let (events, groups) = if accepted_connection {
+        (
+            &NETWORK_ACCEPT_EVENTS_ACCEPTED,
+            &NETWORK_ACCEPT_GROUPS_CREATED,
+        )
+    } else {
+        (
+            &NETWORK_LISTEN_EVENTS_ACCEPTED,
+            &NETWORK_LISTEN_GROUPS_CREATED,
+        )
+    };
+    events.fetch_add(1, Ordering::Relaxed);
+    groups.fetch_add(u64::from(group_created), Ordering::Relaxed);
 }
 
 pub fn record_dns_event(group_created: bool) {
@@ -312,6 +332,22 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         (
             "okoscope_network_connect_groups_created_total",
             NETWORK_GROUPS_CREATED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_network_listen_events_accepted_total",
+            NETWORK_LISTEN_EVENTS_ACCEPTED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_network_listen_groups_created_total",
+            NETWORK_LISTEN_GROUPS_CREATED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_network_accept_events_accepted_total",
+            NETWORK_ACCEPT_EVENTS_ACCEPTED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_network_accept_groups_created_total",
+            NETWORK_ACCEPT_GROUPS_CREATED.load(Ordering::Relaxed),
         ),
         (
             "okoscope_dns_events_accepted_total",

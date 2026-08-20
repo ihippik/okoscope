@@ -236,6 +236,10 @@ async fn update_release_summary(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the typed event dispatch is intentionally exhaustive"
+)]
 pub fn fingerprint_v1(
     scope: &TrustedGroupingScope<'_>,
     event: &RuntimeEvent,
@@ -293,6 +297,26 @@ pub fn fingerprint_v1(
             }
             semantic
         }
+        EventPayload::NetworkListen(network) => {
+            let command = required("process_command", &event.process.command)?;
+            inbound_endpoint_semantic(
+                &mut encoder,
+                command,
+                network.address_family,
+                network.local_address,
+                network.local_port,
+            )
+        }
+        EventPayload::NetworkAccept(network) => {
+            let command = required("process_command", &event.process.command)?;
+            inbound_endpoint_semantic(
+                &mut encoder,
+                command,
+                network.address_family,
+                network.local_address,
+                network.local_port,
+            )
+        }
         EventPayload::NetworkDnsQuery(query) => {
             let command = required("process_command", &event.process.command)?;
             encoder.field(command.as_bytes());
@@ -333,6 +357,34 @@ pub fn fingerprint_v1(
     })
 }
 
+fn inbound_endpoint_semantic(
+    encoder: &mut CanonicalEncoder,
+    command: &str,
+    address_family: NetworkAddressFamily,
+    local_address: std::net::IpAddr,
+    local_port: u16,
+) -> serde_json::Value {
+    let family = match address_family {
+        NetworkAddressFamily::Ipv4 => "ipv4",
+        NetworkAddressFamily::Ipv6 => "ipv6",
+    };
+    encoder.field(command.as_bytes());
+    encoder.field(b"tcp");
+    encoder.field(family.as_bytes());
+    match local_address {
+        std::net::IpAddr::V4(address) => encoder.field(&address.octets()),
+        std::net::IpAddr::V6(address) => encoder.field(&address.octets()),
+    }
+    encoder.field(&local_port.to_be_bytes());
+    json!({
+        "process_command": command,
+        "transport": "tcp",
+        "address_family": family,
+        "local_address": local_address,
+        "local_port": local_port
+    })
+}
+
 fn required<'a>(name: &'static str, value: &'a str) -> Result<&'a str, FingerprintError> {
     let normalized =
         value.trim_matches(|character: char| character == '\0' || character.is_whitespace());
@@ -367,9 +419,9 @@ mod tests {
     use chrono::Utc;
     use event_model::{
         DnsAddressAnswer, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
-        DnsTransport, EventPayload, KubernetesAttribution, NetworkAddressFamily, NetworkConnect,
-        NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, ProcessExec, ProcessIdentity,
-        RuntimeEvent, SyscallEvent,
+        DnsTransport, EventPayload, KubernetesAttribution, NetworkAccept, NetworkAddressFamily,
+        NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, NetworkListen,
+        ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
     };
 
     use super::*;
@@ -491,6 +543,53 @@ mod tests {
         event(EventPayload::NetworkConnect(
             NetworkConnect::new(family, address, port, outcome, errno).unwrap(),
         ))
+    }
+
+    #[test]
+    fn inbound_groups_use_local_endpoint_and_exclude_remote_client() {
+        let listen = event(EventPayload::NetworkListen(
+            NetworkListen::new(NetworkAddressFamily::Ipv4, "0.0.0.0".parse().unwrap(), 8080)
+                .unwrap(),
+        ));
+        let first = event(EventPayload::NetworkAccept(
+            NetworkAccept::new(
+                NetworkAddressFamily::Ipv4,
+                "0.0.0.0".parse().unwrap(),
+                8080,
+                "203.0.113.1".parse().unwrap(),
+                50_001,
+            )
+            .unwrap(),
+        ));
+        let second = event(EventPayload::NetworkAccept(
+            NetworkAccept::new(
+                NetworkAddressFamily::Ipv4,
+                "0.0.0.0".parse().unwrap(),
+                8080,
+                "203.0.113.2".parse().unwrap(),
+                50_002,
+            )
+            .unwrap(),
+        ));
+        let listen_fingerprint = fingerprint_v1(&scope(&listen), &listen).unwrap();
+        let first_fingerprint = fingerprint_v1(&scope(&first), &first).unwrap();
+        let second_fingerprint = fingerprint_v1(&scope(&second), &second).unwrap();
+        assert_ne!(listen_fingerprint.digest, first_fingerprint.digest);
+        assert_eq!(first_fingerprint.digest, second_fingerprint.digest);
+        assert!(
+            first_fingerprint
+                .summary
+                .semantic
+                .get("remote_address")
+                .is_none()
+        );
+        assert!(
+            first_fingerprint
+                .summary
+                .semantic
+                .get("remote_port")
+                .is_none()
+        );
     }
 
     #[test]

@@ -89,11 +89,26 @@ pub struct ObservationConfig {
     pub network: NetworkObservationConfig,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct NetworkObservationConfig {
     pub connect: bool,
+    pub listen: bool,
+    pub accept: bool,
+    pub max_accepted_events_per_second: u32,
     pub dns: DnsObservationConfig,
+}
+
+impl Default for NetworkObservationConfig {
+    fn default() -> Self {
+        Self {
+            connect: false,
+            listen: false,
+            accept: false,
+            max_accepted_events_per_second: 1_000,
+            dns: DnsObservationConfig::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -142,6 +157,12 @@ impl ObservationConfig {
         );
         if self.network.connect {
             capabilities.push(protocol::NETWORK_CONNECT_CAPABILITY.into());
+        }
+        if self.network.listen {
+            capabilities.push(protocol::NETWORK_LISTEN_CAPABILITY.into());
+        }
+        if self.network.accept {
+            capabilities.push(protocol::NETWORK_ACCEPT_CAPABILITY.into());
         }
         if self.network.dns.enabled && self.network.dns.udp {
             capabilities.push(protocol::NETWORK_DNS_UDP_CAPABILITY.into());
@@ -216,6 +237,8 @@ impl AgentConfig {
         if !self.observation.process_exec
             && self.observation.syscalls.is_empty()
             && !self.observation.network.connect
+            && !self.observation.network.listen
+            && !self.observation.network.accept
             && !self.observation.network.dns.enabled
         {
             return Err(ConfigError::MissingObservation);
@@ -239,6 +262,13 @@ impl AgentConfig {
             ));
         }
         let dns = &self.observation.network.dns;
+        if self.observation.network.accept
+            && !(1..=100_000).contains(&self.observation.network.max_accepted_events_per_second)
+        {
+            return Err(ConfigError::InvalidSelector(
+                "maxAcceptedEventsPerSecond must be in 1..=100000".into(),
+            ));
+        }
         if dns.enabled
             && (!dns.udp && !dns.tcp
                 || !(512..=4096).contains(&dns.max_captured_bytes)
@@ -390,6 +420,34 @@ observation:
                 .capabilities()
                 .contains(&protocol::NETWORK_CONNECT_CAPABILITY.to_owned())
         );
+    }
+
+    #[test]
+    fn inbound_network_is_independently_opt_in_and_bounded() {
+        let defaulted = AgentConfig::from_yaml(VALID, Architecture::X86_64).unwrap();
+        assert!(!defaulted.observation.network.listen);
+        assert!(!defaulted.observation.network.accept);
+
+        let enabled = VALID.replace(
+            "  syscalls: [ptrace, setns]",
+            "  syscalls: []\n  network:\n    listen: true\n    accept: true\n    maxAcceptedEventsPerSecond: 250",
+        );
+        let config = AgentConfig::from_yaml(&enabled, Architecture::X86_64).unwrap();
+        let capabilities = config.observation.capabilities();
+        assert!(capabilities.contains(&protocol::NETWORK_LISTEN_CAPABILITY.to_owned()));
+        assert!(capabilities.contains(&protocol::NETWORK_ACCEPT_CAPABILITY.to_owned()));
+        assert_eq!(
+            config.observation.network.max_accepted_events_per_second,
+            250
+        );
+
+        let invalid = enabled.replace(
+            "    maxAcceptedEventsPerSecond: 250",
+            "    maxAcceptedEventsPerSecond: 0",
+        );
+        assert!(AgentConfig::from_yaml(&invalid, Architecture::X86_64).is_err());
+        let unknown = enabled.replace("    accept: true", "    accept: true\n    payloads: true");
+        assert!(AgentConfig::from_yaml(&unknown, Architecture::X86_64).is_err());
     }
 
     #[test]

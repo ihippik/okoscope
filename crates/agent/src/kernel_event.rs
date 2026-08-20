@@ -1,11 +1,12 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use agent_ebpf_common::{
-    COMMAND_LEN, DNS_ADDRESS_LEN, DNS_CAPTURE_BYTES, DnsPacketRecord, KernelEvent,
-    NETWORK_ADDRESS_LEN,
+    COMMAND_LEN, DNS_ADDRESS_LEN, DNS_CAPTURE_BYTES, DnsPacketRecord, InboundKernelEvent,
+    KernelEvent, NETWORK_ADDRESS_LEN,
 };
 use event_model::{
-    NetworkAddressFamily, NetworkConnect, NetworkConnectError, NetworkConnectOutcome,
+    EventPayload, InboundNetworkError, NetworkAccept, NetworkAddressFamily, NetworkConnect,
+    NetworkConnectError, NetworkConnectOutcome, NetworkListen,
 };
 use thiserror::Error;
 
@@ -21,8 +22,54 @@ pub enum NetworkDecodeError {
     UnsupportedFamily(u8),
     #[error("unsupported connect outcome {0}")]
     UnsupportedOutcome(u8),
+    #[error("unsupported inbound event kind {0}")]
+    UnsupportedInboundKind(u8),
     #[error(transparent)]
     Invalid(#[from] NetworkConnectError),
+    #[error(transparent)]
+    InvalidInbound(#[from] InboundNetworkError),
+}
+
+pub fn decode_inbound(bytes: &[u8]) -> Result<InboundKernelEvent, DecodeError> {
+    if bytes.len() != InboundKernelEvent::SIZE {
+        return Err(DecodeError::InvalidSize {
+            actual: bytes.len(),
+            expected: InboundKernelEvent::SIZE,
+        });
+    }
+    let u64_at = |offset: usize| {
+        u64::from_ne_bytes(
+            bytes[offset..offset + 8]
+                .try_into()
+                .expect("validated fixed layout"),
+        )
+    };
+    let u16_at = |offset: usize| {
+        u16::from_ne_bytes(
+            bytes[offset..offset + 2]
+                .try_into()
+                .expect("validated fixed layout"),
+        )
+    };
+    let mut local_address = [0; NETWORK_ADDRESS_LEN];
+    local_address.copy_from_slice(&bytes[24..40]);
+    let mut remote_address = [0; NETWORK_ADDRESS_LEN];
+    remote_address.copy_from_slice(&bytes[40..56]);
+    let mut command = [0; COMMAND_LEN];
+    command.copy_from_slice(&bytes[64..80]);
+    Ok(InboundKernelEvent {
+        timestamp_ns: u64_at(0),
+        cgroup_id: u64_at(8),
+        pid_tgid: u64_at(16),
+        local_address,
+        remote_address,
+        local_port: u16_at(56),
+        remote_port: u16_at(58),
+        event_kind: bytes[60],
+        address_family: bytes[61],
+        padding: [bytes[62], bytes[63]],
+        command,
+    })
 }
 
 pub fn decode(bytes: &[u8]) -> Result<KernelEvent, DecodeError> {
@@ -171,6 +218,43 @@ pub fn network_connect(event: &KernelEvent) -> Result<NetworkConnect, NetworkDec
     .map_err(Into::into)
 }
 
+pub fn inbound_payload(event: &InboundKernelEvent) -> Result<EventPayload, NetworkDecodeError> {
+    let (family, local_address, remote_address) = match event.address_family {
+        agent_ebpf_common::ADDRESS_FAMILY_IPV4 => (
+            NetworkAddressFamily::Ipv4,
+            IpAddr::V4(Ipv4Addr::from(
+                <[u8; 4]>::try_from(&event.local_address[..4]).expect("fixed IPv4 slice"),
+            )),
+            IpAddr::V4(Ipv4Addr::from(
+                <[u8; 4]>::try_from(&event.remote_address[..4]).expect("fixed IPv4 slice"),
+            )),
+        ),
+        agent_ebpf_common::ADDRESS_FAMILY_IPV6 => (
+            NetworkAddressFamily::Ipv6,
+            IpAddr::V6(Ipv6Addr::from(event.local_address)),
+            IpAddr::V6(Ipv6Addr::from(event.remote_address)),
+        ),
+        family => return Err(NetworkDecodeError::UnsupportedFamily(family)),
+    };
+    match event.event_kind {
+        agent_ebpf_common::EVENT_KIND_NETWORK_LISTEN => {
+            NetworkListen::new(family, local_address, event.local_port)
+                .map(EventPayload::NetworkListen)
+                .map_err(Into::into)
+        }
+        agent_ebpf_common::EVENT_KIND_NETWORK_ACCEPT => NetworkAccept::new(
+            family,
+            local_address,
+            event.local_port,
+            remote_address,
+            event.remote_port,
+        )
+        .map(EventPayload::NetworkAccept)
+        .map_err(Into::into),
+        kind => Err(NetworkDecodeError::UnsupportedInboundKind(kind)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +267,10 @@ mod tests {
         ));
         assert!(matches!(
             decode_dns_packet(&[0; 4]),
+            Err(DecodeError::InvalidSize { .. })
+        ));
+        assert!(matches!(
+            decode_inbound(&[0; 4]),
             Err(DecodeError::InvalidSize { .. })
         ));
     }
@@ -281,5 +369,37 @@ mod tests {
                 NetworkConnectError::InconsistentOutcome
             ))
         );
+    }
+
+    #[test]
+    fn decodes_listener_and_accepted_connection_records() {
+        let mut bytes = [0_u8; InboundKernelEvent::SIZE];
+        bytes[0..8].copy_from_slice(&17_u64.to_ne_bytes());
+        bytes[8..16].copy_from_slice(&23_u64.to_ne_bytes());
+        bytes[16..24].copy_from_slice(&29_u64.to_ne_bytes());
+        bytes[24..28].copy_from_slice(&[0, 0, 0, 0]);
+        bytes[40..44].copy_from_slice(&[203, 0, 113, 9]);
+        bytes[56..58].copy_from_slice(&8080_u16.to_ne_bytes());
+        bytes[58..60].copy_from_slice(&51_000_u16.to_ne_bytes());
+        bytes[60] = agent_ebpf_common::EVENT_KIND_NETWORK_ACCEPT;
+        bytes[61] = agent_ebpf_common::ADDRESS_FAMILY_IPV4;
+        bytes[64..67].copy_from_slice(b"api");
+        let decoded = decode_inbound(&bytes).unwrap();
+        assert_eq!(decoded.cgroup_id, 23);
+        assert_eq!(&decoded.command[..3], b"api");
+        let EventPayload::NetworkAccept(accepted) = inbound_payload(&decoded).unwrap() else {
+            panic!("expected accepted connection");
+        };
+        assert_eq!(accepted.local_address.to_string(), "0.0.0.0");
+        assert_eq!(accepted.remote_address.to_string(), "203.0.113.9");
+        assert_eq!(accepted.remote_port, 51_000);
+
+        let mut listener = decoded;
+        listener.event_kind = agent_ebpf_common::EVENT_KIND_NETWORK_LISTEN;
+        listener.remote_port = 0;
+        let EventPayload::NetworkListen(listener) = inbound_payload(&listener).unwrap() else {
+            panic!("expected listener");
+        };
+        assert_eq!(listener.local_port, 8080);
     }
 }

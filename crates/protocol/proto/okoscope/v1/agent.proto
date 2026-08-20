@@ -68,6 +68,8 @@ message RuntimeEvent {
     NetworkConnect network_connect = 12;
     NetworkDnsQuery network_dns_query = 13;
     NetworkDnsResponse network_dns_response = 14;
+    NetworkListen network_listen = 15;
+    NetworkAccept network_accept = 16;
   }
 }
 
@@ -109,6 +111,22 @@ message NetworkConnect {
   NetworkConnectOutcome outcome = 4;
   optional uint32 errno = 5;
   DnsContext dns_context = 6;
+}
+
+message NetworkListen {
+  NetworkTransport transport = 1;
+  NetworkAddressFamily address_family = 2;
+  bytes local_address = 3;
+  uint32 local_port = 4;
+}
+
+message NetworkAccept {
+  NetworkTransport transport = 1;
+  NetworkAddressFamily address_family = 2;
+  bytes local_address = 3;
+  uint32 local_port = 4;
+  bytes remote_address = 5;
+  uint32 remote_port = 6;
 }
 
 message NetworkDnsQuery {
@@ -193,6 +211,11 @@ enum NetworkAddressFamily {
   NETWORK_ADDRESS_FAMILY_IPV6 = 2;
 }
 
+enum NetworkTransport {
+  NETWORK_TRANSPORT_UNSPECIFIED = 0;
+  NETWORK_TRANSPORT_TCP = 1;
+}
+
 enum NetworkConnectOutcome {
   NETWORK_CONNECT_OUTCOME_UNSPECIFIED = 0;
   NETWORK_CONNECT_OUTCOME_SUCCEEDED = 1;
@@ -225,6 +248,12 @@ message DropCounters {
   uint64 dns_kernel_unsupported_framing = 22;
   uint64 dns_attribution_failed = 23;
   uint64 dns_oversize = 24;
+  uint64 inbound_decode_failed = 25;
+  uint64 inbound_attribution_failed = 26;
+  uint64 inbound_unsupported_family = 27;
+  uint64 inbound_kernel_lost = 28;
+  uint64 inbound_rate_limited = 29;
+  uint64 inbound_correlation_miss = 30;
 }
 
 message ControlMessage {

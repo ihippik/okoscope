@@ -228,6 +228,34 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     );
 }
 
+#[test]
+fn inbound_contract_fixture_keeps_remote_clients_in_occurrences_only() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../docs/fixtures/runtime-inventory.json"
+    ))
+    .expect("valid runtime inventory fixture");
+    assert_eq!(fixture["summary"]["kinds"].as_array().unwrap().len(), 5);
+    let endpoint = fixture["page"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["inventory_kind"] == "inbound_endpoint")
+        .expect("inbound endpoint fixture");
+    assert_eq!(endpoint["semantic_summary"]["listener_observed"], true);
+    assert_eq!(endpoint["semantic_summary"]["accept_observed"], true);
+    assert!(endpoint["semantic_summary"].get("remote_address").is_none());
+    assert!(
+        fixture["inbound_group"]["semantic_summary"]
+            .get("remote_address")
+            .is_none()
+    );
+    assert_eq!(
+        fixture["inbound_occurrences"]["items"][0]["payload"]["data"]["remote_address"],
+        "203.0.113.9"
+    );
+    assert!(fixture["inbound_occurrences"]["next_cursor"].is_null());
+}
+
 fn assert_inventory_contract(document: &serde_json::Value) {
     let schemas = &document["components"]["schemas"];
     assert_query_parameters(
@@ -274,7 +302,13 @@ fn assert_inventory_contract(document: &serde_json::Value) {
     );
     assert_eq!(
         schemas["InventoryKind"]["enum"],
-        serde_json::json!(["process", "destination", "domain", "syscall"])
+        serde_json::json!([
+            "process",
+            "destination",
+            "domain",
+            "syscall",
+            "inbound_endpoint"
+        ])
     );
     assert_eq!(
         schemas["InventoryReleasePresence"]["enum"],
@@ -285,6 +319,7 @@ fn assert_inventory_contract(document: &serde_json::Value) {
         "InventoryDestinationIdentity",
         "InventoryDomainIdentity",
         "InventorySyscallIdentity",
+        "InventoryInboundEndpointIdentity",
         "InventoryItem",
         "InventoryReleaseEvidence",
         "InventorySighting",
@@ -326,6 +361,23 @@ fn assert_network_contract(document: &serde_json::Value) {
             "network occurrence payload must not expose {forbidden}"
         );
     }
+    for schema in [
+        "InboundNetworkSemanticSummary",
+        "NetworkListenPayload",
+        "NetworkAcceptPayload",
+    ] {
+        assert_eq!(schemas[schema]["additionalProperties"], false);
+    }
+    for forbidden in ["remote_address", "remote_port", "payload", "http", "tls"] {
+        assert!(
+            schemas["InboundNetworkSemanticSummary"]["properties"][forbidden].is_null(),
+            "inbound group summary must not expose {forbidden}"
+        );
+    }
+    assert_eq!(
+        schemas["NetworkAcceptPayload"]["properties"]["data"]["additionalProperties"],
+        false
+    );
 }
 
 fn assert_recovery_contract(document: &serde_json::Value) {

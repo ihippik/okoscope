@@ -10,14 +10,17 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use chrono::{DateTime, Utc};
 use event_model::{
     DnsAddressAnswer, DnsCname, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
-    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAddressFamily,
-    NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, PROTOCOL_VERSION,
-    ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
+    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAccept,
+    NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery,
+    NetworkDnsResponse, NetworkListen, PROTOCOL_VERSION, ProcessExec, ProcessIdentity,
+    RuntimeEvent, SyscallEvent,
 };
 use thiserror::Error;
 use uuid::Uuid;
 
 pub const NETWORK_CONNECT_CAPABILITY: &str = "network.connect/v1";
+pub const NETWORK_LISTEN_CAPABILITY: &str = "network.listen/v1";
+pub const NETWORK_ACCEPT_CAPABILITY: &str = "network.accept/v1";
 pub const NETWORK_DNS_UDP_CAPABILITY: &str = "network.dns.udp/v1";
 pub const NETWORK_DNS_TCP_CAPABILITY: &str = "network.dns.tcp/v1";
 
@@ -85,6 +88,26 @@ impl From<RuntimeEvent> for v1::RuntimeEvent {
                     outcome: outcome.into(),
                     errno: network.errno.map(u32::from),
                     dns_context: network.dns_context.map(encode_dns_context),
+                })
+            }
+            EventPayload::NetworkListen(network) => {
+                let (address_family, local_address) = encode_network_ip(network.local_address);
+                v1::runtime_event::Payload::NetworkListen(v1::NetworkListen {
+                    transport: v1::NetworkTransport::Tcp.into(),
+                    address_family: address_family.into(),
+                    local_address,
+                    local_port: u32::from(network.local_port),
+                })
+            }
+            EventPayload::NetworkAccept(network) => {
+                let (address_family, local_address) = encode_network_ip(network.local_address);
+                v1::runtime_event::Payload::NetworkAccept(v1::NetworkAccept {
+                    transport: v1::NetworkTransport::Tcp.into(),
+                    address_family: address_family.into(),
+                    local_address,
+                    local_port: u32::from(network.local_port),
+                    remote_address: encode_ip(network.remote_address),
+                    remote_port: u32::from(network.remote_port),
                 })
             }
             EventPayload::NetworkDnsQuery(query) => {
@@ -184,6 +207,8 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
                 EventPayload::Syscall(SyscallEvent { name: syscall.name })
             }
             v1::runtime_event::Payload::NetworkConnect(network) => decode_network(&network)?,
+            v1::runtime_event::Payload::NetworkListen(network) => decode_listen(&network)?,
+            v1::runtime_event::Payload::NetworkAccept(network) => decode_accept(&network)?,
             v1::runtime_event::Payload::NetworkDnsQuery(query) => decode_dns_query(&query)?,
             v1::runtime_event::Payload::NetworkDnsResponse(response) => {
                 decode_dns_response(&response)?
@@ -198,6 +223,89 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
             payload,
         })
     }
+}
+
+fn encode_network_ip(address: IpAddr) -> (v1::NetworkAddressFamily, Vec<u8>) {
+    match address {
+        IpAddr::V4(value) => (v1::NetworkAddressFamily::Ipv4, value.octets().to_vec()),
+        IpAddr::V6(value) => (v1::NetworkAddressFamily::Ipv6, value.octets().to_vec()),
+    }
+}
+
+fn decode_network_ip(
+    family: i32,
+    address: &[u8],
+    field: &'static str,
+) -> Result<(NetworkAddressFamily, IpAddr), ProtocolError> {
+    match v1::NetworkAddressFamily::try_from(family)
+        .map_err(|_| ProtocolError::InvalidNetwork("address_family"))?
+    {
+        v1::NetworkAddressFamily::Ipv4 => Ok((
+            NetworkAddressFamily::Ipv4,
+            IpAddr::V4(Ipv4Addr::from(
+                <[u8; 4]>::try_from(address).map_err(|_| ProtocolError::InvalidNetwork(field))?,
+            )),
+        )),
+        v1::NetworkAddressFamily::Ipv6 => Ok((
+            NetworkAddressFamily::Ipv6,
+            IpAddr::V6(Ipv6Addr::from(
+                <[u8; 16]>::try_from(address).map_err(|_| ProtocolError::InvalidNetwork(field))?,
+            )),
+        )),
+        v1::NetworkAddressFamily::Unspecified => {
+            Err(ProtocolError::InvalidNetwork("address_family"))
+        }
+    }
+}
+
+fn require_tcp(transport: i32) -> Result<(), ProtocolError> {
+    match v1::NetworkTransport::try_from(transport)
+        .map_err(|_| ProtocolError::InvalidNetwork("transport"))?
+    {
+        v1::NetworkTransport::Tcp => Ok(()),
+        v1::NetworkTransport::Unspecified => Err(ProtocolError::InvalidNetwork("transport")),
+    }
+}
+
+fn decode_listen(network: &v1::NetworkListen) -> Result<EventPayload, ProtocolError> {
+    require_tcp(network.transport)?;
+    let (family, address) = decode_network_ip(
+        network.address_family,
+        &network.local_address,
+        "local_address",
+    )?;
+    let port = u16::try_from(network.local_port)
+        .map_err(|_| ProtocolError::InvalidNetwork("local_port"))?;
+    NetworkListen::new(family, address, port)
+        .map(EventPayload::NetworkListen)
+        .map_err(|_| ProtocolError::InvalidNetwork("network_listen"))
+}
+
+fn decode_accept(network: &v1::NetworkAccept) -> Result<EventPayload, ProtocolError> {
+    require_tcp(network.transport)?;
+    let (family, local_address) = decode_network_ip(
+        network.address_family,
+        &network.local_address,
+        "local_address",
+    )?;
+    let (_, remote_address) = decode_network_ip(
+        network.address_family,
+        &network.remote_address,
+        "remote_address",
+    )?;
+    let local_port = u16::try_from(network.local_port)
+        .map_err(|_| ProtocolError::InvalidNetwork("local_port"))?;
+    let remote_port = u16::try_from(network.remote_port)
+        .map_err(|_| ProtocolError::InvalidNetwork("remote_port"))?;
+    NetworkAccept::new(
+        family,
+        local_address,
+        local_port,
+        remote_address,
+        remote_port,
+    )
+    .map(EventPayload::NetworkAccept)
+    .map_err(|_| ProtocolError::InvalidNetwork("network_accept"))
 }
 
 fn decode_network(network: &v1::NetworkConnect) -> Result<EventPayload, ProtocolError> {
@@ -635,6 +743,83 @@ mod tests {
                 Err(ProtocolError::InvalidNetwork(_))
             ));
         }
+    }
+
+    #[test]
+    fn inbound_events_round_trip() {
+        let mut listen = event();
+        listen.payload = EventPayload::NetworkListen(
+            NetworkListen::new(NetworkAddressFamily::Ipv4, "0.0.0.0".parse().unwrap(), 8080)
+                .unwrap(),
+        );
+        assert_eq!(
+            RuntimeEvent::try_from(v1::RuntimeEvent::from(listen.clone())).unwrap(),
+            listen
+        );
+
+        let mut accepted = event();
+        accepted.payload = EventPayload::NetworkAccept(
+            NetworkAccept::new(
+                NetworkAddressFamily::Ipv6,
+                "::".parse().unwrap(),
+                8443,
+                "2001:db8::2".parse().unwrap(),
+                52_000,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            RuntimeEvent::try_from(v1::RuntimeEvent::from(accepted.clone())).unwrap(),
+            accepted
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_inbound_events() {
+        let invalid_listeners = [
+            v1::NetworkListen {
+                transport: v1::NetworkTransport::Unspecified.into(),
+                address_family: v1::NetworkAddressFamily::Ipv4.into(),
+                local_address: vec![0; 4],
+                local_port: 8080,
+            },
+            v1::NetworkListen {
+                transport: v1::NetworkTransport::Tcp.into(),
+                address_family: v1::NetworkAddressFamily::Ipv6.into(),
+                local_address: vec![0; 4],
+                local_port: 8080,
+            },
+            v1::NetworkListen {
+                transport: v1::NetworkTransport::Tcp.into(),
+                address_family: v1::NetworkAddressFamily::Ipv4.into(),
+                local_address: vec![0; 4],
+                local_port: 0,
+            },
+        ];
+        for value in invalid_listeners {
+            let mut wire = v1::RuntimeEvent::from(event());
+            wire.payload = Some(v1::runtime_event::Payload::NetworkListen(value));
+            assert!(matches!(
+                RuntimeEvent::try_from(wire),
+                Err(ProtocolError::InvalidNetwork(_))
+            ));
+        }
+
+        let mut wire = v1::RuntimeEvent::from(event());
+        wire.payload = Some(v1::runtime_event::Payload::NetworkAccept(
+            v1::NetworkAccept {
+                transport: v1::NetworkTransport::Tcp.into(),
+                address_family: v1::NetworkAddressFamily::Ipv4.into(),
+                local_address: vec![0; 4],
+                local_port: 8080,
+                remote_address: vec![0; 16],
+                remote_port: 50_000,
+            },
+        ));
+        assert!(matches!(
+            RuntimeEvent::try_from(wire),
+            Err(ProtocolError::InvalidNetwork(_))
+        ));
     }
 
     #[test]

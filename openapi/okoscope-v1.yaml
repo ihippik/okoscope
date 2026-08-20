@@ -785,6 +785,7 @@ components:
         - { $ref: '#/components/schemas/ProcessExecSemanticSummary' }
         - { $ref: '#/components/schemas/SyscallSemanticSummary' }
         - { $ref: '#/components/schemas/NetworkConnectSemanticSummary' }
+        - { $ref: '#/components/schemas/InboundNetworkSemanticSummary' }
         - { $ref: '#/components/schemas/NetworkDnsQuerySemanticSummary' }
         - { $ref: '#/components/schemas/NetworkDnsResponseSemanticSummary' }
     ProcessExecSemanticSummary:
@@ -810,6 +811,16 @@ components:
         destination_address: { type: string, format: ip, example: 203.0.113.7 }
         destination_port: { type: integer, minimum: 1, maximum: 65535, example: 443 }
         dns_context: { $ref: '#/components/schemas/DnsContext' }
+    InboundNetworkSemanticSummary:
+      type: object
+      additionalProperties: false
+      required: [process_command, transport, address_family, local_address, local_port]
+      properties:
+        process_command: { type: string, minLength: 1, example: payments }
+        transport: { type: string, const: tcp }
+        address_family: { type: string, enum: [ipv4, ipv6] }
+        local_address: { type: string, format: ip, example: 0.0.0.0 }
+        local_port: { type: integer, minimum: 1, maximum: 65535, example: 8080 }
     NetworkDnsQuerySemanticSummary:
       type: object
       additionalProperties: false
@@ -836,6 +847,8 @@ components:
         - { $ref: '#/components/schemas/ProcessExecPayload' }
         - { $ref: '#/components/schemas/SyscallPayload' }
         - { $ref: '#/components/schemas/NetworkConnectPayload' }
+        - { $ref: '#/components/schemas/NetworkListenPayload' }
+        - { $ref: '#/components/schemas/NetworkAcceptPayload' }
         - { $ref: '#/components/schemas/NetworkDnsQueryPayload' }
         - { $ref: '#/components/schemas/NetworkDnsResponsePayload' }
     ProcessExecPayload:
@@ -880,6 +893,43 @@ components:
             outcome: { type: string, enum: [succeeded, in_progress, failed] }
             errno: { type: integer, minimum: 1, maximum: 4095, example: 111 }
             dns_context: { $ref: '#/components/schemas/DnsContext' }
+    NetworkListenPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: NetworkListen }
+        data:
+          type: object
+          additionalProperties: false
+          required: [transport, address_family, local_address, local_port]
+          properties:
+            transport: { type: string, const: tcp }
+            address_family: { type: string, enum: [ipv4, ipv6] }
+            local_address: { type: string, format: ip }
+            local_port: { type: integer, minimum: 1, maximum: 65535 }
+    NetworkAcceptPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: NetworkAccept }
+        data:
+          type: object
+          additionalProperties: false
+          required: [transport, address_family, local_address, local_port, remote_address, remote_port]
+          properties:
+            transport: { type: string, const: tcp }
+            address_family: { type: string, enum: [ipv4, ipv6] }
+            local_address: { type: string, format: ip }
+            local_port: { type: integer, minimum: 1, maximum: 65535 }
+            remote_address:
+              {
+                type: string,
+                format: ip,
+                description: Sensitive client evidence exposed only in authorized bounded occurrence detail.,
+              }
+            remote_port: { type: integer, minimum: 1, maximum: 65535 }
     NetworkDnsQueryPayload:
       type: object
       additionalProperties: false
@@ -1458,7 +1508,7 @@ components:
                 maxItems: 200,
                 items: { $ref: '#/components/schemas/RecoveryOperationDelivery' },
               }
-    InventoryKind: { type: string, enum: [process, destination, domain, syscall] }
+    InventoryKind: { type: string, enum: [process, destination, domain, syscall, inbound_endpoint] }
     InventoryReleasePresence:
       {
         type: string,
@@ -1471,6 +1521,7 @@ components:
         - { $ref: '#/components/schemas/InventoryDestinationIdentity' }
         - { $ref: '#/components/schemas/InventoryDomainIdentity' }
         - { $ref: '#/components/schemas/InventorySyscallIdentity' }
+        - { $ref: '#/components/schemas/InventoryInboundEndpointIdentity' }
     InventoryProcessIdentity:
       type: object
       additionalProperties: false
@@ -1500,6 +1551,18 @@ components:
       properties:
         process_command: { type: string, minLength: 1, example: payments }
         syscall: { type: string, minLength: 1, example: epoll_wait }
+    InventoryInboundEndpointIdentity:
+      type: object
+      additionalProperties: false
+      required:
+        [transport, address_family, local_address, local_port, listener_observed, accept_observed]
+      properties:
+        transport: { type: string, const: tcp }
+        address_family: { type: string, enum: [ipv4, ipv6] }
+        local_address: { type: string, format: ip, example: 0.0.0.0 }
+        local_port: { type: integer, minimum: 1, maximum: 65535, example: 8080 }
+        listener_observed: { type: boolean }
+        accept_observed: { type: boolean }
     InventoryItem:
       type: object
       additionalProperties: false
@@ -1565,7 +1628,7 @@ components:
         first_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
         last_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
         kinds:
-          { type: array, maxItems: 4, items: { $ref: '#/components/schemas/InventoryKindCount' } }
+          { type: array, maxItems: 5, items: { $ref: '#/components/schemas/InventoryKindCount' } }
     InventoryDistributionEntry:
       type: object
       additionalProperties: false

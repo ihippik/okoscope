@@ -37,6 +37,7 @@ pub enum InventoryKind {
     Destination,
     Domain,
     Syscall,
+    InboundEndpoint,
 }
 
 impl InventoryKind {
@@ -46,6 +47,7 @@ impl InventoryKind {
             Self::Destination => "destination",
             Self::Domain => "domain",
             Self::Syscall => "syscall",
+            Self::InboundEndpoint => "inbound_endpoint",
         }
     }
 }
@@ -167,13 +169,30 @@ pub async fn project_event(
     }
 
     if !item_created {
-        sqlx::query(
-            "UPDATE runtime_inventory_items SET first_seen_at=LEAST(first_seen_at,$2),last_seen_at=GREATEST(last_seen_at,$2),occurrence_count=occurrence_count+1,updated_at=now() WHERE id=$1",
-        )
-        .bind(item_id)
-        .bind(event.observed_at)
-        .execute(&mut **tx)
-        .await?;
+        let inbound_evidence = match &event.payload {
+            EventPayload::NetworkListen(_) => Some((true, false)),
+            EventPayload::NetworkAccept(_) => Some((false, true)),
+            _ => None,
+        };
+        if let Some((listener_observed, accept_observed)) = inbound_evidence {
+            sqlx::query(
+                "UPDATE runtime_inventory_items SET first_seen_at=LEAST(first_seen_at,$2),last_seen_at=GREATEST(last_seen_at,$2),occurrence_count=occurrence_count+1,semantic_summary=jsonb_set(jsonb_set(semantic_summary,'{listener_observed}',to_jsonb(COALESCE((semantic_summary->>'listener_observed')::boolean,false) OR $3)),'{accept_observed}',to_jsonb(COALESCE((semantic_summary->>'accept_observed')::boolean,false) OR $4)),updated_at=now() WHERE id=$1",
+            )
+            .bind(item_id)
+            .bind(event.observed_at)
+            .bind(listener_observed)
+            .bind(accept_observed)
+            .execute(&mut **tx)
+            .await?;
+        } else {
+            sqlx::query(
+                "UPDATE runtime_inventory_items SET first_seen_at=LEAST(first_seen_at,$2),last_seen_at=GREATEST(last_seen_at,$2),occurrence_count=occurrence_count+1,updated_at=now() WHERE id=$1",
+            )
+            .bind(item_id)
+            .bind(event.observed_at)
+            .execute(&mut **tx)
+            .await?;
+        }
     }
 
     sqlx::query(
@@ -245,6 +264,10 @@ pub fn fingerprint(
     fingerprint_with_version(scope, event, CURRENT_INVENTORY_IDENTITY_VERSION)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the typed event dispatch is intentionally exhaustive"
+)]
 fn fingerprint_with_version(
     scope: TrustedInventoryScope,
     event: &RuntimeEvent,
@@ -299,6 +322,20 @@ fn fingerprint_with_version(
                 }),
             )
         }
+        EventPayload::NetworkListen(network) => inbound_endpoint_fingerprint(
+            &mut encoder,
+            network.address_family,
+            network.local_address,
+            network.local_port,
+            true,
+        ),
+        EventPayload::NetworkAccept(network) => inbound_endpoint_fingerprint(
+            &mut encoder,
+            network.address_family,
+            network.local_address,
+            network.local_port,
+            false,
+        ),
         EventPayload::NetworkDnsQuery(query) => {
             let command = required("process_command", &event.process.command)?;
             let query_type = dns_query_type(query.query_type);
@@ -339,6 +376,38 @@ fn fingerprint_with_version(
         digest: encoder.finish(),
         semantic_summary,
     })
+}
+
+fn inbound_endpoint_fingerprint(
+    encoder: &mut CanonicalEncoder,
+    address_family: NetworkAddressFamily,
+    local_address: std::net::IpAddr,
+    local_port: u16,
+    listener_observed: bool,
+) -> (InventoryKind, serde_json::Value) {
+    let family = match address_family {
+        NetworkAddressFamily::Ipv4 => "ipv4",
+        NetworkAddressFamily::Ipv6 => "ipv6",
+    };
+    encoder.field(InventoryKind::InboundEndpoint.as_str().as_bytes());
+    encoder.field(b"tcp");
+    encoder.field(family.as_bytes());
+    match local_address {
+        std::net::IpAddr::V4(address) => encoder.field(&address.octets()),
+        std::net::IpAddr::V6(address) => encoder.field(&address.octets()),
+    }
+    encoder.field(&local_port.to_be_bytes());
+    (
+        InventoryKind::InboundEndpoint,
+        json!({
+            "transport": "tcp",
+            "address_family": family,
+            "local_address": local_address,
+            "local_port": local_port,
+            "listener_observed": listener_observed,
+            "accept_observed": !listener_observed
+        }),
+    )
 }
 
 const fn dns_query_type(query_type: event_model::DnsQueryType) -> &'static str {
@@ -382,9 +451,9 @@ mod tests {
     use chrono::Utc;
     use event_model::{
         DnsAddressAnswer, DnsDirection, DnsName, DnsQueryType, DnsResponseCode, DnsTransport,
-        EventPayload, KubernetesAttribution, NetworkAddressFamily, NetworkConnect,
-        NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, ProcessExec, ProcessIdentity,
-        RuntimeEvent, SyscallEvent,
+        EventPayload, KubernetesAttribution, NetworkAccept, NetworkAddressFamily, NetworkConnect,
+        NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, NetworkListen, ProcessExec,
+        ProcessIdentity, RuntimeEvent, SyscallEvent,
     };
 
     use super::*;
@@ -466,6 +535,44 @@ mod tests {
         assert_eq!(
             fingerprint(scope(&first), &first).unwrap().digest,
             fingerprint(scope(&rolled), &rolled).unwrap().digest
+        );
+    }
+
+    #[test]
+    fn inbound_inventory_identity_excludes_process_scope_and_remote_clients() {
+        let listener = event(EventPayload::NetworkListen(
+            NetworkListen::new(NetworkAddressFamily::Ipv4, "0.0.0.0".parse().unwrap(), 8080)
+                .unwrap(),
+        ));
+        let mut accepted = event(EventPayload::NetworkAccept(
+            NetworkAccept::new(
+                NetworkAddressFamily::Ipv4,
+                "0.0.0.0".parse().unwrap(),
+                8080,
+                "203.0.113.8".parse().unwrap(),
+                50_000,
+            )
+            .unwrap(),
+        ));
+        accepted.process.command = "another-worker".into();
+        accepted.attribution.namespace = "canary".into();
+        let listener_fingerprint = fingerprint(scope(&listener), &listener).unwrap();
+        let accepted_fingerprint = fingerprint(scope(&accepted), &accepted).unwrap();
+        assert_eq!(listener_fingerprint.kind, InventoryKind::InboundEndpoint);
+        assert_eq!(listener_fingerprint.digest, accepted_fingerprint.digest);
+        assert_eq!(
+            listener_fingerprint.semantic_summary["listener_observed"],
+            true
+        );
+        assert_eq!(
+            accepted_fingerprint.semantic_summary["accept_observed"],
+            true
+        );
+        assert!(
+            accepted_fingerprint
+                .semantic_summary
+                .get("remote_address")
+                .is_none()
         );
     }
 
