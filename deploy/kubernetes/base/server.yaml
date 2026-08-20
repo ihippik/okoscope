@@ -51,6 +51,9 @@ spec:
             - name: OKOSCOPE_WEBHOOK_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef: {name: okoscope-secrets, key: webhook-encryption-key}
+            - name: OKOSCOPE_IDENTITY_TOKEN_KEY
+              valueFrom:
+                secretKeyRef: {name: okoscope-secrets, key: identity-token-key}
           ports:
             - {name: grpc, containerPort: 4317}
             - {name: health, containerPort: 8080}

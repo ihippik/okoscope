@@ -19,6 +19,10 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "get",
     ),
     (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/distribution",
+        "get",
+    ),
+    (
         "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/facets/{facet}",
         "get",
     ),
@@ -62,6 +66,10 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
     ),
     (
         "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff/summary",
         "get",
     ),
     ("/api/v1/projects/{project_id}/webhook-destinations", "get"),
@@ -221,6 +229,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
 }
 
 fn assert_inventory_contract(document: &serde_json::Value) {
+    let schemas = &document["components"]["schemas"];
     assert_query_parameters(
         document,
         "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory",
@@ -236,11 +245,33 @@ fn assert_inventory_contract(document: &serde_json::Value) {
             "observed_from",
             "observed_to",
             "search",
+            "identity_token",
             "cursor",
             "limit",
         ],
     );
-    let schemas = &document["components"]["schemas"];
+    assert_query_parameters(
+        document,
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/distribution",
+        "get",
+        &[
+            "kind",
+            "release_id",
+            "cluster_id",
+            "namespace",
+            "workload_kind",
+            "workload_name",
+            "container_name",
+            "observed_from",
+            "observed_to",
+            "search",
+            "limit",
+        ],
+    );
+    assert_eq!(
+        schemas["InventoryDistribution"]["properties"]["entries"]["maxItems"],
+        10
+    );
     assert_eq!(
         schemas["InventoryKind"]["enum"],
         serde_json::json!(["process", "destination", "domain", "syscall"])

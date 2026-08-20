@@ -12,968 +12,1595 @@ paths:
     get:
       operationId: getBuildInfo
       security: []
-      responses: {"200": {$ref: '#/components/responses/BuildInfoResponse'}}
+      responses: { '200': { $ref: '#/components/responses/BuildInfoResponse' } }
   /api/v1/organization:
     get:
       operationId: getCurrentOrganization
-      responses: {"200": {$ref: '#/components/responses/Organization'}, "401": {$ref: '#/components/responses/Error'}}
+      responses:
+        {
+          '200': { $ref: '#/components/responses/Organization' },
+          '401': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects:
     get:
       operationId: listProjects
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/ProjectPage'}, "400": {$ref: '#/components/responses/Error'}}
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        {
+          '200': { $ref: '#/components/responses/ProjectPage' },
+          '400': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
     get:
       operationId: getProject
-      responses: {"200": {$ref: '#/components/responses/Project'}, "404": {$ref: '#/components/responses/Error'}}
+      responses:
+        {
+          '200': { $ref: '#/components/responses/Project' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
     get:
       operationId: listApplications
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/ApplicationPage'}, "404": {$ref: '#/components/responses/Error'}}
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        {
+          '200': { $ref: '#/components/responses/ApplicationPage' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
     get:
       operationId: getApplication
-      responses: {"200": {$ref: '#/components/responses/Application'}, "404": {$ref: '#/components/responses/Error'}}
+      responses:
+        {
+          '200': { $ref: '#/components/responses/Application' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
     get:
       operationId: listApplicationRuntimeInventory
       parameters:
-        - {name: kind, in: query, schema: {$ref: '#/components/schemas/InventoryKind'}}
-        - {name: release_id, in: query, schema: {type: string, format: uuid}}
-        - {name: cluster_id, in: query, schema: {type: string, format: uuid}}
-        - {name: namespace, in: query, schema: {type: string}}
-        - {name: workload_kind, in: query, schema: {type: string}}
-        - {name: workload_name, in: query, schema: {type: string}}
-        - {name: container_name, in: query, schema: {type: string}}
-        - {name: observed_from, in: query, schema: {type: string, format: date-time}}
-        - {name: observed_to, in: query, schema: {type: string, format: date-time}}
-        - {name: search, in: query, schema: {type: string, minLength: 1, maxLength: 200}, description: Case-insensitive search over allowlisted safe semantic identity fields only.}
-        - {$ref: '#/components/parameters/Cursor'}
-        - {$ref: '#/components/parameters/Limit'}
-      responses: {"200": {$ref: '#/components/responses/InventoryItemPage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+        - { name: kind, in: query, schema: { $ref: '#/components/schemas/InventoryKind' } }
+        - { name: release_id, in: query, schema: { type: string, format: uuid } }
+        - { name: cluster_id, in: query, schema: { type: string, format: uuid } }
+        - { name: namespace, in: query, schema: { type: string } }
+        - { name: workload_kind, in: query, schema: { type: string } }
+        - { name: workload_name, in: query, schema: { type: string } }
+        - { name: container_name, in: query, schema: { type: string } }
+        - { name: observed_from, in: query, schema: { type: string, format: date-time } }
+        - { name: observed_to, in: query, schema: { type: string, format: date-time } }
+        - {
+            name: search,
+            in: query,
+            schema: { type: string, minLength: 1, maxLength: 200 },
+            description: Case-insensitive search over allowlisted safe semantic identity fields only.,
+          }
+        - {
+            name: identity_token,
+            in: query,
+            schema: { type: string, minLength: 1, maxLength: 1000 },
+            description: Opaque server-issued token selecting one typed inventory identity.,
+          }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/InventoryItemPage' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/summary:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
     get:
       operationId: getApplicationRuntimeInventorySummary
       parameters:
-        - {name: release_id, in: query, schema: {type: string, format: uuid}}
-        - {name: cluster_id, in: query, schema: {type: string, format: uuid}}
-        - {name: namespace, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
-        - {name: workload_kind, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
-        - {name: workload_name, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
-        - {name: container_name, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
-        - {name: observed_from, in: query, schema: {type: string, format: date-time}}
-        - {name: observed_to, in: query, schema: {type: string, format: date-time}}
-        - {name: search, in: query, schema: {type: string, minLength: 1, maxLength: 200}}
-      responses: {"200": {$ref: '#/components/responses/InventorySummary'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+        - { name: release_id, in: query, schema: { type: string, format: uuid } }
+        - { name: cluster_id, in: query, schema: { type: string, format: uuid } }
+        - { name: namespace, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
+        - { name: workload_kind, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
+        - { name: workload_name, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
+        - {
+            name: container_name,
+            in: query,
+            schema: { type: string, minLength: 1, maxLength: 253 },
+          }
+        - { name: observed_from, in: query, schema: { type: string, format: date-time } }
+        - { name: observed_to, in: query, schema: { type: string, format: date-time } }
+        - { name: search, in: query, schema: { type: string, minLength: 1, maxLength: 200 } }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/InventorySummary' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
+  /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/distribution:
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
+    get:
+      operationId: getApplicationRuntimeInventoryDistribution
+      description: Returns a complete-scope bounded distribution ordered by occurrence_count descending and identity_token ascending. Top entries plus other account for the full totals.
+      parameters:
+        - {
+            name: kind,
+            in: query,
+            required: true,
+            schema: { $ref: '#/components/schemas/InventoryKind' },
+          }
+        - { name: release_id, in: query, schema: { type: string, format: uuid } }
+        - { name: cluster_id, in: query, schema: { type: string, format: uuid } }
+        - { name: namespace, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
+        - { name: workload_kind, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
+        - { name: workload_name, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
+        - {
+            name: container_name,
+            in: query,
+            schema: { type: string, minLength: 1, maxLength: 253 },
+          }
+        - { name: observed_from, in: query, schema: { type: string, format: date-time } }
+        - { name: observed_to, in: query, schema: { type: string, format: date-time } }
+        - { name: search, in: query, schema: { type: string, minLength: 1, maxLength: 200 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 10, default: 5 } }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/InventoryDistribution' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/facets/{facet}:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {name: facet, in: path, required: true, schema: {$ref: '#/components/schemas/InventoryFacet'}}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        {
+          name: facet,
+          in: path,
+          required: true,
+          schema: { $ref: '#/components/schemas/InventoryFacet' },
+        },
+      ]
     get:
       operationId: listApplicationRuntimeInventoryFacetOptions
       description: Returns bounded dependent options. Every active filter except the requested facet's own value is applied. Cursors are opaque and valid only for the exact Application, facet, and normalized filter scope.
       parameters:
-        - {name: kind, in: query, schema: {$ref: '#/components/schemas/InventoryKind'}}
-        - {name: release_id, in: query, schema: {type: string, format: uuid}}
-        - {name: cluster_id, in: query, schema: {type: string, format: uuid}}
-        - {name: namespace, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
-        - {name: workload_kind, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
-        - {name: workload_name, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
-        - {name: container_name, in: query, schema: {type: string, minLength: 1, maxLength: 253}}
-        - {name: observed_from, in: query, schema: {type: string, format: date-time}}
-        - {name: observed_to, in: query, schema: {type: string, format: date-time}}
-        - {name: search, in: query, schema: {type: string, minLength: 1, maxLength: 200}}
-        - {name: facet_search, in: query, schema: {type: string, minLength: 1, maxLength: 200}}
-        - {$ref: '#/components/parameters/OpaqueCursor'}
-        - {$ref: '#/components/parameters/Limit'}
-      responses: {"200": {$ref: '#/components/responses/InventoryFacetPage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}, "500": {$ref: '#/components/responses/Error'}}
+        - { name: kind, in: query, schema: { $ref: '#/components/schemas/InventoryKind' } }
+        - { name: release_id, in: query, schema: { type: string, format: uuid } }
+        - { name: cluster_id, in: query, schema: { type: string, format: uuid } }
+        - { name: namespace, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
+        - { name: workload_kind, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
+        - { name: workload_name, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
+        - {
+            name: container_name,
+            in: query,
+            schema: { type: string, minLength: 1, maxLength: 253 },
+          }
+        - { name: observed_from, in: query, schema: { type: string, format: date-time } }
+        - { name: observed_to, in: query, schema: { type: string, format: date-time } }
+        - { name: search, in: query, schema: { type: string, minLength: 1, maxLength: 200 } }
+        - { name: facet_search, in: query, schema: { type: string, minLength: 1, maxLength: 200 } }
+        - { $ref: '#/components/parameters/OpaqueCursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/InventoryFacetPage' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+          '500': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/InventoryItemId' },
+      ]
     get:
       operationId: getApplicationRuntimeInventoryItem
-      responses: {"200": {$ref: '#/components/responses/InventoryItemDetail'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+      responses:
+        {
+          '200': { $ref: '#/components/responses/InventoryItemDetail' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/releases:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/InventoryItemId' },
+      ]
     get:
       operationId: listApplicationRuntimeInventoryItemReleases
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/InventoryReleasePresencePage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        {
+          '200': { $ref: '#/components/responses/InventoryReleasePresencePage' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/sightings:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/InventoryItemId' },
+      ]
     get:
       operationId: listApplicationRuntimeInventoryItemSightings
-      parameters: [{$ref: '#/components/parameters/OpaqueCursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/InventorySightingPage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+      parameters:
+        [
+          { $ref: '#/components/parameters/OpaqueCursor' },
+          { $ref: '#/components/parameters/Limit' },
+        ]
+      responses:
+        {
+          '200': { $ref: '#/components/responses/InventorySightingPage' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/groups:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/InventoryItemId' },
+      ]
     get:
       operationId: listApplicationRuntimeInventoryItemGroups
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/InventoryGroupPage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        {
+          '200': { $ref: '#/components/responses/InventoryGroupPage' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/occurrences:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/InventoryItemId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/InventoryItemId' },
+      ]
     get:
       operationId: listApplicationRuntimeInventoryItemOccurrences
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/InventoryOccurrencePage'}, "400": {$ref: '#/components/responses/Error'}, "401": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        {
+          '200': { $ref: '#/components/responses/InventoryOccurrencePage' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/runtime-groups:
     get:
       operationId: listRuntimeGroups
       parameters:
-        - {name: project_id, in: query, required: true, schema: {type: string, format: uuid}}
-        - {name: application_id, in: query, required: true, schema: {type: string, format: uuid}}
-        - {name: event_kind, in: query, schema: {type: string}}
-        - {name: status, in: query, schema: {type: string, enum: [open, acknowledged, resolved]}}
-        - {name: namespace, in: query, schema: {type: string}}
-        - {name: workload_kind, in: query, schema: {type: string}}
-        - {name: workload_name, in: query, schema: {type: string}}
-        - {name: since, in: query, schema: {type: string, format: date-time}}
-        - {name: first_seen_from, in: query, schema: {type: string, format: date-time}}
-        - {name: first_seen_to, in: query, schema: {type: string, format: date-time}}
-        - {name: last_seen_to, in: query, schema: {type: string, format: date-time}}
-        - {name: release_id, in: query, schema: {type: string, format: uuid}}
-        - {$ref: '#/components/parameters/Cursor'}
-        - {$ref: '#/components/parameters/Limit'}
-      responses: {"200": {$ref: '#/components/responses/RuntimeGroupPage'}}
+        - { name: project_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - {
+            name: application_id,
+            in: query,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+        - { name: event_kind, in: query, schema: { type: string } }
+        - {
+            name: status,
+            in: query,
+            schema: { type: string, enum: [open, acknowledged, resolved] },
+          }
+        - { name: namespace, in: query, schema: { type: string } }
+        - { name: workload_kind, in: query, schema: { type: string } }
+        - { name: workload_name, in: query, schema: { type: string } }
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: first_seen_from, in: query, schema: { type: string, format: date-time } }
+        - { name: first_seen_to, in: query, schema: { type: string, format: date-time } }
+        - { name: last_seen_to, in: query, schema: { type: string, format: date-time } }
+        - { name: release_id, in: query, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses: { '200': { $ref: '#/components/responses/RuntimeGroupPage' } }
   /api/v1/runtime-groups/{group_id}:
-    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    parameters: [{ $ref: '#/components/parameters/GroupId' }]
     get:
       operationId: getRuntimeGroup
-      responses: {"200": {$ref: '#/components/responses/RuntimeGroupDetail'}}
+      responses: { '200': { $ref: '#/components/responses/RuntimeGroupDetail' } }
   /api/v1/runtime-groups/{group_id}/occurrences:
-    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    parameters: [{ $ref: '#/components/parameters/GroupId' }]
     get:
       operationId: listRuntimeGroupOccurrences
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/OccurrencePage'}, "404": {$ref: '#/components/responses/Error'}}
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        {
+          '200': { $ref: '#/components/responses/OccurrencePage' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/runtime-groups/{group_id}/acknowledge:
-    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    parameters: [{ $ref: '#/components/parameters/GroupId' }]
     post:
       operationId: acknowledgeRuntimeGroup
-      responses: {"200": {$ref: '#/components/responses/RuntimeGroup'}, "400": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+      responses:
+        {
+          '200': { $ref: '#/components/responses/RuntimeGroup' },
+          '400': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/runtime-groups/{group_id}/resolve:
-    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    parameters: [{ $ref: '#/components/parameters/GroupId' }]
     post:
       operationId: resolveRuntimeGroup
-      responses: {"200": {$ref: '#/components/responses/RuntimeGroup'}, "400": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+      responses:
+        {
+          '200': { $ref: '#/components/responses/RuntimeGroup' },
+          '400': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/runtime-groups/{group_id}/reopen:
-    parameters: [{$ref: '#/components/parameters/GroupId'}]
+    parameters: [{ $ref: '#/components/parameters/GroupId' }]
     post:
       operationId: reopenRuntimeGroup
-      responses: {"200": {$ref: '#/components/responses/RuntimeGroup'}, "400": {$ref: '#/components/responses/Error'}, "404": {$ref: '#/components/responses/Error'}}
+      responses:
+        {
+          '200': { $ref: '#/components/responses/RuntimeGroup' },
+          '400': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/releases:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
     get:
       operationId: listReleases
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/ReleasePage'}}
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses: { '200': { $ref: '#/components/responses/ReleasePage' } }
     post:
       operationId: createRelease
-      requestBody: {$ref: '#/components/requestBodies/CreateRelease'}
-      responses: {"201": {$ref: '#/components/responses/Release'}}
+      requestBody: { $ref: '#/components/requestBodies/CreateRelease' }
+      responses: { '201': { $ref: '#/components/responses/Release' } }
   /api/v1/projects/{project_id}/applications/{application_id}/releases/{release_id}:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/ReleaseId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/ReleaseId' },
+      ]
     get:
       operationId: getRelease
-      responses: {"200": {$ref: '#/components/responses/Release'}}
+      responses: { '200': { $ref: '#/components/responses/Release' } }
   /api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/ApplicationId'}, {$ref: '#/components/parameters/TargetId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/TargetId' },
+      ]
     get:
       operationId: getRuntimeDiff
       parameters:
-        - {name: baseline_id, in: query, schema: {type: string, format: uuid}}
-        - {$ref: '#/components/parameters/Cursor'}
-        - {$ref: '#/components/parameters/Limit'}
-      responses: {"200": {$ref: '#/components/responses/RuntimeDiff'}}
+        - { name: baseline_id, in: query, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses: { '200': { $ref: '#/components/responses/RuntimeDiff' } }
+  /api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff/summary:
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/TargetId' },
+      ]
+    get:
+      operationId: getRuntimeDiffSummary
+      description: Returns complete comparison classification totals and the largest absolute occurrence-count changes independent of Runtime Diff pagination.
+      parameters:
+        - { name: baseline_id, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 10, default: 5 } }
+      responses:
+        {
+          '200': { $ref: '#/components/responses/RuntimeDiffSummary' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/webhook-destinations:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
     get:
       operationId: listWebhookDestinations
-      responses: {"200": {$ref: '#/components/responses/WebhookDestinationList'}}
+      responses: { '200': { $ref: '#/components/responses/WebhookDestinationList' } }
     post:
       operationId: createWebhookDestination
-      requestBody: {$ref: '#/components/requestBodies/CreateWebhookDestination'}
-      responses: {"201": {$ref: '#/components/responses/DestinationWithSecret'}}
+      requestBody: { $ref: '#/components/requestBodies/CreateWebhookDestination' }
+      responses: { '201': { $ref: '#/components/responses/DestinationWithSecret' } }
   /api/v1/projects/{project_id}/webhook-destinations/{destination_id}:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/DestinationId' },
+      ]
     get:
       operationId: getWebhookDestination
-      responses: {"200": {$ref: '#/components/responses/WebhookDestination'}}
+      responses: { '200': { $ref: '#/components/responses/WebhookDestination' } }
     patch:
       operationId: updateWebhookDestination
-      requestBody: {$ref: '#/components/requestBodies/UpdateWebhookDestination'}
-      responses: {"200": {$ref: '#/components/responses/WebhookDestination'}}
+      requestBody: { $ref: '#/components/requestBodies/UpdateWebhookDestination' }
+      responses: { '200': { $ref: '#/components/responses/WebhookDestination' } }
   /api/v1/projects/{project_id}/webhook-destinations/{destination_id}/disable:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/DestinationId' },
+      ]
     post:
       operationId: disableWebhookDestination
-      responses: {"200": {$ref: '#/components/responses/WebhookDestination'}}
+      responses: { '200': { $ref: '#/components/responses/WebhookDestination' } }
   /api/v1/projects/{project_id}/webhook-destinations/{destination_id}/rotate-secret:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/DestinationId' },
+      ]
     post:
       operationId: rotateWebhookSecret
-      responses: {"200": {$ref: '#/components/responses/DestinationWithSecret'}}
+      responses: { '200': { $ref: '#/components/responses/DestinationWithSecret' } }
   /api/v1/projects/{project_id}/webhook-destinations/{destination_id}/test:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DestinationId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/DestinationId' },
+      ]
     post:
       operationId: testWebhookDestination
-      responses: {"200": {$ref: '#/components/responses/DeliverySummary'}}
+      responses: { '200': { $ref: '#/components/responses/DeliverySummary' } }
   /api/v1/projects/{project_id}/notification-deliveries:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
     get:
       operationId: listNotificationDeliveries
-      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
-      responses: {"200": {$ref: '#/components/responses/DeliveryPage'}}
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses: { '200': { $ref: '#/components/responses/DeliveryPage' } }
   /api/v1/projects/{project_id}/notification-deliveries/bulk-retry:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
     post:
       operationId: bulkRetryNotificationDeliveries
-      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
-      requestBody: {$ref: '#/components/requestBodies/BulkRetryFilter'}
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { $ref: '#/components/requestBodies/BulkRetryFilter' }
       responses:
-        "200": {$ref: '#/components/responses/BulkRecoveryResult'}
-        "400": {$ref: '#/components/responses/Error'}
-        "401": {$ref: '#/components/responses/Error'}
-        "404": {$ref: '#/components/responses/Error'}
-        "409": {$ref: '#/components/responses/Error'}
+        '200': { $ref: '#/components/responses/BulkRecoveryResult' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/notification-health:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
     get:
       operationId: getNotificationHealth
       responses:
-        "200": {$ref: '#/components/responses/NotificationHealth'}
-        "401": {$ref: '#/components/responses/Error'}
-        "404": {$ref: '#/components/responses/Error'}
-        "500": {$ref: '#/components/responses/Error'}
+        '200': { $ref: '#/components/responses/NotificationHealth' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/notification-deliveries/{delivery_id}:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DeliveryId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/DeliveryId' },
+      ]
     get:
       operationId: getNotificationDelivery
-      responses: {"200": {$ref: '#/components/responses/DeliveryDetail'}}
+      responses: { '200': { $ref: '#/components/responses/DeliveryDetail' } }
   /api/v1/projects/{project_id}/notification-deliveries/{delivery_id}/retry:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DeliveryId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/DeliveryId' },
+      ]
     post:
       operationId: retryNotificationDelivery
-      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       responses:
-        "200": {$ref: '#/components/responses/DeliveryRecoveryResult'}
-        "400": {$ref: '#/components/responses/Error'}
-        "401": {$ref: '#/components/responses/Error'}
-        "404": {$ref: '#/components/responses/Error'}
-        "409": {$ref: '#/components/responses/Error'}
+        '200': { $ref: '#/components/responses/DeliveryRecoveryResult' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/notification-deliveries/{delivery_id}/cancel:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/DeliveryId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/DeliveryId' },
+      ]
     post:
       operationId: cancelNotificationDelivery
-      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       responses:
-        "200": {$ref: '#/components/responses/DeliveryRecoveryResult'}
-        "400": {$ref: '#/components/responses/Error'}
-        "401": {$ref: '#/components/responses/Error'}
-        "404": {$ref: '#/components/responses/Error'}
-        "409": {$ref: '#/components/responses/Error'}
+        '200': { $ref: '#/components/responses/DeliveryRecoveryResult' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/notification-recovery-operations:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}]
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
     get:
       operationId: listNotificationRecoveryOperations
       parameters:
-        - {name: command_type, in: query, schema: {$ref: '#/components/schemas/RecoveryCommandType'}}
-        - {$ref: '#/components/parameters/Cursor'}
-        - {$ref: '#/components/parameters/Limit'}
-      responses: {"200": {$ref: '#/components/responses/RecoveryOperationPage'}}
+        - {
+            name: command_type,
+            in: query,
+            schema: { $ref: '#/components/schemas/RecoveryCommandType' },
+          }
+        - { $ref: '#/components/parameters/Cursor' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses: { '200': { $ref: '#/components/responses/RecoveryOperationPage' } }
   /api/v1/projects/{project_id}/notification-recovery-operations/{operation_id}:
-    parameters: [{$ref: '#/components/parameters/ProjectId'}, {$ref: '#/components/parameters/OperationId'}]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/OperationId' },
+      ]
     get:
       operationId: getNotificationRecoveryOperation
-      responses: {"200": {$ref: '#/components/responses/RecoveryOperationDetail'}}
+      responses: { '200': { $ref: '#/components/responses/RecoveryOperationDetail' } }
 components:
   securitySchemes:
-    bearerAuth: {type: http, scheme: bearer}
+    bearerAuth: { type: http, scheme: bearer }
   parameters:
-    Cursor: {name: cursor, in: query, schema: {type: string, format: uuid}, description: Opaque cursor scoped to the authenticated collection.}
-    OpaqueCursor: {name: cursor, in: query, schema: {type: string}, description: Opaque cursor scoped to the authenticated collection; clients must not parse it.}
-    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
-    ProjectId: {name: project_id, in: path, required: true, schema: {type: string, format: uuid}}
-    ApplicationId: {name: application_id, in: path, required: true, schema: {type: string, format: uuid}}
-    InventoryItemId: {name: item_id, in: path, required: true, schema: {type: string, format: uuid}}
-    GroupId: {name: group_id, in: path, required: true, schema: {type: string, format: uuid}}
-    ReleaseId: {name: release_id, in: path, required: true, schema: {type: string, format: uuid}}
-    TargetId: {name: target_id, in: path, required: true, schema: {type: string, format: uuid}}
-    DestinationId: {name: destination_id, in: path, required: true, schema: {type: string, format: uuid}}
-    DeliveryId: {name: delivery_id, in: path, required: true, schema: {type: string, format: uuid}}
-    OperationId: {name: operation_id, in: path, required: true, schema: {type: string, format: uuid}}
-    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 8, maxLength: 200, pattern: '^[!-~]+$'}}
+    Cursor:
+      {
+        name: cursor,
+        in: query,
+        schema: { type: string, format: uuid },
+        description: Opaque cursor scoped to the authenticated collection.,
+      }
+    OpaqueCursor:
+      {
+        name: cursor,
+        in: query,
+        schema: { type: string },
+        description: Opaque cursor scoped to the authenticated collection; clients must not parse it.,
+      }
+    Limit:
+      { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+    ProjectId:
+      { name: project_id, in: path, required: true, schema: { type: string, format: uuid } }
+    ApplicationId:
+      { name: application_id, in: path, required: true, schema: { type: string, format: uuid } }
+    InventoryItemId:
+      { name: item_id, in: path, required: true, schema: { type: string, format: uuid } }
+    GroupId: { name: group_id, in: path, required: true, schema: { type: string, format: uuid } }
+    ReleaseId:
+      { name: release_id, in: path, required: true, schema: { type: string, format: uuid } }
+    TargetId: { name: target_id, in: path, required: true, schema: { type: string, format: uuid } }
+    DestinationId:
+      { name: destination_id, in: path, required: true, schema: { type: string, format: uuid } }
+    DeliveryId:
+      { name: delivery_id, in: path, required: true, schema: { type: string, format: uuid } }
+    OperationId:
+      { name: operation_id, in: path, required: true, schema: { type: string, format: uuid } }
+    IdempotencyKey:
+      {
+        name: Idempotency-Key,
+        in: header,
+        required: true,
+        schema: { type: string, minLength: 8, maxLength: 200, pattern: '^[!-~]+$' },
+      }
   headers:
-    RequestId: {schema: {type: string}, description: Correlation identifier for the request.}
+    RequestId: { schema: { type: string }, description: Correlation identifier for the request. }
   schemas:
     Error:
       type: object
       additionalProperties: false
       required: [error, message, request_id]
       properties:
-        error: {type: string, example: not_found}
-        message: {type: string, example: resource not found}
-        request_id: {type: string, example: 0ec02ed2-8483-4981-893e-bffc535897d7}
+        error: { type: string, example: not_found }
+        message: { type: string, example: resource not found }
+        request_id: { type: string, example: 0ec02ed2-8483-4981-893e-bffc535897d7 }
     BuildInfo:
       type: object
       additionalProperties: false
       required: [service_version, git_commit, api_version, required_database_migration]
       properties:
-        service_version: {type: string, example: 0.1.0}
-        git_commit: {type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a}
-        api_version: {type: string, const: v1}
-        required_database_migration: {type: integer, format: int64, example: 7}
+        service_version: { type: string, example: 0.1.0 }
+        git_commit: { type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a }
+        api_version: { type: string, const: v1 }
+        required_database_migration: { type: integer, format: int64, example: 7 }
     Organization:
       type: object
       additionalProperties: false
       required: [id, slug, name, created_at]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        slug: {type: string}
-        name: {type: string}
-        created_at: {$ref: '#/components/schemas/Timestamp'}
+        id: { $ref: '#/components/schemas/Uuid' }
+        slug: { type: string }
+        name: { type: string }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
     Project:
       type: object
       additionalProperties: false
       required: [id, slug, name, created_at, archived_at, application_count, runtime_group_count]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        slug: {type: string}
-        name: {type: string}
-        created_at: {$ref: '#/components/schemas/Timestamp'}
-        archived_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        application_count: {type: integer, format: int64, minimum: 0}
-        runtime_group_count: {type: integer, format: int64, minimum: 0}
+        id: { $ref: '#/components/schemas/Uuid' }
+        slug: { type: string }
+        name: { type: string }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        archived_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        application_count: { type: integer, format: int64, minimum: 0 }
+        runtime_group_count: { type: integer, format: int64, minimum: 0 }
     ProjectPage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/Project'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items: { type: array, items: { $ref: '#/components/schemas/Project' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     Application:
       type: object
       additionalProperties: false
-      required: [id, project_id, slug, name, created_at, release_count, runtime_group_count, latest_observed_at]
+      required:
+        [
+          id,
+          project_id,
+          slug,
+          name,
+          created_at,
+          release_count,
+          runtime_group_count,
+          latest_observed_at,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        project_id: {$ref: '#/components/schemas/Uuid'}
-        slug: {type: string}
-        name: {type: string}
-        created_at: {$ref: '#/components/schemas/Timestamp'}
-        release_count: {type: integer, format: int64, minimum: 0}
-        runtime_group_count: {type: integer, format: int64, minimum: 0}
-        latest_observed_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        id: { $ref: '#/components/schemas/Uuid' }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        slug: { type: string }
+        name: { type: string }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        release_count: { type: integer, format: int64, minimum: 0 }
+        runtime_group_count: { type: integer, format: int64, minimum: 0 }
+        latest_observed_at: { $ref: '#/components/schemas/NullableTimestamp' }
     ApplicationPage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/Application'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items: { type: array, items: { $ref: '#/components/schemas/Application' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     RuntimeGroup:
       type: object
       additionalProperties: false
-      required: [id, project_id, application_id, cluster_id, namespace, workload_kind, workload_name, fingerprint_version, event_kind, semantic_summary, status, first_seen_at, first_seen_event_id, last_seen_at, occurrence_count, representative_event_id, status_changed_at, status_changed_by]
+      required:
+        [
+          id,
+          project_id,
+          application_id,
+          cluster_id,
+          namespace,
+          workload_kind,
+          workload_name,
+          fingerprint_version,
+          event_kind,
+          semantic_summary,
+          status,
+          first_seen_at,
+          first_seen_event_id,
+          last_seen_at,
+          occurrence_count,
+          representative_event_id,
+          status_changed_at,
+          status_changed_by,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        project_id: {$ref: '#/components/schemas/Uuid'}
-        application_id: {$ref: '#/components/schemas/Uuid'}
-        cluster_id: {$ref: '#/components/schemas/Uuid'}
-        namespace: {type: string}
-        workload_kind: {type: string}
-        workload_name: {type: string}
-        fingerprint_version: {type: integer}
-        event_kind: {type: string}
-        semantic_summary: {$ref: '#/components/schemas/RuntimeEventSemanticSummary'}
-        status: {type: string, enum: [open, acknowledged, resolved]}
-        first_seen_at: {$ref: '#/components/schemas/Timestamp'}
-        first_seen_event_id: {$ref: '#/components/schemas/Uuid'}
-        last_seen_at: {$ref: '#/components/schemas/Timestamp'}
-        occurrence_count: {type: integer, format: int64, minimum: 0}
-        representative_event_id: {$ref: '#/components/schemas/Uuid'}
-        status_changed_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        status_changed_by: {$ref: '#/components/schemas/NullableUuid'}
+        id: { $ref: '#/components/schemas/Uuid' }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        application_id: { $ref: '#/components/schemas/Uuid' }
+        cluster_id: { $ref: '#/components/schemas/Uuid' }
+        namespace: { type: string }
+        workload_kind: { type: string }
+        workload_name: { type: string }
+        fingerprint_version: { type: integer }
+        event_kind: { type: string }
+        semantic_summary: { $ref: '#/components/schemas/RuntimeEventSemanticSummary' }
+        status: { type: string, enum: [open, acknowledged, resolved] }
+        first_seen_at: { $ref: '#/components/schemas/Timestamp' }
+        first_seen_event_id: { $ref: '#/components/schemas/Uuid' }
+        last_seen_at: { $ref: '#/components/schemas/Timestamp' }
+        occurrence_count: { type: integer, format: int64, minimum: 0 }
+        representative_event_id: { $ref: '#/components/schemas/Uuid' }
+        status_changed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        status_changed_by: { $ref: '#/components/schemas/NullableUuid' }
     RuntimeGroupPage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/RuntimeGroup'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items: { type: array, items: { $ref: '#/components/schemas/RuntimeGroup' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     EventOccurrence:
       type: object
       additionalProperties: false
-      required: [id, event_id, observed_at, node_name, namespace, pod_name, container_name, process_command, event_kind, payload, release_id, release_version]
+      required:
+        [
+          id,
+          event_id,
+          observed_at,
+          node_name,
+          namespace,
+          pod_name,
+          container_name,
+          process_command,
+          event_kind,
+          payload,
+          release_id,
+          release_version,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        event_id: {$ref: '#/components/schemas/Uuid'}
-        observed_at: {$ref: '#/components/schemas/Timestamp'}
-        node_name: {type: string}
-        namespace: {type: string}
-        pod_name: {type: string}
-        container_name: {type: string}
-        process_command: {type: string}
-        event_kind: {type: string}
-        payload: {$ref: '#/components/schemas/RuntimeEventPayload'}
-        release_id: {$ref: '#/components/schemas/NullableUuid'}
-        release_version: {type: [string, 'null']}
+        id: { $ref: '#/components/schemas/Uuid' }
+        event_id: { $ref: '#/components/schemas/Uuid' }
+        observed_at: { $ref: '#/components/schemas/Timestamp' }
+        node_name: { type: string }
+        namespace: { type: string }
+        pod_name: { type: string }
+        container_name: { type: string }
+        process_command: { type: string }
+        event_kind: { type: string }
+        payload: { $ref: '#/components/schemas/RuntimeEventPayload' }
+        release_id: { $ref: '#/components/schemas/NullableUuid' }
+        release_version: { type: [string, 'null'] }
     OccurrencePage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/EventOccurrence'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items: { type: array, items: { $ref: '#/components/schemas/EventOccurrence' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     RuntimeEventSemanticSummary:
       oneOf:
-        - {$ref: '#/components/schemas/ProcessExecSemanticSummary'}
-        - {$ref: '#/components/schemas/SyscallSemanticSummary'}
-        - {$ref: '#/components/schemas/NetworkConnectSemanticSummary'}
-        - {$ref: '#/components/schemas/NetworkDnsQuerySemanticSummary'}
-        - {$ref: '#/components/schemas/NetworkDnsResponseSemanticSummary'}
+        - { $ref: '#/components/schemas/ProcessExecSemanticSummary' }
+        - { $ref: '#/components/schemas/SyscallSemanticSummary' }
+        - { $ref: '#/components/schemas/NetworkConnectSemanticSummary' }
+        - { $ref: '#/components/schemas/NetworkDnsQuerySemanticSummary' }
+        - { $ref: '#/components/schemas/NetworkDnsResponseSemanticSummary' }
     ProcessExecSemanticSummary:
       type: object
       additionalProperties: false
       required: [executable]
       properties:
-        executable: {type: string, minLength: 1}
+        executable: { type: string, minLength: 1 }
     SyscallSemanticSummary:
       type: object
       additionalProperties: false
       required: [process_command, syscall]
       properties:
-        process_command: {type: string, minLength: 1}
-        syscall: {type: string, minLength: 1}
+        process_command: { type: string, minLength: 1 }
+        syscall: { type: string, minLength: 1 }
     NetworkConnectSemanticSummary:
       type: object
       additionalProperties: false
       required: [process_command, address_family, destination_address, destination_port]
       properties:
-        process_command: {type: string, minLength: 1, example: curl}
-        address_family: {type: string, enum: [ipv4, ipv6]}
-        destination_address: {type: string, format: ip, example: 203.0.113.7}
-        destination_port: {type: integer, minimum: 1, maximum: 65535, example: 443}
-        dns_context: {$ref: '#/components/schemas/DnsContext'}
+        process_command: { type: string, minLength: 1, example: curl }
+        address_family: { type: string, enum: [ipv4, ipv6] }
+        destination_address: { type: string, format: ip, example: 203.0.113.7 }
+        destination_port: { type: integer, minimum: 1, maximum: 65535, example: 443 }
+        dns_context: { $ref: '#/components/schemas/DnsContext' }
     NetworkDnsQuerySemanticSummary:
       type: object
       additionalProperties: false
       required: [process_command, name, query_type, transport, direction]
       properties:
-        process_command: {type: string, minLength: 1}
-        name: {$ref: '#/components/schemas/DnsName'}
-        query_type: {$ref: '#/components/schemas/DnsQueryType'}
-        transport: {$ref: '#/components/schemas/DnsTransport'}
-        direction: {$ref: '#/components/schemas/DnsDirection'}
+        process_command: { type: string, minLength: 1 }
+        name: { $ref: '#/components/schemas/DnsName' }
+        query_type: { $ref: '#/components/schemas/DnsQueryType' }
+        transport: { $ref: '#/components/schemas/DnsTransport' }
+        direction: { $ref: '#/components/schemas/DnsDirection' }
     NetworkDnsResponseSemanticSummary:
       type: object
       additionalProperties: false
       required: [process_command, name, query_type, response_code, transport, direction]
       properties:
-        process_command: {type: string, minLength: 1}
-        name: {$ref: '#/components/schemas/DnsName'}
-        query_type: {$ref: '#/components/schemas/DnsQueryType'}
-        response_code: {$ref: '#/components/schemas/DnsResponseCode'}
-        transport: {$ref: '#/components/schemas/DnsTransport'}
-        direction: {$ref: '#/components/schemas/DnsDirection'}
+        process_command: { type: string, minLength: 1 }
+        name: { $ref: '#/components/schemas/DnsName' }
+        query_type: { $ref: '#/components/schemas/DnsQueryType' }
+        response_code: { $ref: '#/components/schemas/DnsResponseCode' }
+        transport: { $ref: '#/components/schemas/DnsTransport' }
+        direction: { $ref: '#/components/schemas/DnsDirection' }
     RuntimeEventPayload:
       oneOf:
-        - {$ref: '#/components/schemas/ProcessExecPayload'}
-        - {$ref: '#/components/schemas/SyscallPayload'}
-        - {$ref: '#/components/schemas/NetworkConnectPayload'}
-        - {$ref: '#/components/schemas/NetworkDnsQueryPayload'}
-        - {$ref: '#/components/schemas/NetworkDnsResponsePayload'}
+        - { $ref: '#/components/schemas/ProcessExecPayload' }
+        - { $ref: '#/components/schemas/SyscallPayload' }
+        - { $ref: '#/components/schemas/NetworkConnectPayload' }
+        - { $ref: '#/components/schemas/NetworkDnsQueryPayload' }
+        - { $ref: '#/components/schemas/NetworkDnsResponsePayload' }
     ProcessExecPayload:
       type: object
       additionalProperties: false
       required: [type, data]
       properties:
-        type: {type: string, const: ProcessExec}
+        type: { type: string, const: ProcessExec }
         data:
           type: object
           additionalProperties: false
           required: [executable, parent_command]
           properties:
-            executable: {type: string, minLength: 1}
-            parent_command: {type: [string, 'null']}
+            executable: { type: string, minLength: 1 }
+            parent_command: { type: [string, 'null'] }
     SyscallPayload:
       type: object
       additionalProperties: false
       required: [type, data]
       properties:
-        type: {type: string, const: Syscall}
+        type: { type: string, const: Syscall }
         data:
           type: object
           additionalProperties: false
           required: [name]
           properties:
-            name: {type: string, minLength: 1}
+            name: { type: string, minLength: 1 }
     NetworkConnectPayload:
       type: object
       additionalProperties: false
       required: [type, data]
       properties:
-        type: {type: string, const: NetworkConnect}
+        type: { type: string, const: NetworkConnect }
         data:
           type: object
           additionalProperties: false
           required: [address_family, destination_address, destination_port, outcome]
           properties:
-            address_family: {type: string, enum: [ipv4, ipv6]}
-            destination_address: {type: string, format: ip, example: '2001:db8::7'}
-            destination_port: {type: integer, minimum: 1, maximum: 65535, example: 443}
-            outcome: {type: string, enum: [succeeded, in_progress, failed]}
-            errno: {type: integer, minimum: 1, maximum: 4095, example: 111}
-            dns_context: {$ref: '#/components/schemas/DnsContext'}
+            address_family: { type: string, enum: [ipv4, ipv6] }
+            destination_address: { type: string, format: ip, example: '2001:db8::7' }
+            destination_port: { type: integer, minimum: 1, maximum: 65535, example: 443 }
+            outcome: { type: string, enum: [succeeded, in_progress, failed] }
+            errno: { type: integer, minimum: 1, maximum: 4095, example: 111 }
+            dns_context: { $ref: '#/components/schemas/DnsContext' }
     NetworkDnsQueryPayload:
       type: object
       additionalProperties: false
       required: [type, data]
       properties:
-        type: {type: string, const: NetworkDnsQuery}
+        type: { type: string, const: NetworkDnsQuery }
         data:
           type: object
           additionalProperties: false
           required: [transaction_id, direction, transport, resolver_address, name, query_type]
           properties:
-            transaction_id: {type: integer, minimum: 0, maximum: 65535}
-            direction: {$ref: '#/components/schemas/DnsDirection'}
-            transport: {$ref: '#/components/schemas/DnsTransport'}
-            resolver_address: {type: string, format: ip}
-            name: {$ref: '#/components/schemas/DnsName'}
-            query_type: {$ref: '#/components/schemas/DnsQueryType'}
+            transaction_id: { type: integer, minimum: 0, maximum: 65535 }
+            direction: { $ref: '#/components/schemas/DnsDirection' }
+            transport: { $ref: '#/components/schemas/DnsTransport' }
+            resolver_address: { type: string, format: ip }
+            name: { $ref: '#/components/schemas/DnsName' }
+            query_type: { $ref: '#/components/schemas/DnsQueryType' }
     NetworkDnsResponsePayload:
       type: object
       additionalProperties: false
       required: [type, data]
       properties:
-        type: {type: string, const: NetworkDnsResponse}
+        type: { type: string, const: NetworkDnsResponse }
         data:
           type: object
           additionalProperties: false
-          required: [transaction_id, direction, transport, resolver_address, name, query_type, response_code, truncated, answers, cname_chain, effective_ttl_seconds]
+          required:
+            [
+              transaction_id,
+              direction,
+              transport,
+              resolver_address,
+              name,
+              query_type,
+              response_code,
+              truncated,
+              answers,
+              cname_chain,
+              effective_ttl_seconds,
+            ]
           properties:
-            transaction_id: {type: integer, minimum: 0, maximum: 65535}
-            direction: {$ref: '#/components/schemas/DnsDirection'}
-            transport: {$ref: '#/components/schemas/DnsTransport'}
-            resolver_address: {type: string, format: ip}
-            name: {$ref: '#/components/schemas/DnsName'}
-            query_type: {$ref: '#/components/schemas/DnsQueryType'}
-            response_code: {$ref: '#/components/schemas/DnsResponseCode'}
-            truncated: {type: boolean}
-            answers: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/DnsAddressAnswer'}}
-            cname_chain: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/DnsCname'}}
-            effective_ttl_seconds: {type: [integer, 'null'], minimum: 1, maximum: 86400}
+            transaction_id: { type: integer, minimum: 0, maximum: 65535 }
+            direction: { $ref: '#/components/schemas/DnsDirection' }
+            transport: { $ref: '#/components/schemas/DnsTransport' }
+            resolver_address: { type: string, format: ip }
+            name: { $ref: '#/components/schemas/DnsName' }
+            query_type: { $ref: '#/components/schemas/DnsQueryType' }
+            response_code: { $ref: '#/components/schemas/DnsResponseCode' }
+            truncated: { type: boolean }
+            answers:
+              {
+                type: array,
+                maxItems: 16,
+                items: { $ref: '#/components/schemas/DnsAddressAnswer' },
+              }
+            cname_chain:
+              { type: array, maxItems: 8, items: { $ref: '#/components/schemas/DnsCname' } }
+            effective_ttl_seconds: { type: [integer, 'null'], minimum: 1, maximum: 86400 }
     DnsName:
       type: string
       minLength: 1
       maxLength: 253
       pattern: '^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$'
       example: api.example.com
-    DnsQueryType: {type: string, enum: [A, AAAA]}
-    DnsTransport: {type: string, enum: [udp, tcp]}
-    DnsDirection: {type: string, enum: [egress, ingress]}
-    DnsResponseCode: {type: string, enum: [no_error, form_err, serv_fail, nx_domain, not_imp, refused]}
-    DnsConfidence: {type: string, enum: [observed_recently]}
+    DnsQueryType: { type: string, enum: [A, AAAA] }
+    DnsTransport: { type: string, enum: [udp, tcp] }
+    DnsDirection: { type: string, enum: [egress, ingress] }
+    DnsResponseCode:
+      { type: string, enum: [no_error, form_err, serv_fail, nx_domain, not_imp, refused] }
+    DnsConfidence: { type: string, enum: [observed_recently] }
     DnsAddressAnswer:
       type: object
       additionalProperties: false
       required: [name, address, ttl_seconds]
       properties:
-        name: {$ref: '#/components/schemas/DnsName'}
-        address: {type: string, format: ip}
-        ttl_seconds: {type: integer, minimum: 1, maximum: 86400}
+        name: { $ref: '#/components/schemas/DnsName' }
+        address: { type: string, format: ip }
+        ttl_seconds: { type: integer, minimum: 1, maximum: 86400 }
     DnsCname:
       type: object
       additionalProperties: false
       required: [alias, canonical, ttl_seconds]
       properties:
-        alias: {$ref: '#/components/schemas/DnsName'}
-        canonical: {$ref: '#/components/schemas/DnsName'}
-        ttl_seconds: {type: integer, minimum: 1, maximum: 86400}
+        alias: { $ref: '#/components/schemas/DnsName' }
+        canonical: { $ref: '#/components/schemas/DnsName' }
+        ttl_seconds: { type: integer, minimum: 1, maximum: 86400 }
     DnsContext:
       type: object
       additionalProperties: false
       required: [names, observed_at, expires_at, confidence, ambiguous]
       properties:
-        names: {type: array, minItems: 1, maxItems: 8, uniqueItems: true, items: {$ref: '#/components/schemas/DnsName'}}
-        observed_at: {$ref: '#/components/schemas/Timestamp'}
-        expires_at: {$ref: '#/components/schemas/Timestamp'}
-        confidence: {$ref: '#/components/schemas/DnsConfidence'}
-        ambiguous: {type: boolean}
+        names:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 8,
+            uniqueItems: true,
+            items: { $ref: '#/components/schemas/DnsName' },
+          }
+        observed_at: { $ref: '#/components/schemas/Timestamp' }
+        expires_at: { $ref: '#/components/schemas/Timestamp' }
+        confidence: { $ref: '#/components/schemas/DnsConfidence' }
+        ambiguous: { type: boolean }
     FirstSeenNotificationSummary:
       type: object
       additionalProperties: false
       required: [state, delivery_count, succeeded_count, failed_count]
       properties:
-        state: {type: string, enum: [pending, not_configured, delivering, delivered, terminally_failed, backfill_suppressed]}
-        delivery_count: {type: integer, format: int64, minimum: 0}
-        succeeded_count: {type: integer, format: int64, minimum: 0}
-        failed_count: {type: integer, format: int64, minimum: 0}
+        state:
+          {
+            type: string,
+            enum:
+              [
+                pending,
+                not_configured,
+                delivering,
+                delivered,
+                terminally_failed,
+                backfill_suppressed,
+              ],
+          }
+        delivery_count: { type: integer, format: int64, minimum: 0 }
+        succeeded_count: { type: integer, format: int64, minimum: 0 }
+        failed_count: { type: integer, format: int64, minimum: 0 }
     RuntimeGroupDetail:
       unevaluatedProperties: false
       allOf:
-        - {$ref: '#/components/schemas/RuntimeGroup'}
+        - { $ref: '#/components/schemas/RuntimeGroup' }
         - type: object
           required: [representative_event, notification]
           properties:
-            representative_event: {$ref: '#/components/schemas/EventOccurrence'}
-            notification: {$ref: '#/components/schemas/FirstSeenNotificationSummary'}
+            representative_event: { $ref: '#/components/schemas/EventOccurrence' }
+            notification: { $ref: '#/components/schemas/FirstSeenNotificationSummary' }
     Release:
       type: object
       additionalProperties: false
       required: [id, project_id, application_id, version, description, deployed_at, created_at]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        project_id: {$ref: '#/components/schemas/Uuid'}
-        application_id: {$ref: '#/components/schemas/Uuid'}
-        version: {type: string, minLength: 1, maxLength: 200}
-        description: {type: [string, 'null'], maxLength: 2000}
-        deployed_at: {$ref: '#/components/schemas/Timestamp'}
-        created_at: {$ref: '#/components/schemas/Timestamp'}
+        id: { $ref: '#/components/schemas/Uuid' }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        application_id: { $ref: '#/components/schemas/Uuid' }
+        version: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: [string, 'null'], maxLength: 2000 }
+        deployed_at: { $ref: '#/components/schemas/Timestamp' }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
     ReleasePage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/Release'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items: { type: array, items: { $ref: '#/components/schemas/Release' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     CreateRelease:
       type: object
       additionalProperties: false
       required: [version, deployed_at]
       properties:
-        version: {type: string, minLength: 1, maxLength: 200}
-        description: {type: [string, 'null'], maxLength: 2000}
-        deployed_at: {$ref: '#/components/schemas/Timestamp'}
+        version: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: [string, 'null'], maxLength: 2000 }
+        deployed_at: { $ref: '#/components/schemas/Timestamp' }
     RuntimeDiffEntry:
       type: object
       additionalProperties: false
-      required: [group_id, classification, event_kind, semantic_summary, baseline_occurrence_count, baseline_first_seen_at, baseline_last_seen_at, target_occurrence_count, target_first_seen_at, target_last_seen_at]
+      required:
+        [
+          group_id,
+          classification,
+          event_kind,
+          semantic_summary,
+          baseline_occurrence_count,
+          baseline_first_seen_at,
+          baseline_last_seen_at,
+          target_occurrence_count,
+          target_first_seen_at,
+          target_last_seen_at,
+        ]
       properties:
-        group_id: {$ref: '#/components/schemas/Uuid'}
-        classification: {type: string, enum: [new, disappeared, unchanged]}
-        event_kind: {type: string}
-        semantic_summary: {$ref: '#/components/schemas/RuntimeEventSemanticSummary'}
-        baseline_occurrence_count: {type: [integer, 'null'], format: int64}
-        baseline_first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        baseline_last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        target_occurrence_count: {type: [integer, 'null'], format: int64}
-        target_first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        target_last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        group_id: { $ref: '#/components/schemas/Uuid' }
+        classification: { type: string, enum: [new, disappeared, unchanged] }
+        event_kind: { type: string }
+        semantic_summary: { $ref: '#/components/schemas/RuntimeEventSemanticSummary' }
+        baseline_occurrence_count: { type: [integer, 'null'], format: int64 }
+        baseline_first_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        baseline_last_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        target_occurrence_count: { type: [integer, 'null'], format: int64 }
+        target_first_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        target_last_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
     RuntimeDiff:
       type: object
       additionalProperties: false
       required: [baseline, target, items, next_cursor]
       properties:
-        baseline: {oneOf: [{$ref: '#/components/schemas/Release'}, {type: 'null'}]}
-        target: {$ref: '#/components/schemas/Release'}
-        items: {type: array, items: {$ref: '#/components/schemas/RuntimeDiffEntry'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        baseline: { oneOf: [{ $ref: '#/components/schemas/Release' }, { type: 'null' }] }
+        target: { $ref: '#/components/schemas/Release' }
+        items: { type: array, items: { $ref: '#/components/schemas/RuntimeDiffEntry' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
+    RuntimeDiffClassificationCount:
+      type: object
+      additionalProperties: false
+      required: [classification, item_count]
+      properties:
+        classification: { type: string, enum: [new, disappeared, unchanged] }
+        item_count: { type: integer, format: int64, minimum: 0 }
+    RuntimeDiffChangeEntry:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          group_id,
+          classification,
+          event_kind,
+          semantic_summary,
+          baseline_occurrence_count,
+          target_occurrence_count,
+          occurrence_delta,
+        ]
+      properties:
+        group_id: { $ref: '#/components/schemas/Uuid' }
+        classification: { type: string, enum: [new, disappeared, unchanged] }
+        event_kind: { type: string }
+        semantic_summary: { $ref: '#/components/schemas/RuntimeEventSemanticSummary' }
+        baseline_occurrence_count: { type: integer, format: int64, minimum: 0 }
+        target_occurrence_count: { type: integer, format: int64, minimum: 0 }
+        occurrence_delta: { type: integer, format: int64 }
+    RuntimeDiffSummary:
+      type: object
+      additionalProperties: false
+      required: [baseline, target, total_item_count, classifications, largest_changes]
+      properties:
+        baseline: { oneOf: [{ $ref: '#/components/schemas/Release' }, { type: 'null' }] }
+        target: { $ref: '#/components/schemas/Release' }
+        total_item_count: { type: integer, format: int64, minimum: 0 }
+        classifications:
+          {
+            type: array,
+            maxItems: 3,
+            items: { $ref: '#/components/schemas/RuntimeDiffClassificationCount' },
+          }
+        largest_changes:
+          {
+            type: array,
+            maxItems: 10,
+            items: { $ref: '#/components/schemas/RuntimeDiffChangeEntry' },
+          }
     WebhookDestination:
       type: object
       additionalProperties: false
-      required: [id, project_id, name, url, enabled, deliver_backfill, revision, created_at, updated_at, disabled_at]
+      required:
+        [
+          id,
+          project_id,
+          name,
+          url,
+          enabled,
+          deliver_backfill,
+          revision,
+          created_at,
+          updated_at,
+          disabled_at,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        project_id: {$ref: '#/components/schemas/Uuid'}
-        name: {type: string}
-        url: {type: string, format: uri}
-        enabled: {type: boolean}
-        deliver_backfill: {type: boolean}
-        revision: {type: integer, format: int64}
-        created_at: {$ref: '#/components/schemas/Timestamp'}
-        updated_at: {$ref: '#/components/schemas/Timestamp'}
-        disabled_at: {$ref: '#/components/schemas/NullableTimestamp'}
+        id: { $ref: '#/components/schemas/Uuid' }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string }
+        url: { type: string, format: uri }
+        enabled: { type: boolean }
+        deliver_backfill: { type: boolean }
+        revision: { type: integer, format: int64 }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        disabled_at: { $ref: '#/components/schemas/NullableTimestamp' }
     DestinationWithSecret:
       unevaluatedProperties: false
       allOf:
-        - {$ref: '#/components/schemas/WebhookDestination'}
+        - { $ref: '#/components/schemas/WebhookDestination' }
         - type: object
           required: [secret]
-          properties: {secret: {type: string}}
+          properties: { secret: { type: string } }
     CreateWebhookDestination:
       type: object
       additionalProperties: false
       required: [name, url]
       properties:
-        name: {type: string}
-        url: {type: string, format: uri}
-        deliver_backfill: {type: boolean, description: Defaults to false when omitted.}
+        name: { type: string }
+        url: { type: string, format: uri }
+        deliver_backfill: { type: boolean, description: Defaults to false when omitted. }
     UpdateWebhookDestination:
       type: object
       additionalProperties: false
       required: [revision]
       properties:
-        name: {type: string}
-        url: {type: string, format: uri}
-        deliver_backfill: {type: boolean}
-        enabled: {type: boolean}
-        revision: {type: integer, format: int64}
+        name: { type: string }
+        url: { type: string, format: uri }
+        deliver_backfill: { type: boolean }
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64 }
     DeliverySummary:
       type: object
       additionalProperties: false
-      required: [id, project_id, destination_id, outbox_message_id, origin, source, event_name, semantic_metadata, destination, status, available_at, next_attempt_at, recovery_generation, attempt_count, total_attempt_count, max_attempts, last_error_class, terminal_reason, created_at, updated_at, terminal_at, retry_allowed, cancel_allowed, last_recovery_operation_id]
+      required:
+        [
+          id,
+          project_id,
+          destination_id,
+          outbox_message_id,
+          origin,
+          source,
+          event_name,
+          semantic_metadata,
+          destination,
+          status,
+          available_at,
+          next_attempt_at,
+          recovery_generation,
+          attempt_count,
+          total_attempt_count,
+          max_attempts,
+          last_error_class,
+          terminal_reason,
+          created_at,
+          updated_at,
+          terminal_at,
+          retry_allowed,
+          cancel_allowed,
+          last_recovery_operation_id,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        project_id: {$ref: '#/components/schemas/Uuid'}
-        destination_id: {$ref: '#/components/schemas/Uuid'}
-        outbox_message_id: {$ref: '#/components/schemas/NullableUuid'}
-        origin: {type: string}
-        source: {type: string}
-        event_name: {type: string}
-        semantic_metadata: {$ref: '#/components/schemas/NullableDeliverySemanticMetadata'}
-        destination: {$ref: '#/components/schemas/SafeDestination'}
-        status: {type: string, enum: [pending, in_flight, succeeded, failed, suppressed, cancelled]}
-        available_at: {$ref: '#/components/schemas/Timestamp'}
-        next_attempt_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        recovery_generation: {type: integer, format: int32, minimum: 0}
-        attempt_count: {type: integer, format: int32}
-        total_attempt_count: {type: integer, format: int64, minimum: 0}
-        max_attempts: {type: integer, format: int32}
-        last_error_class: {type: [string, 'null'], maxLength: 100}
-        terminal_reason: {type: [string, 'null'], maxLength: 100}
-        created_at: {$ref: '#/components/schemas/Timestamp'}
-        updated_at: {$ref: '#/components/schemas/Timestamp'}
-        terminal_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        retry_allowed: {type: boolean}
-        cancel_allowed: {type: boolean}
-        last_recovery_operation_id: {$ref: '#/components/schemas/NullableUuid'}
+        id: { $ref: '#/components/schemas/Uuid' }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        destination_id: { $ref: '#/components/schemas/Uuid' }
+        outbox_message_id: { $ref: '#/components/schemas/NullableUuid' }
+        origin: { type: string }
+        source: { type: string }
+        event_name: { type: string }
+        semantic_metadata: { $ref: '#/components/schemas/NullableDeliverySemanticMetadata' }
+        destination: { $ref: '#/components/schemas/SafeDestination' }
+        status:
+          { type: string, enum: [pending, in_flight, succeeded, failed, suppressed, cancelled] }
+        available_at: { $ref: '#/components/schemas/Timestamp' }
+        next_attempt_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        recovery_generation: { type: integer, format: int32, minimum: 0 }
+        attempt_count: { type: integer, format: int32 }
+        total_attempt_count: { type: integer, format: int64, minimum: 0 }
+        max_attempts: { type: integer, format: int32 }
+        last_error_class: { type: [string, 'null'], maxLength: 100 }
+        terminal_reason: { type: [string, 'null'], maxLength: 100 }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        terminal_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        retry_allowed: { type: boolean }
+        cancel_allowed: { type: boolean }
+        last_recovery_operation_id: { $ref: '#/components/schemas/NullableUuid' }
     SafeDestination:
       type: object
       additionalProperties: false
       description: Destination identity and operational state without URL, credentials, or signing material.
       required: [id, name, enabled]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        name: {type: string, maxLength: 200}
-        enabled: {type: boolean}
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string, maxLength: 200 }
+        enabled: { type: boolean }
     DeliverySemanticMetadata:
       type: object
       additionalProperties: false
       required: [application_id, group_id, event_kind]
       properties:
-        application_id: {$ref: '#/components/schemas/NullableUuid'}
-        group_id: {$ref: '#/components/schemas/NullableUuid'}
-        event_kind: {type: [string, 'null'], maxLength: 100}
+        application_id: { $ref: '#/components/schemas/NullableUuid' }
+        group_id: { $ref: '#/components/schemas/NullableUuid' }
+        event_kind: { type: [string, 'null'], maxLength: 100 }
     NullableDeliverySemanticMetadata:
       oneOf:
-        - {$ref: '#/components/schemas/DeliverySemanticMetadata'}
-        - {type: 'null'}
+        - { $ref: '#/components/schemas/DeliverySemanticMetadata' }
+        - { type: 'null' }
     DeliveryPage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/DeliverySummary'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items: { type: array, items: { $ref: '#/components/schemas/DeliverySummary' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     DeliveryAttempt:
       type: object
       additionalProperties: false
-      required: [id, recovery_generation, attempt_number, started_at, finished_at, duration_ms, outcome, http_status, error_class, response_excerpt]
+      required:
+        [
+          id,
+          recovery_generation,
+          attempt_number,
+          started_at,
+          finished_at,
+          duration_ms,
+          outcome,
+          http_status,
+          error_class,
+          response_excerpt,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        recovery_generation: {type: integer, format: int32, minimum: 0}
-        attempt_number: {type: integer, format: int32}
-        started_at: {$ref: '#/components/schemas/Timestamp'}
-        finished_at: {$ref: '#/components/schemas/Timestamp'}
-        duration_ms: {type: integer, format: int64}
-        outcome: {type: string}
-        http_status: {type: [integer, 'null'], format: int32}
-        error_class: {type: [string, 'null']}
-        response_excerpt: {type: [string, 'null']}
+        id: { $ref: '#/components/schemas/Uuid' }
+        recovery_generation: { type: integer, format: int32, minimum: 0 }
+        attempt_number: { type: integer, format: int32 }
+        started_at: { $ref: '#/components/schemas/Timestamp' }
+        finished_at: { $ref: '#/components/schemas/Timestamp' }
+        duration_ms: { type: integer, format: int64 }
+        outcome: { type: string }
+        http_status: { type: [integer, 'null'], format: int32 }
+        error_class: { type: [string, 'null'] }
+        response_excerpt: { type: [string, 'null'] }
     DeliveryDetail:
       unevaluatedProperties: false
       allOf:
-        - {$ref: '#/components/schemas/DeliverySummary'}
+        - { $ref: '#/components/schemas/DeliverySummary' }
         - type: object
           required: [attempts]
-          properties: {attempts: {type: array, items: {$ref: '#/components/schemas/DeliveryAttempt'}}}
+          properties:
+            { attempts: { type: array, items: { $ref: '#/components/schemas/DeliveryAttempt' } } }
     NotificationHealth:
       type: object
       additionalProperties: false
-      required: [state, delivery_enabled, enabled_destination_count, pending_count, due_count, retrying_count, in_flight_count, expired_lease_count, failed_count, oldest_due_age_seconds, observed_at]
+      required:
+        [
+          state,
+          delivery_enabled,
+          enabled_destination_count,
+          pending_count,
+          due_count,
+          retrying_count,
+          in_flight_count,
+          expired_lease_count,
+          failed_count,
+          oldest_due_age_seconds,
+          observed_at,
+        ]
       properties:
-        state: {type: string, enum: [disabled, idle, backlogged, retrying, failing, draining]}
-        delivery_enabled: {type: boolean}
-        enabled_destination_count: {type: integer, format: int64, minimum: 0}
-        pending_count: {type: integer, format: int64, minimum: 0}
-        due_count: {type: integer, format: int64, minimum: 0}
-        retrying_count: {type: integer, format: int64, minimum: 0}
-        in_flight_count: {type: integer, format: int64, minimum: 0}
-        expired_lease_count: {type: integer, format: int64, minimum: 0}
-        failed_count: {type: integer, format: int64, minimum: 0}
-        oldest_due_age_seconds: {type: [integer, 'null'], format: int64, minimum: 0}
-        observed_at: {$ref: '#/components/schemas/Timestamp'}
-    RecoveryCommandType: {type: string, enum: [retry, cancel, bulk_retry]}
-    RecoveryConflictCode: {type: string, enum: [invalid_state, active_lease, destination_disabled, idempotency_key_reused, bulk_limit_exceeded]}
+        state: { type: string, enum: [disabled, idle, backlogged, retrying, failing, draining] }
+        delivery_enabled: { type: boolean }
+        enabled_destination_count: { type: integer, format: int64, minimum: 0 }
+        pending_count: { type: integer, format: int64, minimum: 0 }
+        due_count: { type: integer, format: int64, minimum: 0 }
+        retrying_count: { type: integer, format: int64, minimum: 0 }
+        in_flight_count: { type: integer, format: int64, minimum: 0 }
+        expired_lease_count: { type: integer, format: int64, minimum: 0 }
+        failed_count: { type: integer, format: int64, minimum: 0 }
+        oldest_due_age_seconds: { type: [integer, 'null'], format: int64, minimum: 0 }
+        observed_at: { $ref: '#/components/schemas/Timestamp' }
+    RecoveryCommandType: { type: string, enum: [retry, cancel, bulk_retry] }
+    RecoveryConflictCode:
+      {
+        type: string,
+        enum:
+          [
+            invalid_state,
+            active_lease,
+            destination_disabled,
+            idempotency_key_reused,
+            bulk_limit_exceeded,
+          ],
+      }
     BulkRetryFilter:
       type: object
       additionalProperties: false
       properties:
-        destination_id: {$ref: '#/components/schemas/Uuid'}
-        failed_before: {$ref: '#/components/schemas/Timestamp'}
-        failed_after: {$ref: '#/components/schemas/Timestamp'}
-        error_class: {type: string, minLength: 1, maxLength: 100}
-        limit: {type: integer, format: int64, minimum: 1, maximum: 200, default: 50}
+        destination_id: { $ref: '#/components/schemas/Uuid' }
+        failed_before: { $ref: '#/components/schemas/Timestamp' }
+        failed_after: { $ref: '#/components/schemas/Timestamp' }
+        error_class: { type: string, minLength: 1, maxLength: 100 }
+        limit: { type: integer, format: int64, minimum: 1, maximum: 200, default: 50 }
     DeliveryRecoveryResult:
       type: object
       additionalProperties: false
-      required: [operation_id, delivery_id, status, recovery_generation, current_attempt_count, total_attempt_count, replayed, completed_at]
+      required:
+        [
+          operation_id,
+          delivery_id,
+          status,
+          recovery_generation,
+          current_attempt_count,
+          total_attempt_count,
+          replayed,
+          completed_at,
+        ]
       properties:
-        operation_id: {$ref: '#/components/schemas/Uuid'}
-        delivery_id: {$ref: '#/components/schemas/Uuid'}
-        status: {type: string, enum: [pending, cancelled]}
-        recovery_generation: {type: integer, format: int32, minimum: 0}
-        current_attempt_count: {type: integer, format: int32, minimum: 0}
-        total_attempt_count: {type: integer, format: int64, minimum: 0}
-        replayed: {type: boolean}
-        completed_at: {$ref: '#/components/schemas/Timestamp'}
+        operation_id: { $ref: '#/components/schemas/Uuid' }
+        delivery_id: { $ref: '#/components/schemas/Uuid' }
+        status: { type: string, enum: [pending, cancelled] }
+        recovery_generation: { type: integer, format: int32, minimum: 0 }
+        current_attempt_count: { type: integer, format: int32, minimum: 0 }
+        total_attempt_count: { type: integer, format: int64, minimum: 0 }
+        replayed: { type: boolean }
+        completed_at: { $ref: '#/components/schemas/Timestamp' }
     BulkRecoveryResult:
       type: object
       additionalProperties: false
-      required: [operation_id, selected_count, retried_count, skipped_count, remaining_count, has_more, replayed, completed_at]
+      required:
+        [
+          operation_id,
+          selected_count,
+          retried_count,
+          skipped_count,
+          remaining_count,
+          has_more,
+          replayed,
+          completed_at,
+        ]
       properties:
-        operation_id: {$ref: '#/components/schemas/Uuid'}
-        selected_count: {type: integer, format: int32, minimum: 0, maximum: 200}
-        retried_count: {type: integer, format: int32, minimum: 0, maximum: 200}
-        skipped_count: {type: integer, format: int32, minimum: 0, maximum: 200}
-        remaining_count: {type: integer, format: int32, minimum: 0}
-        has_more: {type: boolean}
-        replayed: {type: boolean}
-        completed_at: {$ref: '#/components/schemas/Timestamp'}
+        operation_id: { $ref: '#/components/schemas/Uuid' }
+        selected_count: { type: integer, format: int32, minimum: 0, maximum: 200 }
+        retried_count: { type: integer, format: int32, minimum: 0, maximum: 200 }
+        skipped_count: { type: integer, format: int32, minimum: 0, maximum: 200 }
+        remaining_count: { type: integer, format: int32, minimum: 0 }
+        has_more: { type: boolean }
+        replayed: { type: boolean }
+        completed_at: { $ref: '#/components/schemas/Timestamp' }
     RecoveryOperationSummary:
       type: object
       additionalProperties: false
-      required: [id, project_id, command_type, target_delivery_id, actor_kind, actor_id, request_id, outcome, selected_count, retried_count, cancelled_count, skipped_count, remaining_count, created_at, completed_at]
+      required:
+        [
+          id,
+          project_id,
+          command_type,
+          target_delivery_id,
+          actor_kind,
+          actor_id,
+          request_id,
+          outcome,
+          selected_count,
+          retried_count,
+          cancelled_count,
+          skipped_count,
+          remaining_count,
+          created_at,
+          completed_at,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        project_id: {$ref: '#/components/schemas/Uuid'}
-        command_type: {$ref: '#/components/schemas/RecoveryCommandType'}
-        target_delivery_id: {$ref: '#/components/schemas/NullableUuid'}
-        actor_kind: {type: string, enum: [api_credential]}
-        actor_id: {$ref: '#/components/schemas/Uuid'}
-        request_id: {type: string, maxLength: 200}
-        outcome: {type: string, enum: [completed, conflict]}
-        selected_count: {type: integer, format: int32, minimum: 0}
-        retried_count: {type: integer, format: int32, minimum: 0}
-        cancelled_count: {type: integer, format: int32, minimum: 0}
-        skipped_count: {type: integer, format: int32, minimum: 0}
-        remaining_count: {type: integer, format: int32, minimum: 0}
-        created_at: {$ref: '#/components/schemas/Timestamp'}
-        completed_at: {$ref: '#/components/schemas/Timestamp'}
+        id: { $ref: '#/components/schemas/Uuid' }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        command_type: { $ref: '#/components/schemas/RecoveryCommandType' }
+        target_delivery_id: { $ref: '#/components/schemas/NullableUuid' }
+        actor_kind: { type: string, enum: [api_credential] }
+        actor_id: { $ref: '#/components/schemas/Uuid' }
+        request_id: { type: string, maxLength: 200 }
+        outcome: { type: string, enum: [completed, conflict] }
+        selected_count: { type: integer, format: int32, minimum: 0 }
+        retried_count: { type: integer, format: int32, minimum: 0 }
+        cancelled_count: { type: integer, format: int32, minimum: 0 }
+        skipped_count: { type: integer, format: int32, minimum: 0 }
+        remaining_count: { type: integer, format: int32, minimum: 0 }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        completed_at: { $ref: '#/components/schemas/Timestamp' }
     RecoveryOperationDelivery:
       type: object
       additionalProperties: false
       required: [delivery_id, recovery_generation, action, created_at]
       properties:
-        delivery_id: {$ref: '#/components/schemas/Uuid'}
-        recovery_generation: {type: integer, format: int32, minimum: 0}
-        action: {type: string, enum: [retried, cancelled, skipped]}
-        created_at: {$ref: '#/components/schemas/Timestamp'}
+        delivery_id: { $ref: '#/components/schemas/Uuid' }
+        recovery_generation: { type: integer, format: int32, minimum: 0 }
+        action: { type: string, enum: [retried, cancelled, skipped] }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
     RecoveryOperationPage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/RecoveryOperationSummary'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items: { type: array, items: { $ref: '#/components/schemas/RecoveryOperationSummary' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     RecoveryOperationDetail:
       unevaluatedProperties: false
       allOf:
-        - {$ref: '#/components/schemas/RecoveryOperationSummary'}
+        - { $ref: '#/components/schemas/RecoveryOperationSummary' }
         - type: object
           required: [affected_deliveries]
           properties:
-            affected_deliveries: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/RecoveryOperationDelivery'}}
-    InventoryKind: {type: string, enum: [process, destination, domain, syscall]}
-    InventoryReleasePresence: {type: string, enum: [observed, not_observed, unknown], description: Evidence-qualified state; not_observed does not prove behavior cannot occur.}
+            affected_deliveries:
+              {
+                type: array,
+                maxItems: 200,
+                items: { $ref: '#/components/schemas/RecoveryOperationDelivery' },
+              }
+    InventoryKind: { type: string, enum: [process, destination, domain, syscall] }
+    InventoryReleasePresence:
+      {
+        type: string,
+        enum: [observed, not_observed, unknown],
+        description: Evidence-qualified state; not_observed does not prove behavior cannot occur.,
+      }
     InventorySemanticSummary:
       oneOf:
-        - {$ref: '#/components/schemas/InventoryProcessIdentity'}
-        - {$ref: '#/components/schemas/InventoryDestinationIdentity'}
-        - {$ref: '#/components/schemas/InventoryDomainIdentity'}
-        - {$ref: '#/components/schemas/InventorySyscallIdentity'}
+        - { $ref: '#/components/schemas/InventoryProcessIdentity' }
+        - { $ref: '#/components/schemas/InventoryDestinationIdentity' }
+        - { $ref: '#/components/schemas/InventoryDomainIdentity' }
+        - { $ref: '#/components/schemas/InventorySyscallIdentity' }
     InventoryProcessIdentity:
       type: object
       additionalProperties: false
       required: [executable]
-      properties: {executable: {type: string, minLength: 1, example: /app/payments}}
+      properties: { executable: { type: string, minLength: 1, example: /app/payments } }
     InventoryDestinationIdentity:
       type: object
       additionalProperties: false
       required: [process_command, address_family, destination_address, destination_port]
       properties:
-        process_command: {type: string, minLength: 1, example: payments}
-        address_family: {type: string, enum: [ipv4, ipv6]}
-        destination_address: {type: string, format: ip, example: 203.0.113.7}
-        destination_port: {type: integer, minimum: 1, maximum: 65535, example: 443}
+        process_command: { type: string, minLength: 1, example: payments }
+        address_family: { type: string, enum: [ipv4, ipv6] }
+        destination_address: { type: string, format: ip, example: 203.0.113.7 }
+        destination_port: { type: integer, minimum: 1, maximum: 65535, example: 443 }
     InventoryDomainIdentity:
       type: object
       additionalProperties: false
       required: [process_command, name, query_type]
       properties:
-        process_command: {type: string, minLength: 1, example: payments}
-        name: {type: string, minLength: 1, maxLength: 253, example: api.example.com}
-        query_type: {type: string, enum: [A, AAAA]}
+        process_command: { type: string, minLength: 1, example: payments }
+        name: { type: string, minLength: 1, maxLength: 253, example: api.example.com }
+        query_type: { type: string, enum: [A, AAAA] }
     InventorySyscallIdentity:
       type: object
       additionalProperties: false
       required: [process_command, syscall]
       properties:
-        process_command: {type: string, minLength: 1, example: payments}
-        syscall: {type: string, minLength: 1, example: epoll_wait}
+        process_command: { type: string, minLength: 1, example: payments }
+        syscall: { type: string, minLength: 1, example: epoll_wait }
     InventoryItem:
       type: object
       additionalProperties: false
-      required: [id, project_id, application_id, inventory_kind, identity_version, semantic_summary, first_seen_at, last_seen_at, occurrence_count, release_count, cluster_count, namespace_count, workload_count, pod_count, container_count, group_count]
+      required:
+        [
+          id,
+          project_id,
+          application_id,
+          inventory_kind,
+          identity_version,
+          semantic_summary,
+          first_seen_at,
+          last_seen_at,
+          occurrence_count,
+          release_count,
+          cluster_count,
+          namespace_count,
+          workload_count,
+          pod_count,
+          container_count,
+          group_count,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        project_id: {$ref: '#/components/schemas/Uuid'}
-        application_id: {$ref: '#/components/schemas/Uuid'}
-        inventory_kind: {$ref: '#/components/schemas/InventoryKind'}
-        identity_version: {type: integer, format: int32, minimum: 1, example: 1}
-        semantic_summary: {$ref: '#/components/schemas/InventorySemanticSummary'}
-        first_seen_at: {$ref: '#/components/schemas/Timestamp'}
-        last_seen_at: {$ref: '#/components/schemas/Timestamp'}
-        occurrence_count: {type: integer, format: int64, minimum: 1}
-        release_count: {type: integer, format: int64, minimum: 0}
-        cluster_count: {type: integer, format: int64, minimum: 0}
-        namespace_count: {type: integer, format: int64, minimum: 0}
-        workload_count: {type: integer, format: int64, minimum: 0}
-        pod_count: {type: integer, format: int64, minimum: 0}
-        container_count: {type: integer, format: int64, minimum: 0}
-        group_count: {type: integer, format: int64, minimum: 0}
+        id: { $ref: '#/components/schemas/Uuid' }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        application_id: { $ref: '#/components/schemas/Uuid' }
+        inventory_kind: { $ref: '#/components/schemas/InventoryKind' }
+        identity_version: { type: integer, format: int32, minimum: 1, example: 1 }
+        semantic_summary: { $ref: '#/components/schemas/InventorySemanticSummary' }
+        first_seen_at: { $ref: '#/components/schemas/Timestamp' }
+        last_seen_at: { $ref: '#/components/schemas/Timestamp' }
+        occurrence_count: { type: integer, format: int64, minimum: 1 }
+        release_count: { type: integer, format: int64, minimum: 0 }
+        cluster_count: { type: integer, format: int64, minimum: 0 }
+        namespace_count: { type: integer, format: int64, minimum: 0 }
+        workload_count: { type: integer, format: int64, minimum: 0 }
+        pod_count: { type: integer, format: int64, minimum: 0 }
+        container_count: { type: integer, format: int64, minimum: 0 }
+        group_count: { type: integer, format: int64, minimum: 0 }
     InventoryItemPage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryItem'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/InventoryItem' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     InventoryKindCount:
       type: object
       additionalProperties: false
       required: [kind, item_count, occurrence_count]
       properties:
-        kind: {$ref: '#/components/schemas/InventoryKind'}
-        item_count: {type: integer, format: int64, minimum: 0}
-        occurrence_count: {type: integer, format: int64, minimum: 0}
+        kind: { $ref: '#/components/schemas/InventoryKind' }
+        item_count: { type: integer, format: int64, minimum: 0 }
+        occurrence_count: { type: integer, format: int64, minimum: 0 }
     InventorySummary:
       type: object
       additionalProperties: false
       required: [identity_version, item_count, occurrence_count, first_seen_at, last_seen_at, kinds]
       properties:
-        identity_version: {type: integer, format: int32, minimum: 1}
-        item_count: {type: integer, format: int64, minimum: 0}
-        occurrence_count: {type: integer, format: int64, minimum: 0}
-        first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        kinds: {type: array, maxItems: 4, items: {$ref: '#/components/schemas/InventoryKindCount'}}
+        identity_version: { type: integer, format: int32, minimum: 1 }
+        item_count: { type: integer, format: int64, minimum: 0 }
+        occurrence_count: { type: integer, format: int64, minimum: 0 }
+        first_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        last_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        kinds:
+          { type: array, maxItems: 4, items: { $ref: '#/components/schemas/InventoryKindCount' } }
+    InventoryDistributionEntry:
+      type: object
+      additionalProperties: false
+      required: [identity_token, semantic_summary, item_count, occurrence_count]
+      properties:
+        identity_token: { type: string, minLength: 1, maxLength: 1000 }
+        semantic_summary: { $ref: '#/components/schemas/InventorySemanticSummary' }
+        item_count: { type: integer, format: int64, minimum: 1 }
+        occurrence_count: { type: integer, format: int64, minimum: 1 }
+    InventoryDistributionOther:
+      type: object
+      additionalProperties: false
+      required: [item_count, occurrence_count]
+      properties:
+        item_count: { type: integer, format: int64, minimum: 1 }
+        occurrence_count: { type: integer, format: int64, minimum: 1 }
+    InventoryDistribution:
+      type: object
+      additionalProperties: false
+      required: [identity_version, kind, total_item_count, total_occurrence_count, entries, other]
+      properties:
+        identity_version: { type: integer, format: int32, minimum: 1 }
+        kind: { $ref: '#/components/schemas/InventoryKind' }
+        total_item_count: { type: integer, format: int64, minimum: 0 }
+        total_occurrence_count: { type: integer, format: int64, minimum: 0 }
+        entries:
+          {
+            type: array,
+            maxItems: 10,
+            items: { $ref: '#/components/schemas/InventoryDistributionEntry' },
+          }
+        other:
+          oneOf:
+            - { $ref: '#/components/schemas/InventoryDistributionOther' }
+            - { type: 'null' }
     InventoryFacet:
       type: string
       enum: [cluster, namespace, workload_kind, workload_name, container_name]
@@ -982,175 +1609,470 @@ components:
       additionalProperties: false
       required: [value, label, item_count, occurrence_count]
       properties:
-        value: {type: string, minLength: 1}
-        label: {type: string, minLength: 1}
-        item_count: {type: integer, format: int64, minimum: 0}
-        occurrence_count: {type: integer, format: int64, minimum: 0}
+        value: { type: string, minLength: 1 }
+        label: { type: string, minLength: 1 }
+        item_count: { type: integer, format: int64, minimum: 0 }
+        occurrence_count: { type: integer, format: int64, minimum: 0 }
     InventoryFacetPage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryFacetOption'}}
-        next_cursor: {type: [string, 'null'], description: Opaque cursor bound to the exact Application, facet, and filter scope.}
+        items:
+          {
+            type: array,
+            maxItems: 200,
+            items: { $ref: '#/components/schemas/InventoryFacetOption' },
+          }
+        next_cursor:
+          {
+            type: [string, 'null'],
+            description: Opaque cursor bound to the exact Application,
+            facet,
+            and filter scope.,
+          }
     InventoryEvidenceLinks:
       type: object
       additionalProperties: false
       required: [releases, sightings, groups, occurrences]
       properties:
-        releases: {type: string, pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/releases$'}
-        sightings: {type: string, pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/sightings$'}
-        groups: {type: string, pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/groups$'}
-        occurrences: {type: string, pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/occurrences$'}
+        releases:
+          {
+            type: string,
+            pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/releases$',
+          }
+        sightings:
+          {
+            type: string,
+            pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/sightings$',
+          }
+        groups:
+          {
+            type: string,
+            pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/groups$',
+          }
+        occurrences:
+          {
+            type: string,
+            pattern: '^/api/v1/projects/[0-9a-f-]+/applications/[0-9a-f-]+/runtime-inventory/[0-9a-f-]+/occurrences$',
+          }
     InventoryItemDetail:
       unevaluatedProperties: false
       allOf:
-        - {$ref: '#/components/schemas/InventoryItem'}
+        - { $ref: '#/components/schemas/InventoryItem' }
         - type: object
           required: [evidence]
-          properties: {evidence: {$ref: '#/components/schemas/InventoryEvidenceLinks'}}
+          properties: { evidence: { $ref: '#/components/schemas/InventoryEvidenceLinks' } }
     InventoryReleaseEvidence:
       type: object
       additionalProperties: false
-      required: [release_id, version, deployed_at, presence, occurrence_count, first_seen_at, last_seen_at, release_evidence_count]
+      required:
+        [
+          release_id,
+          version,
+          deployed_at,
+          presence,
+          occurrence_count,
+          first_seen_at,
+          last_seen_at,
+          release_evidence_count,
+        ]
       properties:
-        release_id: {$ref: '#/components/schemas/Uuid'}
-        version: {type: string, minLength: 1, maxLength: 200}
-        deployed_at: {$ref: '#/components/schemas/Timestamp'}
-        presence: {$ref: '#/components/schemas/InventoryReleasePresence'}
-        occurrence_count: {type: [integer, 'null'], format: int64, minimum: 1}
-        first_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        last_seen_at: {$ref: '#/components/schemas/NullableTimestamp'}
-        release_evidence_count: {type: integer, format: int64, minimum: 0}
+        release_id: { $ref: '#/components/schemas/Uuid' }
+        version: { type: string, minLength: 1, maxLength: 200 }
+        deployed_at: { $ref: '#/components/schemas/Timestamp' }
+        presence: { $ref: '#/components/schemas/InventoryReleasePresence' }
+        occurrence_count: { type: [integer, 'null'], format: int64, minimum: 1 }
+        first_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        last_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        release_evidence_count: { type: integer, format: int64, minimum: 0 }
     InventoryReleasePresencePage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryReleaseEvidence'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items:
+          {
+            type: array,
+            maxItems: 200,
+            items: { $ref: '#/components/schemas/InventoryReleaseEvidence' },
+          }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     InventorySighting:
       type: object
       additionalProperties: false
-      required: [cluster_id, namespace, workload_kind, workload_name, pod_uid, pod_name, container_name, occurrence_count, first_seen_at, last_seen_at]
+      required:
+        [
+          cluster_id,
+          namespace,
+          workload_kind,
+          workload_name,
+          pod_uid,
+          pod_name,
+          container_name,
+          occurrence_count,
+          first_seen_at,
+          last_seen_at,
+        ]
       properties:
-        cluster_id: {$ref: '#/components/schemas/Uuid'}
-        namespace: {type: string}
-        workload_kind: {type: string}
-        workload_name: {type: string}
-        pod_uid: {type: string}
-        pod_name: {type: string}
-        container_name: {type: string}
-        occurrence_count: {type: integer, format: int64, minimum: 1}
-        first_seen_at: {$ref: '#/components/schemas/Timestamp'}
-        last_seen_at: {$ref: '#/components/schemas/Timestamp'}
+        cluster_id: { $ref: '#/components/schemas/Uuid' }
+        namespace: { type: string }
+        workload_kind: { type: string }
+        workload_name: { type: string }
+        pod_uid: { type: string }
+        pod_name: { type: string }
+        container_name: { type: string }
+        occurrence_count: { type: integer, format: int64, minimum: 1 }
+        first_seen_at: { $ref: '#/components/schemas/Timestamp' }
+        last_seen_at: { $ref: '#/components/schemas/Timestamp' }
     InventorySightingPage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventorySighting'}}
-        next_cursor: {$ref: '#/components/schemas/NullableOpaqueCursor'}
+        items:
+          { type: array, maxItems: 200, items: { $ref: '#/components/schemas/InventorySighting' } }
+        next_cursor: { $ref: '#/components/schemas/NullableOpaqueCursor' }
     InventoryGroup:
       type: object
       additionalProperties: false
-      required: [id, cluster_id, namespace, workload_kind, workload_name, event_kind, status, first_seen_at, last_seen_at, occurrence_count]
+      required:
+        [
+          id,
+          cluster_id,
+          namespace,
+          workload_kind,
+          workload_name,
+          event_kind,
+          status,
+          first_seen_at,
+          last_seen_at,
+          occurrence_count,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        cluster_id: {$ref: '#/components/schemas/Uuid'}
-        namespace: {type: string}
-        workload_kind: {type: string}
-        workload_name: {type: string}
-        event_kind: {type: string}
-        status: {type: string, enum: [open, acknowledged, resolved]}
-        first_seen_at: {$ref: '#/components/schemas/Timestamp'}
-        last_seen_at: {$ref: '#/components/schemas/Timestamp'}
-        occurrence_count: {type: integer, format: int64, minimum: 1}
+        id: { $ref: '#/components/schemas/Uuid' }
+        cluster_id: { $ref: '#/components/schemas/Uuid' }
+        namespace: { type: string }
+        workload_kind: { type: string }
+        workload_name: { type: string }
+        event_kind: { type: string }
+        status: { type: string, enum: [open, acknowledged, resolved] }
+        first_seen_at: { $ref: '#/components/schemas/Timestamp' }
+        last_seen_at: { $ref: '#/components/schemas/Timestamp' }
+        occurrence_count: { type: integer, format: int64, minimum: 1 }
     InventoryGroupPage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryGroup'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
+        items:
+          { type: array, maxItems: 200, items: { $ref: '#/components/schemas/InventoryGroup' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     InventoryOccurrence:
       type: object
       additionalProperties: false
-      required: [id, event_id, observed_at, cluster_id, node_name, namespace, pod_uid, pod_name, container_name, process_command, event_kind, payload, release_id, release_version]
+      required:
+        [
+          id,
+          event_id,
+          observed_at,
+          cluster_id,
+          node_name,
+          namespace,
+          pod_uid,
+          pod_name,
+          container_name,
+          process_command,
+          event_kind,
+          payload,
+          release_id,
+          release_version,
+        ]
       properties:
-        id: {$ref: '#/components/schemas/Uuid'}
-        event_id: {$ref: '#/components/schemas/Uuid'}
-        observed_at: {$ref: '#/components/schemas/Timestamp'}
-        cluster_id: {$ref: '#/components/schemas/Uuid'}
-        node_name: {type: string}
-        namespace: {type: string}
-        pod_uid: {type: string}
-        pod_name: {type: string}
-        container_name: {type: string}
-        process_command: {type: string}
-        event_kind: {type: string}
-        payload: {$ref: '#/components/schemas/RuntimeEventPayload'}
-        release_id: {$ref: '#/components/schemas/NullableUuid'}
-        release_version: {type: [string, 'null']}
+        id: { $ref: '#/components/schemas/Uuid' }
+        event_id: { $ref: '#/components/schemas/Uuid' }
+        observed_at: { $ref: '#/components/schemas/Timestamp' }
+        cluster_id: { $ref: '#/components/schemas/Uuid' }
+        node_name: { type: string }
+        namespace: { type: string }
+        pod_uid: { type: string }
+        pod_name: { type: string }
+        container_name: { type: string }
+        process_command: { type: string }
+        event_kind: { type: string }
+        payload: { $ref: '#/components/schemas/RuntimeEventPayload' }
+        release_id: { $ref: '#/components/schemas/NullableUuid' }
+        release_version: { type: [string, 'null'] }
     InventoryOccurrencePage:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/InventoryOccurrence'}}
-        next_cursor: {$ref: '#/components/schemas/NullableUuid'}
-    Uuid: {type: string, format: uuid}
-    NullableUuid: {type: [string, 'null'], format: uuid}
-    NullableOpaqueCursor: {type: [string, 'null']}
-    Timestamp: {type: string, format: date-time, example: '2026-08-17T12:00:00Z'}
-    NullableTimestamp: {type: [string, 'null'], format: date-time}
+        items:
+          {
+            type: array,
+            maxItems: 200,
+            items: { $ref: '#/components/schemas/InventoryOccurrence' },
+          }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
+    Uuid: { type: string, format: uuid }
+    NullableUuid: { type: [string, 'null'], format: uuid }
+    NullableOpaqueCursor: { type: [string, 'null'] }
+    Timestamp: { type: string, format: date-time, example: '2026-08-17T12:00:00Z' }
+    NullableTimestamp: { type: [string, 'null'], format: date-time }
   requestBodies:
     CreateRelease:
       required: true
-      content: {application/json: {schema: {$ref: '#/components/schemas/CreateRelease'}}}
+      content: { application/json: { schema: { $ref: '#/components/schemas/CreateRelease' } } }
     CreateWebhookDestination:
       required: true
-      content: {application/json: {schema: {$ref: '#/components/schemas/CreateWebhookDestination'}}}
+      content:
+        { application/json: { schema: { $ref: '#/components/schemas/CreateWebhookDestination' } } }
     UpdateWebhookDestination:
       required: true
-      content: {application/json: {schema: {$ref: '#/components/schemas/UpdateWebhookDestination'}}}
+      content:
+        { application/json: { schema: { $ref: '#/components/schemas/UpdateWebhookDestination' } } }
     BulkRetryFilter:
       required: true
-      content: {application/json: {schema: {$ref: '#/components/schemas/BulkRetryFilter'}}}
+      content: { application/json: { schema: { $ref: '#/components/schemas/BulkRetryFilter' } } }
   responses:
-    BuildInfoResponse: {description: Build compatibility metadata, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/BuildInfo'}}}}
-    Organization: {description: Current organization, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Organization'}}}}
-    Project: {description: Project summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Project'}}}}
-    ProjectPage: {description: Project page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ProjectPage'}}}}
-    Application: {description: Application summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Application'}}}}
-    ApplicationPage: {description: Application page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ApplicationPage'}}}}
-    InventorySummary: {description: Application runtime inventory aggregate, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventorySummary'}}}}
-    InventoryFacetPage: {description: Bounded runtime inventory facet options, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryFacetPage'}}}}
-    InventoryItemPage: {description: Bounded application runtime inventory page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryItemPage'}}}}
-    InventoryItemDetail: {description: Runtime inventory item with evidence navigation, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryItemDetail'}}}}
-    InventoryReleasePresencePage: {description: Evidence-qualified release presence page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryReleasePresencePage'}}}}
-    InventorySightingPage: {description: Bounded Kubernetes sighting page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventorySightingPage'}}}}
-    InventoryGroupPage: {description: Contributing runtime group page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryGroupPage'}}}}
-    InventoryOccurrencePage: {description: Raw inventory evidence page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/InventoryOccurrencePage'}}}}
-    RuntimeGroupPage: {description: Runtime group page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroupPage'}}}}
-    RuntimeGroup: {description: Runtime group, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroup'}}}}
-    RuntimeGroupDetail: {description: Runtime group detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeGroupDetail'}}}}
-    OccurrencePage: {description: Runtime group occurrence page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/OccurrencePage'}}}}
-    Release: {description: Release, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/Release'}}}}
-    ReleasePage: {description: Release page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/ReleasePage'}}}}
-    RuntimeDiff: {description: Runtime behavior diff, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RuntimeDiff'}}}}
-    WebhookDestination: {description: Webhook destination, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/WebhookDestination'}}}}
-    WebhookDestinationList: {description: Webhook destinations, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/WebhookDestination'}}}}}
-    DestinationWithSecret: {description: Webhook destination with one-time secret, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DestinationWithSecret'}}}}
-    DeliverySummary: {description: Notification delivery summary, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliverySummary'}}}}
-    DeliveryPage: {description: Notification delivery page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryPage'}}}}
-    DeliveryDetail: {description: Notification delivery detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryDetail'}}}}
-    NotificationHealth: {description: Secret-free Project notification health snapshot, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/NotificationHealth'}}}}
-    DeliveryRecoveryResult: {description: Idempotent single-delivery recovery result, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/DeliveryRecoveryResult'}}}}
-    BulkRecoveryResult: {description: Bounded bulk retry result, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/BulkRecoveryResult'}}}}
-    RecoveryOperationPage: {description: Recovery operation page, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RecoveryOperationPage'}}}}
-    RecoveryOperationDetail: {description: Recovery operation detail, headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}, content: {application/json: {schema: {$ref: '#/components/schemas/RecoveryOperationDetail'}}}}
+    BuildInfoResponse:
+      {
+        description: Build compatibility metadata,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/BuildInfo' } } },
+      }
+    Organization:
+      {
+        description: Current organization,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } },
+      }
+    Project:
+      {
+        description: Project summary,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } },
+      }
+    ProjectPage:
+      {
+        description: Project page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProjectPage' } } },
+      }
+    Application:
+      {
+        description: Application summary,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } },
+      }
+    ApplicationPage:
+      {
+        description: Application page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationPage' } } },
+      }
+    InventorySummary:
+      {
+        description: Application runtime inventory aggregate,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/InventorySummary' } } },
+      }
+    InventoryDistribution:
+      {
+        description: Complete-scope bounded runtime inventory distribution,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/InventoryDistribution' } } },
+      }
+    InventoryFacetPage:
+      {
+        description: Bounded runtime inventory facet options,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/InventoryFacetPage' } } },
+      }
+    InventoryItemPage:
+      {
+        description: Bounded application runtime inventory page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/InventoryItemPage' } } },
+      }
+    InventoryItemDetail:
+      {
+        description: Runtime inventory item with evidence navigation,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/InventoryItemDetail' } } },
+      }
+    InventoryReleasePresencePage:
+      {
+        description: Evidence-qualified release presence page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/InventoryReleasePresencePage' } },
+          },
+      }
+    InventorySightingPage:
+      {
+        description: Bounded Kubernetes sighting page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/InventorySightingPage' } } },
+      }
+    InventoryGroupPage:
+      {
+        description: Contributing runtime group page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/InventoryGroupPage' } } },
+      }
+    InventoryOccurrencePage:
+      {
+        description: Raw inventory evidence page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          {
+            application/json: { schema: { $ref: '#/components/schemas/InventoryOccurrencePage' } },
+          },
+      }
+    RuntimeGroupPage:
+      {
+        description: Runtime group page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/RuntimeGroupPage' } } },
+      }
+    RuntimeGroup:
+      {
+        description: Runtime group,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeGroup' } } },
+      }
+    RuntimeGroupDetail:
+      {
+        description: Runtime group detail,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/RuntimeGroupDetail' } } },
+      }
+    OccurrencePage:
+      {
+        description: Runtime group occurrence page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/OccurrencePage' } } },
+      }
+    Release:
+      {
+        description: Release,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/Release' } } },
+      }
+    ReleasePage:
+      {
+        description: Release page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/ReleasePage' } } },
+      }
+    RuntimeDiff:
+      {
+        description: Runtime behavior diff,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeDiff' } } },
+      }
+    RuntimeDiffSummary:
+      {
+        description: Complete runtime comparison aggregate,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/RuntimeDiffSummary' } } },
+      }
+    WebhookDestination:
+      {
+        description: Webhook destination,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/WebhookDestination' } } },
+      }
+    WebhookDestinationList:
+      {
+        description: Webhook destinations,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          {
+            application/json:
+              {
+                schema: { type: array, items: { $ref: '#/components/schemas/WebhookDestination' } },
+              },
+          },
+      }
+    DestinationWithSecret:
+      {
+        description: Webhook destination with one-time secret,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/DestinationWithSecret' } } },
+      }
+    DeliverySummary:
+      {
+        description: Notification delivery summary,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/DeliverySummary' } } },
+      }
+    DeliveryPage:
+      {
+        description: Notification delivery page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryPage' } } },
+      }
+    DeliveryDetail:
+      {
+        description: Notification delivery detail,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryDetail' } } },
+      }
+    NotificationHealth:
+      {
+        description: Secret-free Project notification health snapshot,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/NotificationHealth' } } },
+      }
+    DeliveryRecoveryResult:
+      {
+        description: Idempotent single-delivery recovery result,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/DeliveryRecoveryResult' } } },
+      }
+    BulkRecoveryResult:
+      {
+        description: Bounded bulk retry result,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/BulkRecoveryResult' } } },
+      }
+    RecoveryOperationPage:
+      {
+        description: Recovery operation page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/RecoveryOperationPage' } } },
+      }
+    RecoveryOperationDetail:
+      {
+        description: Recovery operation detail,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          {
+            application/json: { schema: { $ref: '#/components/schemas/RecoveryOperationDetail' } },
+          },
+      }
     Error:
       description: Correlated API error
-      headers: {X-Request-Id: {$ref: '#/components/headers/RequestId'}}
-      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+      headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

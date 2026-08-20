@@ -40,6 +40,10 @@ pub fn router(pool: PgPool) -> Router {
             "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
             get(runtime_diff),
         )
+        .route(
+            "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff/summary",
+            get(runtime_diff_summary),
+        )
         .with_state(state)
 }
 
@@ -162,6 +166,38 @@ struct RuntimeDiff {
     next_cursor: Option<Uuid>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DiffSummaryQuery {
+    baseline_id: Option<Uuid>,
+    limit: Option<i64>,
+}
+
+#[derive(Clone, Debug, FromRow, Serialize)]
+struct DiffClassificationCount {
+    classification: String,
+    item_count: i64,
+}
+
+#[derive(Clone, Debug, FromRow, Serialize)]
+struct DiffChangeEntry {
+    group_id: Uuid,
+    classification: String,
+    event_kind: String,
+    semantic_summary: Value,
+    baseline_occurrence_count: i64,
+    target_occurrence_count: i64,
+    occurrence_delta: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeDiffSummary {
+    baseline: Option<Release>,
+    target: Release,
+    total_item_count: i64,
+    classifications: Vec<DiffClassificationCount>,
+    largest_changes: Vec<DiffChangeEntry>,
+}
+
 async fn principal(
     headers: &HeaderMap,
     state: &ReleaseState,
@@ -185,6 +221,17 @@ fn limit(value: Option<i64>) -> Result<i64, ReleaseError> {
     } else {
         Err(ReleaseError::Invalid(
             "limit must be between 1 and 200".into(),
+        ))
+    }
+}
+
+fn summary_limit(value: Option<i64>) -> Result<i64, ReleaseError> {
+    let value = value.unwrap_or(5);
+    if (1..=10).contains(&value) {
+        Ok(value)
+    } else {
+        Err(ReleaseError::Invalid(
+            "limit must be between 1 and 10".into(),
         ))
     }
 }
@@ -317,6 +364,30 @@ async fn fetch_release(
         .bind(organization_id).bind(project_id).bind(application_id).bind(release_id).fetch_optional(pool).await
 }
 
+async fn resolve_diff_releases(
+    pool: &PgPool,
+    organization_id: Uuid,
+    project_id: Uuid,
+    application_id: Uuid,
+    target_id: Uuid,
+    baseline_id: Option<Uuid>,
+) -> Result<(Release, Option<Release>), ReleaseError> {
+    let target = fetch_release(pool, organization_id, project_id, application_id, target_id)
+        .await?
+        .ok_or(ReleaseError::NotFound)?;
+    let baseline = if let Some(id) = baseline_id {
+        Some(
+            fetch_release(pool, organization_id, project_id, application_id, id)
+                .await?
+                .ok_or(ReleaseError::NotFound)?,
+        )
+    } else {
+        sqlx::query_as::<_, Release>("SELECT id,project_id,application_id,version,description,deployed_at,created_at FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND (deployed_at,id)<($4,$5) ORDER BY deployed_at DESC,id DESC LIMIT 1")
+            .bind(organization_id).bind(project_id).bind(application_id).bind(target.deployed_at).bind(target.id).fetch_optional(pool).await?
+    };
+    Ok((target, baseline))
+}
+
 async fn runtime_diff(
     State(state): State<ReleaseState>,
     headers: HeaderMap,
@@ -326,31 +397,15 @@ async fn runtime_diff(
     crate::metrics::record_api_request();
     let principal = principal(&headers, &state).await?;
     let limit = limit(query.limit)?;
-    let target = fetch_release(
+    let (target, baseline) = resolve_diff_releases(
         &state.pool,
         principal.organization_id,
         project_id,
         application_id,
         target_id,
+        query.baseline_id,
     )
-    .await?
-    .ok_or(ReleaseError::NotFound)?;
-    let baseline = if let Some(id) = query.baseline_id {
-        Some(
-            fetch_release(
-                &state.pool,
-                principal.organization_id,
-                project_id,
-                application_id,
-                id,
-            )
-            .await?
-            .ok_or(ReleaseError::NotFound)?,
-        )
-    } else {
-        sqlx::query_as::<_, Release>("SELECT id,project_id,application_id,version,description,deployed_at,created_at FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND (deployed_at,id)<($4,$5) ORDER BY deployed_at DESC,id DESC LIMIT 1")
-            .bind(principal.organization_id).bind(project_id).bind(application_id).bind(target.deployed_at).bind(target.id).fetch_optional(&state.pool).await?
-    };
+    .await?;
     let baseline_id = baseline.as_ref().map(|release| release.id);
     let mut items = sqlx::query_as::<_, DiffEntry>(
         "WITH b AS (SELECT * FROM runtime_event_group_releases WHERE release_id=$1), t AS (SELECT * FROM runtime_event_group_releases WHERE release_id=$2) SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification,g.event_kind,g.semantic_summary,b.occurrence_count baseline_occurrence_count,b.first_seen_at baseline_first_seen_at,b.last_seen_at baseline_last_seen_at,t.occurrence_count target_occurrence_count,t.first_seen_at target_first_seen_at,t.last_seen_at target_last_seen_at FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5 AND ($6::uuid IS NULL OR g.id>$6) ORDER BY g.id LIMIT $7",
@@ -368,4 +423,90 @@ async fn runtime_diff(
         items,
         next_cursor,
     }))
+}
+
+async fn runtime_diff_summary(
+    State(state): State<ReleaseState>,
+    headers: HeaderMap,
+    Path((project_id, application_id, target_id)): Path<(Uuid, Uuid, Uuid)>,
+    Query(query): Query<DiffSummaryQuery>,
+) -> Result<Json<RuntimeDiffSummary>, ReleaseError> {
+    let started = std::time::Instant::now();
+    crate::metrics::record_api_request();
+    let principal = principal(&headers, &state).await?;
+    let limit = summary_limit(query.limit)?;
+    let (target, baseline) = resolve_diff_releases(
+        &state.pool,
+        principal.organization_id,
+        project_id,
+        application_id,
+        target_id,
+        query.baseline_id,
+    )
+    .await?;
+    let Some(baseline_id) = baseline.as_ref().map(|release| release.id) else {
+        crate::metrics::record_release_diff_summary(
+            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+        );
+        return Ok(Json(RuntimeDiffSummary {
+            baseline: None,
+            target,
+            total_item_count: 0,
+            classifications: Vec::new(),
+            largest_changes: Vec::new(),
+        }));
+    };
+    let mut transaction = state.pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *transaction)
+        .await?;
+    let classifications = sqlx::query_as::<_, DiffClassificationCount>(
+        "WITH b AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$1), t AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$2), compared AS (SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5) SELECT classification,count(*)::bigint item_count FROM compared GROUP BY classification ORDER BY CASE classification WHEN 'new' THEN 1 WHEN 'disappeared' THEN 2 ELSE 3 END",
+    )
+    .bind(baseline_id)
+    .bind(target.id)
+    .bind(principal.organization_id)
+    .bind(project_id)
+    .bind(application_id)
+    .fetch_all(&mut *transaction)
+    .await?;
+    let largest_changes = sqlx::query_as::<_, DiffChangeEntry>(
+        "WITH b AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$1), t AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$2) SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification,g.event_kind,g.semantic_summary,COALESCE(b.occurrence_count,0)::bigint baseline_occurrence_count,COALESCE(t.occurrence_count,0)::bigint target_occurrence_count,(COALESCE(t.occurrence_count,0)-COALESCE(b.occurrence_count,0))::bigint occurrence_delta FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5 ORDER BY ABS(COALESCE(t.occurrence_count,0)-COALESCE(b.occurrence_count,0)) DESC,g.id ASC LIMIT $6",
+    )
+    .bind(baseline_id)
+    .bind(target.id)
+    .bind(principal.organization_id)
+    .bind(project_id)
+    .bind(application_id)
+    .bind(limit)
+    .fetch_all(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    let total_item_count = classifications.iter().map(|row| row.item_count).sum();
+    crate::metrics::record_release_diff_summary(
+        u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+    );
+    Ok(Json(RuntimeDiffSummary {
+        baseline,
+        target,
+        total_item_count,
+        classifications,
+        largest_changes,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_summary_limit_is_bounded() {
+        assert_eq!(summary_limit(None).unwrap(), 5);
+        for valid in [1, 5, 10] {
+            assert_eq!(summary_limit(Some(valid)).unwrap(), valid);
+        }
+        for invalid in [0, 11] {
+            assert!(summary_limit(Some(invalid)).is_err());
+        }
+    }
 }

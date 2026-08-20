@@ -151,6 +151,22 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
             }),
             Some("v2"),
         ),
+        event(
+            &first,
+            EventPayload::ProcessExec(ProcessExec {
+                executable: "/app/worker".into(),
+                parent_command: None,
+            }),
+            Some("v1"),
+        ),
+        event(
+            &first,
+            EventPayload::ProcessExec(ProcessExec {
+                executable: "<script>alert(1)</script>".into(),
+                parent_command: None,
+            }),
+            Some("v1"),
+        ),
     ];
     persist_batch(&pool, context, &events).await.unwrap();
     let process_item: Uuid =
@@ -174,7 +190,7 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         .unwrap();
     assert_eq!(summary_response.status(), StatusCode::OK);
     let summary = json(summary_response).await;
-    assert_eq!(summary["item_count"], 4);
+    assert_eq!(summary["item_count"], 6);
     assert_eq!(summary["kinds"].as_array().unwrap().len(), 4);
 
     for kind in ["process", "destination", "domain", "syscall"] {
@@ -189,6 +205,132 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         assert_eq!(response.status(), StatusCode::OK);
         let body = json(response).await;
         assert_eq!(body["items"][0]["inventory_kind"], kind);
+        let distribution = app
+            .clone()
+            .oneshot(request(
+                &format!("{base}/distribution?kind={kind}&limit=10"),
+                &first_config.api_credential,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(distribution.status(), StatusCode::OK);
+        assert_eq!(json(distribution).await["kind"], kind);
+    }
+
+    let distribution_response = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/distribution?kind=process&limit=1"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(distribution_response.status(), StatusCode::OK);
+    let distribution = json(distribution_response).await;
+    assert_eq!(distribution["total_item_count"], 3);
+    assert_eq!(distribution["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(distribution["other"]["item_count"], 2);
+    assert_eq!(
+        distribution["entries"][0]["occurrence_count"]
+            .as_i64()
+            .unwrap()
+            + distribution["other"]["occurrence_count"].as_i64().unwrap(),
+        distribution["total_occurrence_count"].as_i64().unwrap()
+    );
+    let all_processes = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/distribution?kind=process&limit=10"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    let all_processes = json(all_processes).await;
+    assert!(all_processes["other"].is_null());
+    let tokens: Vec<_> = all_processes["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["identity_token"].as_str().unwrap())
+        .collect();
+    assert!(tokens.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(
+        all_processes["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry["semantic_summary"]["executable"] == "<script>alert(1)</script>"
+            })
+    );
+
+    let scoped_distribution = app
+        .clone()
+        .oneshot(request(
+            &format!(
+                "{base}/distribution?kind=process&release_id={observed_release}&cluster_id={}&namespace=production&workload_kind=Deployment&workload_name=app&container_name=app&search=worker",
+                first.cluster_id
+            ),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(scoped_distribution.status(), StatusCode::OK);
+    assert_eq!(json(scoped_distribution).await["total_item_count"], 1);
+
+    let empty_distribution = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/distribution?kind=process&search=does-not-exist"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    let empty_distribution = json(empty_distribution).await;
+    assert_eq!(empty_distribution["total_item_count"], 0);
+    assert!(empty_distribution["entries"].as_array().unwrap().is_empty());
+    assert!(empty_distribution["other"].is_null());
+    let identity_token = distribution["entries"][0]["identity_token"]
+        .as_str()
+        .unwrap();
+    let identity_filtered = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}?kind=process&identity_token={identity_token}"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(identity_filtered.status(), StatusCode::OK);
+    assert_eq!(
+        json(identity_filtered).await["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let tampered = format!("{identity_token}0");
+    let invalid_token = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}?kind=process&identity_token={tampered}"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(invalid_token.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json(invalid_token).await["error"], "invalid_identity_token");
+
+    for invalid_limit in [0, 11] {
+        let response = app
+            .clone()
+            .oneshot(request(
+                &format!("{base}/distribution?kind=process&limit={invalid_limit}"),
+                &first_config.api_credential,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     let filtered = app
@@ -271,13 +413,7 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         ))
         .await
         .unwrap();
-    assert_eq!(foreign_filter.status(), StatusCode::OK);
-    assert!(
-        json(foreign_filter).await["items"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
+    assert_eq!(foreign_filter.status(), StatusCode::BAD_REQUEST);
 
     let foreign_item = app
         .clone()
@@ -286,8 +422,17 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         .unwrap();
     assert_eq!(foreign_item.status(), StatusCode::NOT_FOUND);
     let foreign_application = app
+        .clone()
         .oneshot(request(&base, &second_config.api_credential))
         .await
         .unwrap();
     assert_eq!(foreign_application.status(), StatusCode::NOT_FOUND);
+    let foreign_distribution = app
+        .oneshot(request(
+            &format!("{base}/distribution?kind=process"),
+            &second_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(foreign_distribution.status(), StatusCode::NOT_FOUND);
 }

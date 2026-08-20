@@ -1,4 +1,7 @@
-use std::time::Instant;
+use std::{
+    sync::{Arc, OnceLock},
+    time::Instant,
+};
 
 use axum::{
     Json, Router,
@@ -8,6 +11,7 @@ use axum::{
     routing::get,
 };
 use chrono::{DateTime, Utc};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -23,11 +27,125 @@ use crate::{
 struct InventoryApiState {
     pool: PgPool,
     auth: ApiCredentialAuthenticator,
+    identity_tokens: IdentityTokenCodec,
+}
+
+type HmacSha256 = Hmac<Sha256>;
+const IDENTITY_TOKEN_TTL_SECONDS: i64 = 86_400;
+
+#[derive(Clone, Debug)]
+struct IdentityTokenCodec {
+    key: Arc<[u8; 32]>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct IdentityTokenPayload {
+    format_version: u8,
+    identity_version: i16,
+    organization_id: Uuid,
+    project_id: Uuid,
+    application_id: Uuid,
+    kind: String,
+    item_id: Uuid,
+    identity_digest: String,
+    issued_at: i64,
+    expires_at: i64,
+}
+
+impl IdentityTokenCodec {
+    fn process_default() -> Self {
+        static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+        let key = KEY.get_or_init(|| {
+            std::env::var("OKOSCOPE_IDENTITY_TOKEN_KEY").map_or_else(
+                |_| rand::random(),
+                |value| {
+                    assert!(
+                        value.len() >= 32,
+                        "OKOSCOPE_IDENTITY_TOKEN_KEY must contain at least 32 bytes"
+                    );
+                    Sha256::digest(value).into()
+                },
+            )
+        });
+        Self {
+            key: Arc::new(*key),
+        }
+    }
+
+    fn issue(&self, mut payload: IdentityTokenPayload) -> Result<String, InventoryApiError> {
+        let now = Utc::now().timestamp();
+        payload.issued_at = now - now.rem_euclid(IDENTITY_TOKEN_TTL_SECONDS);
+        payload.expires_at = payload.issued_at + IDENTITY_TOKEN_TTL_SECONDS * 2;
+        self.encode(&payload)
+    }
+
+    fn encode(&self, payload: &IdentityTokenPayload) -> Result<String, InventoryApiError> {
+        let encoded = hex::encode(
+            serde_json::to_vec(payload)
+                .map_err(|_| InventoryApiError::IdentityToken("invalid_identity_token"))?,
+        );
+        let mut mac = HmacSha256::new_from_slice(self.key.as_ref())
+            .map_err(|_| InventoryApiError::IdentityToken("invalid_identity_token"))?;
+        mac.update(encoded.as_bytes());
+        let signature = hex::encode(mac.finalize().into_bytes());
+        Ok(format!(
+            "{}.{}.{}",
+            payload.identity_digest, encoded, signature
+        ))
+    }
+
+    fn validate(
+        &self,
+        token: &str,
+        expected: (Uuid, Uuid, Uuid, Option<&str>),
+    ) -> Result<IdentityTokenPayload, InventoryApiError> {
+        if token.is_empty() || token.len() > 1000 {
+            return Err(InventoryApiError::IdentityToken("invalid_identity_token"));
+        }
+        let mut parts = token.split('.');
+        let digest_prefix = parts.next().unwrap_or_default();
+        let encoded = parts.next().unwrap_or_default();
+        let signature = parts.next().unwrap_or_default();
+        if parts.next().is_some() || digest_prefix.len() != 64 {
+            return Err(InventoryApiError::IdentityToken("invalid_identity_token"));
+        }
+        let signature = hex::decode(signature)
+            .map_err(|_| InventoryApiError::IdentityToken("invalid_identity_token"))?;
+        let mut mac = HmacSha256::new_from_slice(self.key.as_ref())
+            .map_err(|_| InventoryApiError::IdentityToken("invalid_identity_token"))?;
+        mac.update(encoded.as_bytes());
+        mac.verify_slice(&signature)
+            .map_err(|_| InventoryApiError::IdentityToken("invalid_identity_token"))?;
+        let payload: IdentityTokenPayload = serde_json::from_slice(
+            &hex::decode(encoded)
+                .map_err(|_| InventoryApiError::IdentityToken("invalid_identity_token"))?,
+        )
+        .map_err(|_| InventoryApiError::IdentityToken("invalid_identity_token"))?;
+        if payload.identity_digest != digest_prefix || hex::decode(digest_prefix).is_err() {
+            return Err(InventoryApiError::IdentityToken("invalid_identity_token"));
+        }
+        if Utc::now().timestamp() >= payload.expires_at {
+            return Err(InventoryApiError::IdentityToken("expired_identity_token"));
+        }
+        if payload.format_version != 1
+            || payload.identity_version != CURRENT_INVENTORY_IDENTITY_VERSION.get()
+            || payload.organization_id != expected.0
+            || payload.project_id != expected.1
+            || payload.application_id != expected.2
+            || expected.3.is_some_and(|kind| payload.kind != kind)
+        {
+            return Err(InventoryApiError::IdentityToken(
+                "identity_token_scope_mismatch",
+            ));
+        }
+        Ok(payload)
+    }
 }
 
 pub fn router(pool: PgPool) -> Router {
     let state = InventoryApiState {
         auth: ApiCredentialAuthenticator::new(pool.clone()),
+        identity_tokens: IdentityTokenCodec::process_default(),
         pool,
     };
     Router::new()
@@ -38,6 +156,10 @@ pub fn router(pool: PgPool) -> Router {
         .route(
             "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/summary",
             get(summary),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/distribution",
+            get(distribution),
         )
         .route(
             "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/facets/{facet}",
@@ -70,6 +192,7 @@ pub fn router(pool: PgPool) -> Router {
 enum InventoryApiError {
     Unauthorized,
     Invalid(String),
+    IdentityToken(&'static str),
     NotFound,
     Database(sqlx::Error),
 }
@@ -89,6 +212,11 @@ impl IntoResponse for InventoryApiError {
                 "invalid or missing bearer credential".to_owned(),
             ),
             Self::Invalid(message) => (StatusCode::BAD_REQUEST, "invalid_request", message),
+            Self::IdentityToken(code) => (
+                StatusCode::BAD_REQUEST,
+                code,
+                "identity token is invalid for this request".to_owned(),
+            ),
             Self::NotFound => (
                 StatusCode::NOT_FOUND,
                 "not_found",
@@ -138,6 +266,7 @@ struct InventoryQuery {
     #[serde(flatten)]
     scope: InventoryScope,
     kind: Option<String>,
+    identity_token: Option<String>,
     cursor: Option<Uuid>,
     limit: Option<i64>,
 }
@@ -146,6 +275,48 @@ struct InventoryQuery {
 struct SummaryQuery {
     #[serde(flatten)]
     scope: InventoryScope,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DistributionQuery {
+    #[serde(flatten)]
+    scope: InventoryScope,
+    kind: String,
+    limit: Option<i64>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+struct DistributionRow {
+    id: Uuid,
+    identity_digest: Vec<u8>,
+    semantic_summary: Value,
+    occurrence_count: i64,
+    total_item_count: i64,
+    total_occurrence_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct DistributionEntry {
+    identity_token: String,
+    semantic_summary: Value,
+    item_count: i64,
+    occurrence_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct DistributionOther {
+    item_count: i64,
+    occurrence_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct InventoryDistribution {
+    identity_version: i16,
+    kind: String,
+    total_item_count: i64,
+    total_occurrence_count: i64,
+    entries: Vec<DistributionEntry>,
+    other: Option<DistributionOther>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -420,6 +591,17 @@ fn limit(value: Option<i64>) -> Result<i64, InventoryApiError> {
     }
 }
 
+fn aggregate_limit(value: Option<i64>) -> Result<i64, InventoryApiError> {
+    let value = value.unwrap_or(5);
+    if (1..=10).contains(&value) {
+        Ok(value)
+    } else {
+        Err(InventoryApiError::Invalid(
+            "limit must be between 1 and 10".into(),
+        ))
+    }
+}
+
 fn validate_kind(kind: Option<&str>) -> Result<(), InventoryApiError> {
     if kind.is_none_or(|value| matches!(value, "process" | "destination" | "domain" | "syscall")) {
         Ok(())
@@ -587,6 +769,94 @@ async fn summary(
 }
 
 #[allow(clippy::too_many_lines)]
+async fn distribution(
+    State(state): State<InventoryApiState>,
+    headers: HeaderMap,
+    Path((project_id, application_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<DistributionQuery>,
+) -> Result<Json<InventoryDistribution>, InventoryApiError> {
+    let started = Instant::now();
+    let principal = principal(&headers, &state).await?;
+    ensure_application(&state.pool, principal, project_id, application_id).await?;
+    validate_kind(Some(&query.kind))?;
+    let scope = query.scope.normalize()?;
+    validate_release_scope(
+        &state.pool,
+        principal,
+        project_id,
+        application_id,
+        scope.release_id,
+    )
+    .await?;
+    let limit = aggregate_limit(query.limit)?;
+    let version = CURRENT_INVENTORY_IDENTITY_VERSION.get();
+    let search = scope.search_pattern();
+    let rows = sqlx::query_as::<_, DistributionRow>(
+        "WITH scoped AS MATERIALIZED (SELECT i.id,i.identity_digest,i.semantic_summary,i.occurrence_count FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND i.inventory_kind=$5 AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$6)) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$10)) AND ($11::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$11)) AND ($12::timestamptz IS NULL OR i.last_seen_at >= $12) AND ($13::timestamptz IS NULL OR i.first_seen_at <= $13) AND ($14::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall') ILIKE $14)), ranked AS (SELECT id,identity_digest,semantic_summary,occurrence_count,count(*) OVER()::bigint total_item_count,COALESCE(sum(occurrence_count) OVER(),0)::bigint total_occurrence_count FROM scoped) SELECT id,identity_digest,semantic_summary,occurrence_count,total_item_count,total_occurrence_count FROM ranked ORDER BY occurrence_count DESC,identity_digest ASC LIMIT $15",
+    )
+    .bind(principal.organization_id)
+    .bind(project_id)
+    .bind(application_id)
+    .bind(version)
+    .bind(&query.kind)
+    .bind(scope.release_id)
+    .bind(scope.cluster_id)
+    .bind(scope.namespace.as_deref())
+    .bind(scope.workload_kind.as_deref())
+    .bind(scope.workload_name.as_deref())
+    .bind(scope.container_name.as_deref())
+    .bind(scope.observed_from)
+    .bind(scope.observed_to)
+    .bind(search.as_deref())
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await?;
+    let total_item_count = rows.first().map_or(0, |row| row.total_item_count);
+    let total_occurrence_count = rows.first().map_or(0, |row| row.total_occurrence_count);
+    let mut entry_occurrence_count = 0;
+    let mut entries = Vec::with_capacity(rows.len());
+    for row in rows {
+        entry_occurrence_count += row.occurrence_count;
+        let identity_digest = hex::encode(&row.identity_digest);
+        let identity_token = state.identity_tokens.issue(IdentityTokenPayload {
+            format_version: 1,
+            identity_version: version,
+            organization_id: principal.organization_id,
+            project_id,
+            application_id,
+            kind: query.kind.clone(),
+            item_id: row.id,
+            identity_digest,
+            issued_at: 0,
+            expires_at: 0,
+        })?;
+        entries.push(DistributionEntry {
+            identity_token,
+            semantic_summary: row.semantic_summary,
+            item_count: 1,
+            occurrence_count: row.occurrence_count,
+        });
+    }
+    let entry_item_count = i64::try_from(entries.len()).unwrap_or(i64::MAX);
+    let other_item_count = total_item_count - entry_item_count;
+    let other = (other_item_count > 0).then_some(DistributionOther {
+        item_count: other_item_count,
+        occurrence_count: total_occurrence_count - entry_occurrence_count,
+    });
+    crate::metrics::record_inventory_query(
+        u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+    );
+    Ok(Json(InventoryDistribution {
+        identity_version: version,
+        kind: query.kind,
+        total_item_count,
+        total_occurrence_count,
+        entries,
+        other,
+    }))
+}
+
+#[allow(clippy::too_many_lines)]
 async fn facets(
     State(state): State<InventoryApiState>,
     headers: HeaderMap,
@@ -707,6 +977,21 @@ async fn list_items(
     let principal = principal(&headers, &state).await?;
     ensure_application(&state.pool, principal, project_id, application_id).await?;
     validate_kind(query.kind.as_deref())?;
+    let identity = query
+        .identity_token
+        .as_deref()
+        .map(|token| {
+            state.identity_tokens.validate(
+                token,
+                (
+                    principal.organization_id,
+                    project_id,
+                    application_id,
+                    query.kind.as_deref(),
+                ),
+            )
+        })
+        .transpose()?;
     let scope = query.scope.normalize()?;
     validate_release_scope(
         &state.pool,
@@ -727,12 +1012,15 @@ async fn list_items(
     let (cursor_time, cursor_id) = cursor.map_or((None, None), |(time, id)| (Some(time), Some(id)));
     let search = scope.search_pattern();
     let mut items = sqlx::query_as::<_, InventoryItem>(
-        "SELECT i.id,i.project_id,i.application_id,i.inventory_kind,i.identity_version,i.semantic_summary,i.first_seen_at,i.last_seen_at,i.occurrence_count,(SELECT count(*) FROM runtime_inventory_releases r WHERE r.item_id=i.id) release_count,(SELECT count(DISTINCT s.cluster_id) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) cluster_count,(SELECT count(DISTINCT (s.cluster_id,s.namespace)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) namespace_count,(SELECT count(DISTINCT (s.cluster_id,s.namespace,s.workload_kind,s.workload_name)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) workload_count,(SELECT count(DISTINCT (s.cluster_id,s.pod_uid)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) pod_count,(SELECT count(DISTINCT s.container_name) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) container_count,(SELECT count(*) FROM runtime_inventory_group_links gl WHERE gl.item_id=i.id) group_count FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND ($5::text IS NULL OR i.inventory_kind=$5) AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$6)) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$10)) AND ($11::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$11)) AND ($12::timestamptz IS NULL OR i.last_seen_at >= $12) AND ($13::timestamptz IS NULL OR i.first_seen_at <= $13) AND ($14::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall') ILIKE $14) AND ($15::timestamptz IS NULL OR (i.last_seen_at,i.id)<($15,$16)) ORDER BY i.last_seen_at DESC,i.id DESC LIMIT $17",
+        "SELECT i.id,i.project_id,i.application_id,i.inventory_kind,i.identity_version,i.semantic_summary,i.first_seen_at,i.last_seen_at,i.occurrence_count,(SELECT count(*) FROM runtime_inventory_releases r WHERE r.item_id=i.id) release_count,(SELECT count(DISTINCT s.cluster_id) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) cluster_count,(SELECT count(DISTINCT (s.cluster_id,s.namespace)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) namespace_count,(SELECT count(DISTINCT (s.cluster_id,s.namespace,s.workload_kind,s.workload_name)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) workload_count,(SELECT count(DISTINCT (s.cluster_id,s.pod_uid)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) pod_count,(SELECT count(DISTINCT s.container_name) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) container_count,(SELECT count(*) FROM runtime_inventory_group_links gl WHERE gl.item_id=i.id) group_count FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND ($5::text IS NULL OR i.inventory_kind=$5) AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$6)) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$10)) AND ($11::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$11)) AND ($12::timestamptz IS NULL OR i.last_seen_at >= $12) AND ($13::timestamptz IS NULL OR i.first_seen_at <= $13) AND ($14::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall') ILIKE $14) AND ($15::uuid IS NULL OR (i.id=$15 AND i.identity_digest=$16)) AND ($17::timestamptz IS NULL OR (i.last_seen_at,i.id)<($17,$18)) ORDER BY i.last_seen_at DESC,i.id DESC LIMIT $19",
     )
     .bind(principal.organization_id).bind(project_id).bind(application_id)
     .bind(CURRENT_INVENTORY_IDENTITY_VERSION.get()).bind(query.kind).bind(scope.release_id).bind(scope.cluster_id)
     .bind(scope.namespace).bind(scope.workload_kind).bind(scope.workload_name).bind(scope.container_name)
-    .bind(scope.observed_from).bind(scope.observed_to).bind(search).bind(cursor_time).bind(cursor_id).bind(limit + 1)
+    .bind(scope.observed_from).bind(scope.observed_to).bind(search)
+    .bind(identity.as_ref().map(|value| value.item_id))
+    .bind(identity.as_ref().and_then(|value| hex::decode(&value.identity_digest).ok()))
+    .bind(cursor_time).bind(cursor_id).bind(limit + 1)
     .fetch_all(&state.pool).await?;
     let next_cursor = if items.len() > usize::try_from(limit).unwrap_or(usize::MAX) {
         items.pop();
@@ -960,5 +1248,106 @@ mod tests {
             assert!(!path.contains(".."));
             assert!(!path.contains("://"));
         }
+    }
+
+    fn token_payload() -> IdentityTokenPayload {
+        IdentityTokenPayload {
+            format_version: 1,
+            identity_version: CURRENT_INVENTORY_IDENTITY_VERSION.get(),
+            organization_id: Uuid::from_u128(1),
+            project_id: Uuid::from_u128(2),
+            application_id: Uuid::from_u128(3),
+            kind: "process".into(),
+            item_id: Uuid::from_u128(4),
+            identity_digest: "11".repeat(32),
+            issued_at: 0,
+            expires_at: 0,
+        }
+    }
+
+    #[test]
+    fn identity_tokens_round_trip_reject_tampering_and_bind_scope() {
+        let codec = IdentityTokenCodec {
+            key: Arc::new([7; 32]),
+        };
+        let token = codec.issue(token_payload()).unwrap();
+        let decoded = codec
+            .validate(
+                &token,
+                (
+                    Uuid::from_u128(1),
+                    Uuid::from_u128(2),
+                    Uuid::from_u128(3),
+                    Some("process"),
+                ),
+            )
+            .unwrap();
+        assert_eq!(decoded.item_id, Uuid::from_u128(4));
+        let mut tampered = token.into_bytes();
+        let last = tampered.len() - 1;
+        tampered[last] = if tampered[last] == b'0' { b'1' } else { b'0' };
+        assert!(matches!(
+            codec.validate(
+                std::str::from_utf8(&tampered).unwrap(),
+                (
+                    Uuid::from_u128(1),
+                    Uuid::from_u128(2),
+                    Uuid::from_u128(3),
+                    Some("process")
+                )
+            ),
+            Err(InventoryApiError::IdentityToken("invalid_identity_token"))
+        ));
+        let token = codec.issue(token_payload()).unwrap();
+        assert!(matches!(
+            codec.validate(
+                &token,
+                (
+                    Uuid::from_u128(1),
+                    Uuid::from_u128(2),
+                    Uuid::from_u128(9),
+                    Some("process")
+                )
+            ),
+            Err(InventoryApiError::IdentityToken(
+                "identity_token_scope_mismatch"
+            ))
+        ));
+    }
+
+    #[test]
+    fn identity_token_length_and_aggregate_limits_are_bounded() {
+        let codec = IdentityTokenCodec {
+            key: Arc::new([7; 32]),
+        };
+        assert!(matches!(
+            codec.validate(
+                &"x".repeat(1001),
+                (Uuid::nil(), Uuid::nil(), Uuid::nil(), None)
+            ),
+            Err(InventoryApiError::IdentityToken("invalid_identity_token"))
+        ));
+        for valid in [1, 5, 10] {
+            assert_eq!(aggregate_limit(Some(valid)).unwrap(), valid);
+        }
+        for invalid in [0, 11] {
+            assert!(aggregate_limit(Some(invalid)).is_err());
+        }
+        let mut expired = token_payload();
+        expired.issued_at = 1;
+        expired.expires_at = 2;
+        let token = codec.encode(&expired).unwrap();
+        assert!(matches!(
+            codec.validate(
+                &token,
+                (
+                    Uuid::from_u128(1),
+                    Uuid::from_u128(2),
+                    Uuid::from_u128(3),
+                    Some("process")
+                )
+            ),
+            Err(InventoryApiError::IdentityToken("expired_identity_token"))
+        ));
     }
 }

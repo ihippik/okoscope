@@ -41,6 +41,8 @@ static RELEASE_ABSENT: AtomicU64 = AtomicU64::new(0);
 static RELEASE_UNKNOWN: AtomicU64 = AtomicU64::new(0);
 static RELEASE_SUMMARY_UPDATES: AtomicU64 = AtomicU64::new(0);
 static RELEASE_DIFF_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static RELEASE_DIFF_SUMMARY_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static RELEASE_DIFF_SUMMARY_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
 static NAVIGATION_REQUESTS: AtomicU64 = AtomicU64::new(0);
 static API_ERRORS: AtomicU64 = AtomicU64::new(0);
 static API_CLIENT_ERRORS: AtomicU64 = AtomicU64::new(0);
@@ -170,6 +172,11 @@ pub fn record_release_summary() {
 
 pub fn record_release_diff() {
     RELEASE_DIFF_REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_release_diff_summary(elapsed_micros: u64) {
+    RELEASE_DIFF_SUMMARY_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    RELEASE_DIFF_SUMMARY_MICROSECONDS.fetch_add(elapsed_micros, Ordering::Relaxed);
 }
 
 pub fn record_navigation(_success: bool) {
@@ -522,6 +529,14 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         (
             "okoscope_release_diff_requests_total",
             RELEASE_DIFF_REQUESTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_release_diff_summary_requests_total",
+            RELEASE_DIFF_SUMMARY_REQUESTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_release_diff_summary_duration_microseconds_total",
+            RELEASE_DIFF_SUMMARY_MICROSECONDS.load(Ordering::Relaxed),
         ),
         (
             "okoscope_navigation_requests_total",
