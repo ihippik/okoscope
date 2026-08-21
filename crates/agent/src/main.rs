@@ -61,25 +61,8 @@ mod linux {
         let architecture = Architecture::current().context("unsupported CPU architecture")?;
         let (config, credential) = load_config(&args, architecture).await?;
         let counters = Arc::new(Counters::default());
-        let cache = Arc::new(AttributionCache::new(Duration::from_secs(30)));
-        let watch_cache = cache.clone();
-        let watch_client = kube::Client::try_default().await?;
-        tokio::spawn(async move {
-            if let Err(error) = run_watches(watch_client, watch_cache).await {
-                tracing::error!(%error, "Kubernetes attribution watch stopped");
-            }
-        });
-        let mut observer = Observer::load(
-            &args.ebpf_object,
-            &config.observation.syscalls,
-            agent::observer::ObservationPrograms {
-                network_connect: config.observation.network.connect.into(),
-                network_listen: config.observation.network.listen.into(),
-                network_accept: config.observation.network.accept.into(),
-                dns: config.observation.network.dns.enabled.into(),
-            },
-            architecture,
-        )?;
+        let cache = start_attribution_cache().await?;
+        let mut observer = load_observer(&args, &config, architecture)?;
         let mut cgroup_resolver =
             cgroup::CgroupResolver::new("/sys/fs/cgroup").context("index host cgroup hierarchy")?;
         let mut buffer = EventBuffer::new(config.safety.queue_capacity, config.safety.batch_size);
@@ -90,7 +73,7 @@ mod linux {
             EventRateLimiter::new(config.observation.network.max_accepted_events_per_second);
         let mut dns_processor = DnsProcessor::new(&config.observation.network.dns);
         loop {
-            let hello = hello(&config, counters.snapshot());
+            let hello = hello(&config, &counters.snapshot());
             let mut session =
                 connect_with_backoff(&config.server, credential.trim(), hello).await?;
             for batch in buffer.replay_pending(&counters) {
@@ -167,6 +150,36 @@ mod linux {
                 }
             }
         }
+    }
+
+    async fn start_attribution_cache() -> Result<Arc<AttributionCache>> {
+        let cache = Arc::new(AttributionCache::new(Duration::from_secs(30)));
+        let watch_cache = cache.clone();
+        let watch_client = kube::Client::try_default().await?;
+        tokio::spawn(async move {
+            if let Err(error) = run_watches(watch_client, watch_cache).await {
+                tracing::error!(%error, "Kubernetes attribution watch stopped");
+            }
+        });
+        Ok(cache)
+    }
+
+    fn load_observer(
+        args: &Args,
+        config: &AgentConfig,
+        architecture: Architecture,
+    ) -> Result<Observer> {
+        Observer::load(
+            &args.ebpf_object,
+            &config.observation.syscalls,
+            agent::observer::ObservationPrograms {
+                network_connect: config.observation.network.connect.into(),
+                network_listen: config.observation.network.listen.into(),
+                network_accept: config.observation.network.accept.into(),
+                dns: config.observation.network.dns.enabled.into(),
+            },
+            architecture,
+        )
     }
 
     async fn load_config(args: &Args, architecture: Architecture) -> Result<(AgentConfig, String)> {
@@ -273,14 +286,11 @@ mod linux {
             &config.identity.node_name,
             &config.scope.workloads,
         )?;
-        let payload = match agent::kernel_event::inbound_payload(kernel) {
-            Ok(payload) => payload,
-            Err(_) => {
-                counters
-                    .inbound_decode_failed
-                    .fetch_add(1, Ordering::Relaxed);
-                return None;
-            }
+        let Ok(payload) = agent::kernel_event::inbound_payload(kernel) else {
+            counters
+                .inbound_decode_failed
+                .fetch_add(1, Ordering::Relaxed);
+            return None;
         };
         Some(RuntimeEvent {
             id: Uuid::new_v4(),
@@ -297,14 +307,14 @@ mod linux {
         })
     }
 
-    fn hello(config: &AgentConfig, snapshot: agent::counters::CounterSnapshot) -> AgentHello {
+    fn hello(config: &AgentConfig, snapshot: &agent::counters::CounterSnapshot) -> AgentHello {
         AgentHello {
             agent_version: env!("CARGO_PKG_VERSION").into(),
             node_name: config.identity.node_name.clone(),
             architecture: std::env::consts::ARCH.into(),
             kernel_release: kernel_release(),
             capabilities: config.observation.capabilities(),
-            drop_counters: Some(snapshot.into()),
+            drop_counters: Some((*snapshot).into()),
         }
     }
 
