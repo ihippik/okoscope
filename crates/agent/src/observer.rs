@@ -64,6 +64,74 @@ impl core::fmt::Debug for Observer {
     }
 }
 
+fn attach_configured_programs(ebpf: &mut Ebpf, programs: ObservationPrograms) -> Result<()> {
+    attach(ebpf, "okoscope_exec", "sched", "sched_process_exec")?;
+    attach(ebpf, "okoscope_sys_enter", "raw_syscalls", "sys_enter")?;
+    if programs.network_connect.is_enabled() {
+        attach(
+            ebpf,
+            "okoscope_connect_enter",
+            "syscalls",
+            "sys_enter_connect",
+        )?;
+        attach(
+            ebpf,
+            "okoscope_connect_exit",
+            "syscalls",
+            "sys_exit_connect",
+        )?;
+    }
+    if programs.network_listen.is_enabled() || programs.network_accept.is_enabled() {
+        attach(
+            ebpf,
+            "okoscope_inet_sock_set_state",
+            "sock",
+            "inet_sock_set_state",
+        )?;
+    }
+    if programs.network_accept.is_enabled() {
+        attach_kretprobe(ebpf, "okoscope_inet_csk_accept_return", "inet_csk_accept")?;
+    }
+    if programs.dns.is_enabled() {
+        let cgroup = File::open("/sys/fs/cgroup/kubepods")
+            .or_else(|_| File::open("/sys/fs/cgroup/kubepods.slice"))
+            .context("open Kubernetes cgroup v2 subtree for DNS observation")?;
+        attach_cgroup(
+            ebpf,
+            "okoscope_dns_egress",
+            &cgroup,
+            CgroupSkbAttachType::Egress,
+        )?;
+        attach_cgroup(
+            ebpf,
+            "okoscope_dns_ingress",
+            &cgroup,
+            CgroupSkbAttachType::Ingress,
+        )?;
+    }
+    if programs.files.is_enabled() {
+        for (program, event) in [
+            ("okoscope_file_open_enter", "sys_enter_openat"),
+            ("okoscope_file_open_exit", "sys_exit_openat"),
+            ("okoscope_file_write_enter", "sys_enter_write"),
+            ("okoscope_file_write_exit", "sys_exit_write"),
+            ("okoscope_file_truncate_enter", "sys_enter_truncate"),
+            ("okoscope_file_truncate_exit", "sys_exit_truncate"),
+            ("okoscope_file_ftruncate_enter", "sys_enter_ftruncate"),
+            ("okoscope_file_ftruncate_exit", "sys_exit_ftruncate"),
+            ("okoscope_file_unlink_enter", "sys_enter_unlinkat"),
+            ("okoscope_file_unlink_exit", "sys_exit_unlinkat"),
+            ("okoscope_file_rename_enter", "sys_enter_renameat2"),
+            ("okoscope_file_rename_exit", "sys_exit_renameat2"),
+            ("okoscope_file_close_enter", "sys_enter_close"),
+            ("okoscope_file_close_exit", "sys_exit_close"),
+        ] {
+            attach(ebpf, program, "syscalls", event)?;
+        }
+    }
+    Ok(())
+}
+
 impl Observer {
     pub fn load(
         path: &Path,
@@ -74,74 +142,7 @@ impl Observer {
         let mut ebpf = EbpfLoader::new()
             .load_file(path)
             .context("load eBPF object")?;
-        attach(&mut ebpf, "okoscope_exec", "sched", "sched_process_exec")?;
-        attach(&mut ebpf, "okoscope_sys_enter", "raw_syscalls", "sys_enter")?;
-        if programs.network_connect.is_enabled() {
-            attach(
-                &mut ebpf,
-                "okoscope_connect_enter",
-                "syscalls",
-                "sys_enter_connect",
-            )?;
-            attach(
-                &mut ebpf,
-                "okoscope_connect_exit",
-                "syscalls",
-                "sys_exit_connect",
-            )?;
-        }
-        if programs.network_listen.is_enabled() || programs.network_accept.is_enabled() {
-            attach(
-                &mut ebpf,
-                "okoscope_inet_sock_set_state",
-                "sock",
-                "inet_sock_set_state",
-            )?;
-        }
-        if programs.network_accept.is_enabled() {
-            attach_kretprobe(
-                &mut ebpf,
-                "okoscope_inet_csk_accept_return",
-                "inet_csk_accept",
-            )?;
-        }
-        if programs.dns.is_enabled() {
-            let cgroup = File::open("/sys/fs/cgroup/kubepods")
-                .or_else(|_| File::open("/sys/fs/cgroup/kubepods.slice"))
-                .context("open Kubernetes cgroup v2 subtree for DNS observation")?;
-            attach_cgroup(
-                &mut ebpf,
-                "okoscope_dns_egress",
-                &cgroup,
-                CgroupSkbAttachType::Egress,
-            )?;
-            attach_cgroup(
-                &mut ebpf,
-                "okoscope_dns_ingress",
-                &cgroup,
-                CgroupSkbAttachType::Ingress,
-            )?;
-        }
-        if programs.files.is_enabled() {
-            for (program, event) in [
-                ("okoscope_file_open_enter", "sys_enter_openat"),
-                ("okoscope_file_open_exit", "sys_exit_openat"),
-                ("okoscope_file_write_enter", "sys_enter_write"),
-                ("okoscope_file_write_exit", "sys_exit_write"),
-                ("okoscope_file_truncate_enter", "sys_enter_truncate"),
-                ("okoscope_file_truncate_exit", "sys_exit_truncate"),
-                ("okoscope_file_ftruncate_enter", "sys_enter_ftruncate"),
-                ("okoscope_file_ftruncate_exit", "sys_exit_ftruncate"),
-                ("okoscope_file_unlink_enter", "sys_enter_unlinkat"),
-                ("okoscope_file_unlink_exit", "sys_exit_unlinkat"),
-                ("okoscope_file_rename_enter", "sys_enter_renameat2"),
-                ("okoscope_file_rename_exit", "sys_exit_renameat2"),
-                ("okoscope_file_close_enter", "sys_enter_close"),
-                ("okoscope_file_close_exit", "sys_exit_close"),
-            ] {
-                attach(&mut ebpf, program, "syscalls", event)?;
-            }
-        }
+        attach_configured_programs(&mut ebpf, programs)?;
         {
             let map = ebpf
                 .map_mut("SYSCALL_ALLOWLIST")

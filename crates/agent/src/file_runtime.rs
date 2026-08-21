@@ -199,7 +199,9 @@ mod tests {
         assert!(
             aggregator
                 .drain_expired(
-                    now + FILE_MODIFY_AGGREGATION_WINDOW - std::time::Duration::from_millis(1)
+                    now + FILE_MODIFY_AGGREGATION_WINDOW
+                        .checked_sub(std::time::Duration::from_millis(1))
+                        .unwrap()
                 )
                 .is_empty()
         );

@@ -109,8 +109,9 @@ pub fn decode_file(bytes: &[u8]) -> Result<DecodedFileEvent, FileDecodeError> {
             descriptor_generation: u64_at(24),
             fd: i32_at(32),
             result: i32_at(36),
-            path_len: path_len as u16,
-            new_path_len: new_path_len as u16,
+            path_len: u16::try_from(path_len).map_err(|_| FileDecodeError::InvalidPathLength)?,
+            new_path_len: u16::try_from(new_path_len)
+                .map_err(|_| FileDecodeError::InvalidPathLength)?,
             operation,
             flags,
             padding: [bytes[46], bytes[47]],
@@ -519,7 +520,7 @@ mod tests {
         bytes[32..36].copy_from_slice(&7_i32.to_ne_bytes());
         bytes[36..40].copy_from_slice(&1_i32.to_ne_bytes());
         let path = b"/app/data/report";
-        bytes[40..42].copy_from_slice(&(path.len() as u16).to_ne_bytes());
+        bytes[40..42].copy_from_slice(&u16::try_from(path.len()).unwrap().to_ne_bytes());
         bytes[44] = FILE_OPERATION_MODIFY;
         bytes[45] = FILE_FLAG_COMPLETE;
         bytes[48..51].copy_from_slice(b"api");
@@ -542,7 +543,8 @@ mod tests {
         );
         let mut relative = bytes;
         let relative_path = b"relative/report";
-        relative[40..42].copy_from_slice(&(relative_path.len() as u16).to_ne_bytes());
+        relative[40..42]
+            .copy_from_slice(&u16::try_from(relative_path.len()).unwrap().to_ne_bytes());
         relative[64..64 + path.len()].fill(0);
         relative[64..64 + relative_path.len()].copy_from_slice(relative_path);
         assert!(matches!(

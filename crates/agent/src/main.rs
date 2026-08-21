@@ -53,6 +53,7 @@ mod linux {
         ebpf_object: PathBuf,
     }
 
+    #[allow(clippy::too_many_lines)]
     pub async fn main() -> Result<()> {
         tracing_subscriber::fmt()
             .json()

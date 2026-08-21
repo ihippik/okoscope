@@ -60,88 +60,7 @@ pub fn validate_protocol(version: u32) -> Result<(), ProtocolError> {
 
 impl From<RuntimeEvent> for v1::RuntimeEvent {
     fn from(event: RuntimeEvent) -> Self {
-        let payload = match event.payload {
-            EventPayload::ProcessExec(exec) => {
-                v1::runtime_event::Payload::ProcessExec(v1::ProcessExec {
-                    executable: exec.executable,
-                    parent_command: exec.parent_command.unwrap_or_default(),
-                })
-            }
-            EventPayload::Syscall(syscall) => {
-                v1::runtime_event::Payload::Syscall(v1::Syscall { name: syscall.name })
-            }
-            EventPayload::NetworkConnect(network) => {
-                let (address_family, destination_address) = match network.destination_address {
-                    IpAddr::V4(address) => {
-                        (v1::NetworkAddressFamily::Ipv4, address.octets().to_vec())
-                    }
-                    IpAddr::V6(address) => {
-                        (v1::NetworkAddressFamily::Ipv6, address.octets().to_vec())
-                    }
-                };
-                let outcome = match network.outcome {
-                    NetworkConnectOutcome::Succeeded => v1::NetworkConnectOutcome::Succeeded,
-                    NetworkConnectOutcome::InProgress => v1::NetworkConnectOutcome::InProgress,
-                    NetworkConnectOutcome::Failed => v1::NetworkConnectOutcome::Failed,
-                };
-                v1::runtime_event::Payload::NetworkConnect(v1::NetworkConnect {
-                    address_family: address_family.into(),
-                    destination_address,
-                    destination_port: u32::from(network.destination_port),
-                    outcome: outcome.into(),
-                    errno: network.errno.map(u32::from),
-                    dns_context: network.dns_context.map(encode_dns_context),
-                })
-            }
-            EventPayload::NetworkListen(network) => {
-                let (address_family, local_address) = encode_network_ip(network.local_address);
-                v1::runtime_event::Payload::NetworkListen(v1::NetworkListen {
-                    transport: v1::NetworkTransport::Tcp.into(),
-                    address_family: address_family.into(),
-                    local_address,
-                    local_port: u32::from(network.local_port),
-                })
-            }
-            EventPayload::NetworkAccept(network) => {
-                let (address_family, local_address) = encode_network_ip(network.local_address);
-                v1::runtime_event::Payload::NetworkAccept(v1::NetworkAccept {
-                    transport: v1::NetworkTransport::Tcp.into(),
-                    address_family: address_family.into(),
-                    local_address,
-                    local_port: u32::from(network.local_port),
-                    remote_address: encode_ip(network.remote_address),
-                    remote_port: u32::from(network.remote_port),
-                })
-            }
-            EventPayload::NetworkDnsQuery(query) => {
-                v1::runtime_event::Payload::NetworkDnsQuery(encode_dns_query(query))
-            }
-            EventPayload::NetworkDnsResponse(response) => {
-                v1::runtime_event::Payload::NetworkDnsResponse(encode_dns_response(response))
-            }
-            EventPayload::FileCreate(value) => {
-                v1::runtime_event::Payload::FileCreate(v1::FileCreate {
-                    path: value.path.into(),
-                })
-            }
-            EventPayload::FileModify(value) => {
-                v1::runtime_event::Payload::FileModify(v1::FileModify {
-                    path: value.path.into(),
-                })
-            }
-            EventPayload::FileDelete(value) => {
-                v1::runtime_event::Payload::FileDelete(v1::FileDelete {
-                    path: value.path.into(),
-                })
-            }
-            EventPayload::FileRename(value) => {
-                v1::runtime_event::Payload::FileRename(v1::FileRename {
-                    old_path: value.old_path.into(),
-                    new_path: value.new_path.into(),
-                    replaced: value.replaced,
-                })
-            }
-        };
+        let payload = encode_payload(event.payload);
         let a = event.attribution;
         let p = event.process;
         Self {
@@ -170,6 +89,79 @@ impl From<RuntimeEvent> for v1::RuntimeEvent {
             }),
             payload: Some(payload),
         }
+    }
+}
+
+fn encode_payload(payload: EventPayload) -> v1::runtime_event::Payload {
+    match payload {
+        EventPayload::ProcessExec(exec) => {
+            v1::runtime_event::Payload::ProcessExec(v1::ProcessExec {
+                executable: exec.executable,
+                parent_command: exec.parent_command.unwrap_or_default(),
+            })
+        }
+        EventPayload::Syscall(syscall) => {
+            v1::runtime_event::Payload::Syscall(v1::Syscall { name: syscall.name })
+        }
+        EventPayload::NetworkConnect(network) => {
+            let (address_family, destination_address) = match network.destination_address {
+                IpAddr::V4(address) => (v1::NetworkAddressFamily::Ipv4, address.octets().to_vec()),
+                IpAddr::V6(address) => (v1::NetworkAddressFamily::Ipv6, address.octets().to_vec()),
+            };
+            let outcome = match network.outcome {
+                NetworkConnectOutcome::Succeeded => v1::NetworkConnectOutcome::Succeeded,
+                NetworkConnectOutcome::InProgress => v1::NetworkConnectOutcome::InProgress,
+                NetworkConnectOutcome::Failed => v1::NetworkConnectOutcome::Failed,
+            };
+            v1::runtime_event::Payload::NetworkConnect(v1::NetworkConnect {
+                address_family: address_family.into(),
+                destination_address,
+                destination_port: u32::from(network.destination_port),
+                outcome: outcome.into(),
+                errno: network.errno.map(u32::from),
+                dns_context: network.dns_context.map(encode_dns_context),
+            })
+        }
+        EventPayload::NetworkListen(network) => {
+            let (address_family, local_address) = encode_network_ip(network.local_address);
+            v1::runtime_event::Payload::NetworkListen(v1::NetworkListen {
+                transport: v1::NetworkTransport::Tcp.into(),
+                address_family: address_family.into(),
+                local_address,
+                local_port: u32::from(network.local_port),
+            })
+        }
+        EventPayload::NetworkAccept(network) => {
+            let (address_family, local_address) = encode_network_ip(network.local_address);
+            v1::runtime_event::Payload::NetworkAccept(v1::NetworkAccept {
+                transport: v1::NetworkTransport::Tcp.into(),
+                address_family: address_family.into(),
+                local_address,
+                local_port: u32::from(network.local_port),
+                remote_address: encode_ip(network.remote_address),
+                remote_port: u32::from(network.remote_port),
+            })
+        }
+        EventPayload::NetworkDnsQuery(query) => {
+            v1::runtime_event::Payload::NetworkDnsQuery(encode_dns_query(query))
+        }
+        EventPayload::NetworkDnsResponse(response) => {
+            v1::runtime_event::Payload::NetworkDnsResponse(encode_dns_response(response))
+        }
+        EventPayload::FileCreate(value) => v1::runtime_event::Payload::FileCreate(v1::FileCreate {
+            path: value.path.into(),
+        }),
+        EventPayload::FileModify(value) => v1::runtime_event::Payload::FileModify(v1::FileModify {
+            path: value.path.into(),
+        }),
+        EventPayload::FileDelete(value) => v1::runtime_event::Payload::FileDelete(v1::FileDelete {
+            path: value.path.into(),
+        }),
+        EventPayload::FileRename(value) => v1::runtime_event::Payload::FileRename(v1::FileRename {
+            old_path: value.old_path.into(),
+            new_path: value.new_path.into(),
+            replaced: value.replaced,
+        }),
     }
 }
 
