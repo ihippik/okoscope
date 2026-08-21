@@ -72,10 +72,12 @@ mod linux {
         let mut observer = Observer::load(
             &args.ebpf_object,
             &config.observation.syscalls,
-            config.observation.network.connect,
-            config.observation.network.listen,
-            config.observation.network.accept,
-            config.observation.network.dns.enabled,
+            agent::observer::ObservationPrograms {
+                network_connect: config.observation.network.connect,
+                network_listen: config.observation.network.listen,
+                network_accept: config.observation.network.accept,
+                dns: config.observation.network.dns.enabled,
+            },
             architecture,
         )?;
         let mut cgroup_resolver =

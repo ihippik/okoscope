@@ -23,6 +23,14 @@ pub struct Observer {
     dns_counters: PerCpuArray<aya::maps::MapData, u64>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ObservationPrograms {
+    pub network_connect: bool,
+    pub network_listen: bool,
+    pub network_accept: bool,
+    pub dns: bool,
+}
+
 impl core::fmt::Debug for Observer {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.debug_struct("Observer").finish_non_exhaustive()
@@ -33,10 +41,7 @@ impl Observer {
     pub fn load(
         path: &Path,
         syscall_names: &[String],
-        network_connect: bool,
-        network_listen: bool,
-        network_accept: bool,
-        dns_enabled: bool,
+        programs: ObservationPrograms,
         architecture: Architecture,
     ) -> Result<Self> {
         let mut ebpf = EbpfLoader::new()
@@ -44,7 +49,7 @@ impl Observer {
             .context("load eBPF object")?;
         attach(&mut ebpf, "okoscope_exec", "sched", "sched_process_exec")?;
         attach(&mut ebpf, "okoscope_sys_enter", "raw_syscalls", "sys_enter")?;
-        if network_connect {
+        if programs.network_connect {
             attach(
                 &mut ebpf,
                 "okoscope_connect_enter",
@@ -58,7 +63,7 @@ impl Observer {
                 "sys_exit_connect",
             )?;
         }
-        if network_listen || network_accept {
+        if programs.network_listen || programs.network_accept {
             attach(
                 &mut ebpf,
                 "okoscope_inet_sock_set_state",
@@ -66,14 +71,14 @@ impl Observer {
                 "inet_sock_set_state",
             )?;
         }
-        if network_accept {
+        if programs.network_accept {
             attach_kretprobe(
                 &mut ebpf,
                 "okoscope_inet_csk_accept_return",
                 "inet_csk_accept",
             )?;
         }
-        if dns_enabled {
+        if programs.dns {
             let cgroup = File::open("/sys/fs/cgroup/kubepods")
                 .or_else(|_| File::open("/sys/fs/cgroup/kubepods.slice"))
                 .context("open Kubernetes cgroup v2 subtree for DNS observation")?;
