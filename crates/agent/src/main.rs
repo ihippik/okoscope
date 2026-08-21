@@ -73,10 +73,10 @@ mod linux {
             &args.ebpf_object,
             &config.observation.syscalls,
             agent::observer::ObservationPrograms {
-                network_connect: config.observation.network.connect,
-                network_listen: config.observation.network.listen,
-                network_accept: config.observation.network.accept,
-                dns: config.observation.network.dns.enabled,
+                network_connect: config.observation.network.connect.into(),
+                network_listen: config.observation.network.listen.into(),
+                network_accept: config.observation.network.accept.into(),
+                dns: config.observation.network.dns.enabled.into(),
             },
             architecture,
         )?;

@@ -25,10 +25,32 @@ pub struct Observer {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ObservationPrograms {
-    pub network_connect: bool,
-    pub network_listen: bool,
-    pub network_accept: bool,
-    pub dns: bool,
+    pub network_connect: ProgramState,
+    pub network_listen: ProgramState,
+    pub network_accept: ProgramState,
+    pub dns: ProgramState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProgramState {
+    Disabled,
+    Enabled,
+}
+
+impl From<bool> for ProgramState {
+    fn from(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
+impl ProgramState {
+    const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
 }
 
 impl core::fmt::Debug for Observer {
@@ -49,7 +71,7 @@ impl Observer {
             .context("load eBPF object")?;
         attach(&mut ebpf, "okoscope_exec", "sched", "sched_process_exec")?;
         attach(&mut ebpf, "okoscope_sys_enter", "raw_syscalls", "sys_enter")?;
-        if programs.network_connect {
+        if programs.network_connect.is_enabled() {
             attach(
                 &mut ebpf,
                 "okoscope_connect_enter",
@@ -63,7 +85,7 @@ impl Observer {
                 "sys_exit_connect",
             )?;
         }
-        if programs.network_listen || programs.network_accept {
+        if programs.network_listen.is_enabled() || programs.network_accept.is_enabled() {
             attach(
                 &mut ebpf,
                 "okoscope_inet_sock_set_state",
@@ -71,14 +93,14 @@ impl Observer {
                 "inet_sock_set_state",
             )?;
         }
-        if programs.network_accept {
+        if programs.network_accept.is_enabled() {
             attach_kretprobe(
                 &mut ebpf,
                 "okoscope_inet_csk_accept_return",
                 "inet_csk_accept",
             )?;
         }
-        if programs.dns {
+        if programs.dns.is_enabled() {
             let cgroup = File::open("/sys/fs/cgroup/kubepods")
                 .or_else(|_| File::open("/sys/fs/cgroup/kubepods.slice"))
                 .context("open Kubernetes cgroup v2 subtree for DNS observation")?;
