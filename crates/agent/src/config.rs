@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -87,6 +87,44 @@ pub struct ObservationConfig {
     pub syscalls: Vec<String>,
     #[serde(default)]
     pub network: NetworkObservationConfig,
+    #[serde(default)]
+    pub files: FileObservationConfig,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum FileOperation {
+    Create,
+    Modify,
+    Delete,
+    Rename,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct FileObservationConfig {
+    pub enabled: bool,
+    pub operations: BTreeSet<FileOperation>,
+    pub include_paths: Vec<String>,
+    pub exclude_paths: Vec<String>,
+}
+
+impl FileObservationConfig {
+    #[must_use]
+    pub fn observes(&self, path: &event_model::FileActivityPath) -> bool {
+        let parse = |value: &String| event_model::FileActivityPath::new(value.clone()).ok();
+        self.enabled
+            && self
+                .include_paths
+                .iter()
+                .filter_map(parse)
+                .any(|prefix| path.is_equal_or_descendant_of(&prefix))
+            && !self
+                .exclude_paths
+                .iter()
+                .filter_map(parse)
+                .any(|prefix| path.is_equal_or_descendant_of(&prefix))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -170,6 +208,9 @@ impl ObservationConfig {
         if self.network.dns.enabled && self.network.dns.tcp {
             capabilities.push(protocol::NETWORK_DNS_TCP_CAPABILITY.into());
         }
+        if self.files.enabled {
+            capabilities.push(protocol::FILE_ACTIVITY_CAPABILITY.into());
+        }
         capabilities
     }
 }
@@ -240,6 +281,7 @@ impl AgentConfig {
             && !self.observation.network.listen
             && !self.observation.network.accept
             && !self.observation.network.dns.enabled
+            && !self.observation.files.enabled
         {
             return Err(ConfigError::MissingObservation);
         }
@@ -262,6 +304,21 @@ impl AgentConfig {
             ));
         }
         let dns = &self.observation.network.dns;
+        let files = &self.observation.files;
+        if files.enabled {
+            if files.operations.is_empty() || files.include_paths.is_empty() {
+                return Err(ConfigError::InvalidSelector(
+                    "file observation requires operations and includePaths".into(),
+                ));
+            }
+            for path in files.include_paths.iter().chain(&files.exclude_paths) {
+                event_model::FileActivityPath::new(path.clone()).map_err(|_| {
+                    ConfigError::InvalidSelector(
+                        "file paths must be absolute, normalized, bounded, and NUL-free".into(),
+                    )
+                })?;
+            }
+        }
         if self.observation.network.accept
             && !(1..=100_000).contains(&self.observation.network.max_accepted_events_per_second)
         {
@@ -497,5 +554,54 @@ observation:
             name: "payment-api".into(),
             labels
         }));
+    }
+
+    #[test]
+    fn files_are_strict_opt_in_with_component_filters() {
+        let defaulted = AgentConfig::from_yaml(VALID, Architecture::X86_64).unwrap();
+        assert!(!defaulted.observation.files.enabled);
+        let enabled = VALID.replace(
+            "  syscalls: [ptrace, setns]",
+            "  syscalls: []\n  files:\n    enabled: true\n    operations: [create, modify, delete, rename]\n    includePaths: [/app/data]\n    excludePaths: [/app/data/cache]",
+        );
+        let config = AgentConfig::from_yaml(&enabled, Architecture::X86_64).unwrap();
+        assert!(
+            config
+                .observation
+                .capabilities()
+                .contains(&protocol::FILE_ACTIVITY_CAPABILITY.to_owned())
+        );
+        assert!(
+            config
+                .observation
+                .files
+                .observes(&event_model::FileActivityPath::new("/app/data/report").unwrap())
+        );
+        assert!(
+            !config
+                .observation
+                .files
+                .observes(&event_model::FileActivityPath::new("/app/database/report").unwrap())
+        );
+        assert!(
+            !config
+                .observation
+                .files
+                .observes(&event_model::FileActivityPath::new("/app/data/cache/item").unwrap())
+        );
+
+        for replacement in [
+            "    operations: []\n    includePaths: [/app/data]",
+            "    operations: [create]\n    includePaths: []",
+            "    operations: [create]\n    includePaths: [relative]",
+            "    operations: [create]\n    includePaths: [/app/../secret]",
+            "    operations: [unknown]\n    includePaths: [/app/data]",
+        ] {
+            let invalid = VALID.replace(
+                "  syscalls: [ptrace, setns]",
+                &format!("  syscalls: []\n  files:\n    enabled: true\n{replacement}"),
+            );
+            assert!(AgentConfig::from_yaml(&invalid, Architecture::X86_64).is_err());
+        }
     }
 }

@@ -32,6 +32,20 @@ pub struct Counters {
     pub dns_kernel_unsupported_framing: AtomicU64,
     pub dns_attribution_failed: AtomicU64,
     pub dns_oversize: AtomicU64,
+    pub file_correlation_capacity: AtomicU64,
+    pub file_correlation_miss: AtomicU64,
+    pub file_path_read_failed: AtomicU64,
+    pub file_path_relative: AtomicU64,
+    pub file_path_invalid: AtomicU64,
+    pub file_path_oversize: AtomicU64,
+    pub file_fd_miss: AtomicU64,
+    pub file_filtered: AtomicU64,
+    pub file_kernel_lost: AtomicU64,
+    pub file_aggregation_capacity: AtomicU64,
+    pub file_decode_failed: AtomicU64,
+    pub file_attribution_failed: AtomicU64,
+    pub file_rate_limited: AtomicU64,
+    pub file_unsupported_object: AtomicU64,
     pub sent: AtomicU64,
     pub retried: AtomicU64,
     pub acknowledged: AtomicU64,
@@ -69,6 +83,20 @@ pub struct CounterSnapshot {
     pub dns_kernel_unsupported_framing: u64,
     pub dns_attribution_failed: u64,
     pub dns_oversize: u64,
+    pub file_correlation_capacity: u64,
+    pub file_correlation_miss: u64,
+    pub file_path_read_failed: u64,
+    pub file_path_relative: u64,
+    pub file_path_invalid: u64,
+    pub file_path_oversize: u64,
+    pub file_fd_miss: u64,
+    pub file_filtered: u64,
+    pub file_kernel_lost: u64,
+    pub file_aggregation_capacity: u64,
+    pub file_decode_failed: u64,
+    pub file_attribution_failed: u64,
+    pub file_rate_limited: u64,
+    pub file_unsupported_object: u64,
     pub sent: u64,
     pub retried: u64,
     pub acknowledged: u64,
@@ -101,7 +129,38 @@ pub struct InboundKernelCounters {
     pub correlation_miss: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FileKernelCounters {
+    pub correlation_capacity: u64,
+    pub correlation_miss: u64,
+    pub path_read_failed: u64,
+    pub path_relative: u64,
+    pub path_invalid: u64,
+    pub path_oversize: u64,
+    pub fd_miss: u64,
+    pub filtered: u64,
+    pub kernel_lost: u64,
+}
+
 impl Counters {
+    pub fn update_file_kernel(&self, value: FileKernelCounters) {
+        self.file_correlation_capacity
+            .store(value.correlation_capacity, Ordering::Relaxed);
+        self.file_correlation_miss
+            .store(value.correlation_miss, Ordering::Relaxed);
+        self.file_path_read_failed
+            .store(value.path_read_failed, Ordering::Relaxed);
+        self.file_path_relative
+            .store(value.path_relative, Ordering::Relaxed);
+        // Invalid normalized paths and configured filtering are enforced in userspace.
+        // Keep those monotonic counters independent from the kernel snapshot.
+        self.file_path_oversize
+            .store(value.path_oversize, Ordering::Relaxed);
+        self.file_fd_miss.store(value.fd_miss, Ordering::Relaxed);
+        self.file_kernel_lost
+            .store(value.kernel_lost, Ordering::Relaxed);
+    }
+
     pub fn update_inbound_kernel(&self, value: InboundKernelCounters) {
         self.inbound_decode_failed
             .store(value.decode_failed, Ordering::Relaxed);
@@ -174,6 +233,20 @@ impl Counters {
             dns_kernel_unsupported_framing: load(&self.dns_kernel_unsupported_framing),
             dns_attribution_failed: load(&self.dns_attribution_failed),
             dns_oversize: load(&self.dns_oversize),
+            file_correlation_capacity: load(&self.file_correlation_capacity),
+            file_correlation_miss: load(&self.file_correlation_miss),
+            file_path_read_failed: load(&self.file_path_read_failed),
+            file_path_relative: load(&self.file_path_relative),
+            file_path_invalid: load(&self.file_path_invalid),
+            file_path_oversize: load(&self.file_path_oversize),
+            file_fd_miss: load(&self.file_fd_miss),
+            file_filtered: load(&self.file_filtered),
+            file_kernel_lost: load(&self.file_kernel_lost),
+            file_aggregation_capacity: load(&self.file_aggregation_capacity),
+            file_decode_failed: load(&self.file_decode_failed),
+            file_attribution_failed: load(&self.file_attribution_failed),
+            file_rate_limited: load(&self.file_rate_limited),
+            file_unsupported_object: load(&self.file_unsupported_object),
             sent: load(&self.sent),
             retried: load(&self.retried),
             acknowledged: load(&self.acknowledged),

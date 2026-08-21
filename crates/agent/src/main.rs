@@ -8,7 +8,7 @@ mod linux {
     use std::{
         path::PathBuf,
         sync::{Arc, atomic::Ordering},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use agent::{
@@ -18,6 +18,7 @@ mod linux {
         counters::Counters,
         delivery::{EventBuffer, EventRateLimiter, PendingBatch},
         dns_runtime::DnsProcessor,
+        file_runtime::{FileModifyAggregator, translate_rename_scope},
         observer::Observer,
         session::{connect_with_backoff, handle_control},
         syscall::{self, Architecture},
@@ -72,6 +73,7 @@ mod linux {
         let mut inbound_rate_limiter =
             EventRateLimiter::new(config.observation.network.max_accepted_events_per_second);
         let mut dns_processor = DnsProcessor::new(&config.observation.network.dns);
+        let mut file_aggregator = FileModifyAggregator::default();
         loop {
             let hello = hello(&config, &counters.snapshot());
             let mut session =
@@ -84,6 +86,37 @@ mod linux {
             loop {
                 tokio::select! {
                     _ = poll.tick() => {
+                        while let Some(decoded) = observer.next_file_event() {
+                            let Ok(decoded) = decoded else {
+                                counters.decode_failed.fetch_add(1, Ordering::Relaxed);
+                                counters.file_decode_failed.fetch_add(1, Ordering::Relaxed);
+                                counters.file_path_invalid.fetch_add(1, Ordering::Relaxed);
+                                continue;
+                            };
+                            let fd = decoded.kernel.fd;
+                            let generation = decoded.kernel.descriptor_generation;
+                            let Some(event) = runtime_file_event(
+                                decoded, &mut cgroup_resolver, &cache, &counters, &config,
+                            ) else { continue };
+                            let (ready, dropped) = file_aggregator.observe(event, fd, generation, Instant::now());
+                            if dropped {
+                                counters.file_aggregation_capacity.fetch_add(1, Ordering::Relaxed);
+                            }
+                            for event in ready {
+                                if rate_limiter.allow() { buffer.push(event, &counters); }
+                                else {
+                                    counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
+                                    counters.file_rate_limited.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                        for event in file_aggregator.drain_expired(Instant::now()) {
+                            if rate_limiter.allow() { buffer.push(event, &counters); }
+                            else {
+                                counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
+                                counters.file_rate_limited.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
                         while let Some(packet) = observer.next_dns_packet()? {
                             let Some((process, payload)) = dns_processor.process(&packet, &counters) else { continue };
                             let container = cgroup_resolver.resolve(process.pid, process.cgroup_id).ok();
@@ -126,6 +159,7 @@ mod linux {
                         counters.update_network_kernel(observer.network_counters()?);
                         counters.update_inbound_kernel(observer.inbound_kernel_counters()?);
                         counters.update_dns_kernel(observer.dns_kernel_counters()?);
+                        counters.update_file_kernel(observer.file_kernel_counters()?);
                         let snapshot = counters.snapshot();
                         tracing::info!(?snapshot, "agent status");
                         session.sender.send(AgentMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(agent_message::Message::Heartbeat(Heartbeat { sent_at_unix_nanos: Utc::now().timestamp_nanos_opt().unwrap_or_default(), drop_counters: Some(snapshot.into()) })) }).await?;
@@ -146,7 +180,19 @@ mod linux {
                             break;
                         }
                     }
-                    _ = tokio::signal::ctrl_c() => return Ok(()),
+                    _ = tokio::signal::ctrl_c() => {
+                        for event in file_aggregator.drain_all() {
+                            if rate_limiter.allow() { buffer.push(event, &counters); }
+                            else {
+                                counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
+                                counters.file_rate_limited.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        while let Some(batch) = buffer.next_batch(&counters) {
+                            send_batch(&session.sender, batch).await?;
+                        }
+                        return Ok(());
+                    },
                 }
             }
         }
@@ -177,6 +223,7 @@ mod linux {
                 network_listen: config.observation.network.listen.into(),
                 network_accept: config.observation.network.accept.into(),
                 dns: config.observation.network.dns.enabled.into(),
+                files: config.observation.files.enabled.into(),
             },
             architecture,
         )
@@ -291,6 +338,75 @@ mod linux {
                 .inbound_decode_failed
                 .fetch_add(1, Ordering::Relaxed);
             return None;
+        };
+        Some(RuntimeEvent {
+            id: Uuid::new_v4(),
+            observed_at: Utc::now(),
+            schema_version: EVENT_SCHEMA_VERSION,
+            attribution,
+            process: ProcessIdentity {
+                cgroup_id: kernel.cgroup_id,
+                pid,
+                tgid,
+                command: command(&kernel.command),
+            },
+            payload,
+        })
+    }
+
+    fn runtime_file_event(
+        decoded: agent::kernel_event::DecodedFileEvent,
+        cgroup_resolver: &mut cgroup::CgroupResolver,
+        cache: &AttributionCache,
+        counters: &Counters,
+        config: &AgentConfig,
+    ) -> Option<RuntimeEvent> {
+        let kernel = decoded.kernel;
+        let pid = u32::try_from(kernel.pid_tgid & u64::from(u32::MAX)).ok()?;
+        let tgid = u32::try_from(kernel.pid_tgid >> 32).ok()?;
+        let container = cgroup_resolver.resolve(pid, kernel.cgroup_id).ok();
+        let attribution = resolve_and_count(
+            cache,
+            counters,
+            container.as_deref(),
+            &config.identity.node_name,
+            &config.scope.workloads,
+        );
+        let Some(attribution) = attribution else {
+            counters
+                .file_attribution_failed
+                .fetch_add(1, Ordering::Relaxed);
+            return None;
+        };
+        let payload = match decoded.payload {
+            EventPayload::FileCreate(value) if config.observation.files.observes(&value.path) => {
+                EventPayload::FileCreate(value)
+            }
+            EventPayload::FileModify(value) if config.observation.files.observes(&value.path) => {
+                EventPayload::FileModify(value)
+            }
+            EventPayload::FileDelete(value) if config.observation.files.observes(&value.path) => {
+                EventPayload::FileDelete(value)
+            }
+            EventPayload::FileRename(value) => {
+                let old_observed = config.observation.files.observes(&value.old_path);
+                let new_observed = config.observation.files.observes(&value.new_path);
+                let Some(payload) = translate_rename_scope(value, old_observed, new_observed)
+                else {
+                    counters.filtered.fetch_add(1, Ordering::Relaxed);
+                    counters.file_filtered.fetch_add(1, Ordering::Relaxed);
+                    return None;
+                };
+                payload
+            }
+            EventPayload::FileCreate(_)
+            | EventPayload::FileModify(_)
+            | EventPayload::FileDelete(_) => {
+                counters.filtered.fetch_add(1, Ordering::Relaxed);
+                counters.file_filtered.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+            _ => return None,
         };
         Some(RuntimeEvent {
             id: Uuid::new_v4(),

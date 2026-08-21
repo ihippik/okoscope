@@ -8,7 +8,9 @@ use aya::{
 };
 
 use crate::{
-    counters::{DnsKernelCounters, InboundKernelCounters, NetworkKernelCounters},
+    counters::{
+        DnsKernelCounters, FileKernelCounters, InboundKernelCounters, NetworkKernelCounters,
+    },
     kernel_event,
     syscall::Architecture,
 };
@@ -21,6 +23,8 @@ pub struct Observer {
     inbound_counters: PerCpuArray<aya::maps::MapData, u64>,
     dns_events: RingBuf<aya::maps::MapData>,
     dns_counters: PerCpuArray<aya::maps::MapData, u64>,
+    file_events: RingBuf<aya::maps::MapData>,
+    file_counters: PerCpuArray<aya::maps::MapData, u64>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -29,6 +33,7 @@ pub struct ObservationPrograms {
     pub network_listen: ProgramState,
     pub network_accept: ProgramState,
     pub dns: ProgramState,
+    pub files: ProgramState,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,6 +122,26 @@ impl Observer {
                 CgroupSkbAttachType::Ingress,
             )?;
         }
+        if programs.files.is_enabled() {
+            for (program, event) in [
+                ("okoscope_file_open_enter", "sys_enter_openat"),
+                ("okoscope_file_open_exit", "sys_exit_openat"),
+                ("okoscope_file_write_enter", "sys_enter_write"),
+                ("okoscope_file_write_exit", "sys_exit_write"),
+                ("okoscope_file_truncate_enter", "sys_enter_truncate"),
+                ("okoscope_file_truncate_exit", "sys_exit_truncate"),
+                ("okoscope_file_ftruncate_enter", "sys_enter_ftruncate"),
+                ("okoscope_file_ftruncate_exit", "sys_exit_ftruncate"),
+                ("okoscope_file_unlink_enter", "sys_enter_unlinkat"),
+                ("okoscope_file_unlink_exit", "sys_exit_unlinkat"),
+                ("okoscope_file_rename_enter", "sys_enter_renameat2"),
+                ("okoscope_file_rename_exit", "sys_exit_renameat2"),
+                ("okoscope_file_close_enter", "sys_enter_close"),
+                ("okoscope_file_close_exit", "sys_exit_close"),
+            ] {
+                attach(&mut ebpf, program, "syscalls", event)?;
+            }
+        }
         {
             let map = ebpf
                 .map_mut("SYSCALL_ALLOWLIST")
@@ -151,6 +176,14 @@ impl Observer {
             .take_map("DNS_COUNTERS")
             .context("missing DNS_COUNTERS map")?;
         let dns_counters = PerCpuArray::try_from(map)?;
+        let map = ebpf
+            .take_map("FILE_EVENTS")
+            .context("missing FILE_EVENTS ring buffer")?;
+        let file_events = RingBuf::try_from(map)?;
+        let map = ebpf
+            .take_map("FILE_COUNTERS")
+            .context("missing FILE_COUNTERS map")?;
+        let file_counters = PerCpuArray::try_from(map)?;
         Ok(Self {
             _ebpf: ebpf,
             events,
@@ -159,6 +192,33 @@ impl Observer {
             inbound_counters,
             dns_events,
             dns_counters,
+            file_events,
+            file_counters,
+        })
+    }
+
+    pub fn next_file_event(
+        &mut self,
+    ) -> Option<Result<kernel_event::DecodedFileEvent, kernel_event::FileDecodeError>> {
+        self.file_events
+            .next()
+            .map(|item| kernel_event::decode_file(&item))
+    }
+
+    pub fn file_kernel_counters(&self) -> Result<FileKernelCounters> {
+        let total = |index: u32| -> Result<u64> {
+            Ok(self.file_counters.get(&index, 0)?.iter().copied().sum())
+        };
+        Ok(FileKernelCounters {
+            correlation_capacity: total(agent_ebpf_common::FILE_COUNTER_CORRELATION_CAPACITY)?,
+            correlation_miss: total(agent_ebpf_common::FILE_COUNTER_CORRELATION_MISS)?,
+            path_read_failed: total(agent_ebpf_common::FILE_COUNTER_PATH_READ_FAILED)?,
+            path_relative: total(agent_ebpf_common::FILE_COUNTER_PATH_RELATIVE)?,
+            path_invalid: total(agent_ebpf_common::FILE_COUNTER_PATH_INVALID)?,
+            path_oversize: total(agent_ebpf_common::FILE_COUNTER_PATH_OVERSIZE)?,
+            fd_miss: total(agent_ebpf_common::FILE_COUNTER_FD_MISS)?,
+            filtered: total(agent_ebpf_common::FILE_COUNTER_FILTERED)?,
+            kernel_lost: total(agent_ebpf_common::FILE_COUNTER_KERNEL_LOST)?,
         })
     }
 

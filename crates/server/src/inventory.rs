@@ -38,6 +38,7 @@ pub enum InventoryKind {
     Domain,
     Syscall,
     InboundEndpoint,
+    FileActivity,
 }
 
 impl InventoryKind {
@@ -48,6 +49,7 @@ impl InventoryKind {
             Self::Domain => "domain",
             Self::Syscall => "syscall",
             Self::InboundEndpoint => "inbound_endpoint",
+            Self::FileActivity => "file_activity",
         }
     }
 }
@@ -368,6 +370,38 @@ fn fingerprint_with_version(
                 }),
             )
         }
+        EventPayload::FileCreate(value) => file_activity_fingerprint(
+            &mut encoder,
+            &event.process.command,
+            "create",
+            value.path.as_str(),
+            None,
+            None,
+        )?,
+        EventPayload::FileModify(value) => file_activity_fingerprint(
+            &mut encoder,
+            &event.process.command,
+            "modify",
+            value.path.as_str(),
+            None,
+            None,
+        )?,
+        EventPayload::FileDelete(value) => file_activity_fingerprint(
+            &mut encoder,
+            &event.process.command,
+            "delete",
+            value.path.as_str(),
+            None,
+            None,
+        )?,
+        EventPayload::FileRename(value) => file_activity_fingerprint(
+            &mut encoder,
+            &event.process.command,
+            "rename",
+            value.old_path.as_str(),
+            Some(value.new_path.as_str()),
+            value.replaced,
+        )?,
     };
 
     Ok(InventoryFingerprint {
@@ -376,6 +410,37 @@ fn fingerprint_with_version(
         digest: encoder.finish(),
         semantic_summary,
     })
+}
+
+fn file_activity_fingerprint(
+    encoder: &mut CanonicalEncoder,
+    command: &str,
+    operation: &str,
+    path: &str,
+    new_path: Option<&str>,
+    replaced: Option<bool>,
+) -> Result<(InventoryKind, Value), InventoryFingerprintError> {
+    let command = required("process_command", command)?;
+    encoder.field(InventoryKind::FileActivity.as_str().as_bytes());
+    encoder.field(command.as_bytes());
+    encoder.field(operation.as_bytes());
+    encoder.field(path.as_bytes());
+    if let Some(new_path) = new_path {
+        encoder.field(new_path.as_bytes());
+    }
+    if let Some(replaced) = replaced {
+        encoder.field(&[u8::from(replaced)]);
+    }
+    Ok((
+        InventoryKind::FileActivity,
+        json!({
+            "process_command": command,
+            "operation": operation,
+            "path": path,
+            "new_path": new_path,
+            "replaced": replaced,
+        }),
+    ))
 }
 
 fn inbound_endpoint_fingerprint(
@@ -451,9 +516,10 @@ mod tests {
     use chrono::Utc;
     use event_model::{
         DnsAddressAnswer, DnsDirection, DnsName, DnsQueryType, DnsResponseCode, DnsTransport,
-        EventPayload, KubernetesAttribution, NetworkAccept, NetworkAddressFamily, NetworkConnect,
-        NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, NetworkListen, ProcessExec,
-        ProcessIdentity, RuntimeEvent, SyscallEvent,
+        EventPayload, FileActivityPath, FileModify, FileRename, KubernetesAttribution,
+        NetworkAccept, NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome,
+        NetworkDnsQuery, NetworkDnsResponse, NetworkListen, ProcessExec, ProcessIdentity,
+        RuntimeEvent, SyscallEvent,
     };
 
     use super::*;
@@ -660,5 +726,30 @@ mod tests {
             fingerprint(scope(&upper), &upper).unwrap().digest,
             fingerprint(scope(&lower), &lower).unwrap().digest
         );
+    }
+
+    #[test]
+    fn file_inventory_identity_is_path_based_and_safe() {
+        let modified = event(EventPayload::FileModify(FileModify {
+            path: FileActivityPath::new("/app/data/report").unwrap(),
+        }));
+        let item = fingerprint(scope(&modified), &modified).unwrap();
+        assert_eq!(item.kind, InventoryKind::FileActivity);
+        assert_eq!(item.semantic_summary["operation"], "modify");
+        assert_eq!(item.semantic_summary["path"], "/app/data/report");
+
+        let renamed = event(EventPayload::FileRename(
+            FileRename::new(
+                FileActivityPath::new("/app/data/report").unwrap(),
+                FileActivityPath::new("/app/data/report.done").unwrap(),
+                Some(false),
+            )
+            .unwrap(),
+        ));
+        let renamed_item = fingerprint(scope(&renamed), &renamed).unwrap();
+        assert_ne!(item.digest, renamed_item.digest);
+        assert_eq!(renamed_item.semantic_summary["replaced"], false);
+        assert!(renamed_item.semantic_summary.get("inode").is_none());
+        assert!(renamed_item.semantic_summary.get("mount_id").is_none());
     }
 }

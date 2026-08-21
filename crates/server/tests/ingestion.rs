@@ -1,9 +1,9 @@
 use chrono::{Duration, Utc};
 use event_model::{
     DnsAddressAnswer, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
-    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAddressFamily,
-    NetworkConnect, NetworkConnectOutcome, NetworkDnsResponse, ProcessExec, ProcessIdentity,
-    RuntimeEvent, SyscallEvent,
+    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, FileActivityPath, FileModify,
+    KubernetesAttribution, NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome,
+    NetworkDnsResponse, ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
 };
 use server::{
     auth::SessionScope,
@@ -66,6 +66,48 @@ fn event(project_id: Uuid, application_id: Uuid) -> RuntimeEvent {
             parent_command: None,
         }),
     }
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn file_activity_is_persisted_grouped_inventoried_and_replay_safe(pool: sqlx::PgPool) {
+    let ids = bootstrap(&pool, &config("file-activity")).await.unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,'node-file','test')")
+        .bind(agent_id)
+        .bind(ids.organization_id)
+        .bind(ids.cluster_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id,
+    };
+    let mut file = event(ids.project_id, ids.application_id);
+    file.payload = EventPayload::FileModify(FileModify {
+        path: FileActivityPath::new("/app/data/report").unwrap(),
+    });
+    assert_eq!(
+        persist_batch(&pool, context, &[file.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(persist_batch(&pool, context, &[file]).await.unwrap(), 0);
+    let (event_kind, inventory_kind, event_count, group_count, occurrence_count):
+        (String, String, i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT event_kind FROM runtime_events),(SELECT inventory_kind FROM runtime_inventory_items),(SELECT count(*) FROM runtime_events),(SELECT count(*) FROM runtime_event_groups),(SELECT occurrence_count FROM runtime_inventory_items)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(event_kind, "file.modify");
+    assert_eq!(inventory_kind, "file_activity");
+    assert_eq!((event_count, group_count, occurrence_count), (1, 1, 1));
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]

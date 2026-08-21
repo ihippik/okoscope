@@ -140,6 +140,20 @@ impl From<CounterSnapshot> for DropCounters {
             inbound_kernel_lost: value.inbound_kernel_lost,
             inbound_rate_limited: value.inbound_rate_limited,
             inbound_correlation_miss: value.inbound_correlation_miss,
+            file_correlation_capacity: value.file_correlation_capacity,
+            file_correlation_miss: value.file_correlation_miss,
+            file_path_read_failed: value.file_path_read_failed,
+            file_path_relative: value.file_path_relative,
+            file_path_invalid: value.file_path_invalid,
+            file_path_oversize: value.file_path_oversize,
+            file_fd_miss: value.file_fd_miss,
+            file_filtered: value.file_filtered,
+            file_kernel_lost: value.file_kernel_lost,
+            file_aggregation_capacity: value.file_aggregation_capacity,
+            file_decode_failed: value.file_decode_failed,
+            file_attribution_failed: value.file_attribution_failed,
+            file_rate_limited: value.file_rate_limited,
+            file_unsupported_object: value.file_unsupported_object,
         }
     }
 }
@@ -218,5 +232,40 @@ mod tests {
         assert_eq!(wire.inbound_kernel_lost, 4);
         assert_eq!(wire.inbound_rate_limited, 5);
         assert_eq!(wire.inbound_correlation_miss, 6);
+    }
+
+    #[test]
+    fn file_drop_counters_are_transported_additively() {
+        let wire = DropCounters::from(CounterSnapshot {
+            file_correlation_capacity: 1,
+            file_correlation_miss: 2,
+            file_path_read_failed: 3,
+            file_path_relative: 4,
+            file_path_invalid: 5,
+            file_path_oversize: 6,
+            file_fd_miss: 7,
+            file_filtered: 8,
+            file_kernel_lost: 9,
+            file_aggregation_capacity: 10,
+            file_decode_failed: 11,
+            file_attribution_failed: 12,
+            file_rate_limited: 13,
+            file_unsupported_object: 14,
+            ..CounterSnapshot::default()
+        });
+        assert_eq!(wire.file_correlation_capacity, 1);
+        assert_eq!(wire.file_correlation_miss, 2);
+        assert_eq!(wire.file_path_read_failed, 3);
+        assert_eq!(wire.file_path_relative, 4);
+        assert_eq!(wire.file_path_invalid, 5);
+        assert_eq!(wire.file_path_oversize, 6);
+        assert_eq!(wire.file_fd_miss, 7);
+        assert_eq!(wire.file_filtered, 8);
+        assert_eq!(wire.file_kernel_lost, 9);
+        assert_eq!(wire.file_aggregation_capacity, 10);
+        assert_eq!(wire.file_decode_failed, 11);
+        assert_eq!(wire.file_attribution_failed, 12);
+        assert_eq!(wire.file_rate_limited, 13);
+        assert_eq!(wire.file_unsupported_object, 14);
     }
 }

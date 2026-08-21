@@ -345,6 +345,38 @@ pub fn fingerprint_v1(
                 "direction": response.direction
             })
         }
+        EventPayload::FileCreate(value) => file_semantic(
+            &mut encoder,
+            &event.process.command,
+            "create",
+            value.path.as_str(),
+            None,
+            None,
+        )?,
+        EventPayload::FileModify(value) => file_semantic(
+            &mut encoder,
+            &event.process.command,
+            "modify",
+            value.path.as_str(),
+            None,
+            None,
+        )?,
+        EventPayload::FileDelete(value) => file_semantic(
+            &mut encoder,
+            &event.process.command,
+            "delete",
+            value.path.as_str(),
+            None,
+            None,
+        )?,
+        EventPayload::FileRename(value) => file_semantic(
+            &mut encoder,
+            &event.process.command,
+            "rename",
+            value.old_path.as_str(),
+            Some(value.new_path.as_str()),
+            value.replaced,
+        )?,
     };
 
     Ok(EventFingerprint {
@@ -355,6 +387,33 @@ pub fn fingerprint_v1(
             semantic,
         },
     })
+}
+
+fn file_semantic(
+    encoder: &mut CanonicalEncoder,
+    command: &str,
+    operation: &str,
+    path: &str,
+    new_path: Option<&str>,
+    replaced: Option<bool>,
+) -> Result<serde_json::Value, FingerprintError> {
+    let command = required("process_command", command)?;
+    encoder.field(command.as_bytes());
+    encoder.field(operation.as_bytes());
+    encoder.field(path.as_bytes());
+    if let Some(new_path) = new_path {
+        encoder.field(new_path.as_bytes());
+    }
+    if let Some(replaced) = replaced {
+        encoder.field(&[u8::from(replaced)]);
+    }
+    Ok(json!({
+        "process_command": command,
+        "operation": operation,
+        "path": path,
+        "new_path": new_path,
+        "replaced": replaced,
+    }))
 }
 
 fn inbound_endpoint_semantic(
@@ -419,9 +478,10 @@ mod tests {
     use chrono::Utc;
     use event_model::{
         DnsAddressAnswer, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
-        DnsTransport, EventPayload, KubernetesAttribution, NetworkAccept, NetworkAddressFamily,
-        NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, NetworkListen,
-        ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
+        DnsTransport, EventPayload, FileActivityPath, FileModify, FileRename,
+        KubernetesAttribution, NetworkAccept, NetworkAddressFamily, NetworkConnect,
+        NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, NetworkListen, ProcessExec,
+        ProcessIdentity, RuntimeEvent, SyscallEvent,
     };
 
     use super::*;
@@ -716,5 +776,47 @@ mod tests {
                 .get("dns_context")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn file_fingerprint_uses_reported_path_and_ordered_rename_identity() {
+        let first = event(EventPayload::FileModify(FileModify {
+            path: FileActivityPath::new("/app/data/report").unwrap(),
+        }));
+        let mut rolled = first.clone();
+        rolled.id = Uuid::from_u128(99);
+        rolled.attribution.pod_uid = "other-pod".into();
+        assert_eq!(
+            fingerprint_v1(&scope(&first), &first).unwrap().digest,
+            fingerprint_v1(&scope(&rolled), &rolled).unwrap().digest
+        );
+
+        let rename = event(EventPayload::FileRename(
+            FileRename::new(
+                FileActivityPath::new("/app/data/report").unwrap(),
+                FileActivityPath::new("/app/data/report.done").unwrap(),
+                None,
+            )
+            .unwrap(),
+        ));
+        let reversed = event(EventPayload::FileRename(
+            FileRename::new(
+                FileActivityPath::new("/app/data/report.done").unwrap(),
+                FileActivityPath::new("/app/data/report").unwrap(),
+                None,
+            )
+            .unwrap(),
+        ));
+        assert_ne!(
+            fingerprint_v1(&scope(&rename), &rename).unwrap().digest,
+            fingerprint_v1(&scope(&reversed), &reversed).unwrap().digest
+        );
+        let summary = fingerprint_v1(&scope(&rename), &rename)
+            .unwrap()
+            .summary
+            .semantic;
+        assert_eq!(summary["path"], "/app/data/report");
+        assert_eq!(summary["new_path"], "/app/data/report.done");
+        assert!(summary["replaced"].is_null());
     }
 }

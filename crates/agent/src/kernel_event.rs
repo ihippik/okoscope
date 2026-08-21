@@ -1,8 +1,10 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use agent_ebpf_common::{
-    COMMAND_LEN, DNS_ADDRESS_LEN, DNS_CAPTURE_BYTES, DnsPacketRecord, InboundKernelEvent,
-    KernelEvent, NETWORK_ADDRESS_LEN,
+    COMMAND_LEN, DNS_ADDRESS_LEN, DNS_CAPTURE_BYTES, DnsPacketRecord, FILE_FLAG_COMPLETE,
+    FILE_FLAG_REPLACED, FILE_FLAG_REPLACEMENT_KNOWN, FILE_OPERATION_CREATE, FILE_OPERATION_DELETE,
+    FILE_OPERATION_MODIFY, FILE_OPERATION_RENAME, FILE_PATH_LEN, FileKernelEvent,
+    InboundKernelEvent, KernelEvent, NETWORK_ADDRESS_LEN,
 };
 use event_model::{
     EventPayload, InboundNetworkError, NetworkAccept, NetworkAddressFamily, NetworkConnect,
@@ -14,6 +16,110 @@ use thiserror::Error;
 pub enum DecodeError {
     #[error("kernel event has size {actual}, expected {expected}")]
     InvalidSize { actual: usize, expected: usize },
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum FileDecodeError {
+    #[error(transparent)]
+    Layout(#[from] DecodeError),
+    #[error("unsupported file operation {0}")]
+    UnsupportedOperation(u8),
+    #[error("file record path is incomplete")]
+    IncompletePath,
+    #[error("invalid file record flags {0:#x}")]
+    InvalidFlags(u8),
+    #[error("invalid file record path length")]
+    InvalidPathLength,
+    #[error("invalid UTF-8 file record path")]
+    InvalidUtf8,
+    #[error(transparent)]
+    InvalidPath(#[from] event_model::FileActivityError),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodedFileEvent {
+    pub kernel: FileKernelEvent,
+    pub payload: EventPayload,
+}
+
+pub fn decode_file(bytes: &[u8]) -> Result<DecodedFileEvent, FileDecodeError> {
+    if bytes.len() != FileKernelEvent::SIZE {
+        return Err(DecodeError::InvalidSize {
+            actual: bytes.len(),
+            expected: FileKernelEvent::SIZE,
+        }
+        .into());
+    }
+    let u64_at = |offset: usize| u64::from_ne_bytes(bytes[offset..offset + 8].try_into().unwrap());
+    let i32_at = |offset: usize| i32::from_ne_bytes(bytes[offset..offset + 4].try_into().unwrap());
+    let u16_at = |offset: usize| u16::from_ne_bytes(bytes[offset..offset + 2].try_into().unwrap());
+    let path_len = usize::from(u16_at(40));
+    let new_path_len = usize::from(u16_at(42));
+    let operation = bytes[44];
+    let flags = bytes[45];
+    if flags & !(FILE_FLAG_COMPLETE | FILE_FLAG_REPLACED | FILE_FLAG_REPLACEMENT_KNOWN) != 0
+        || flags & FILE_FLAG_REPLACED != 0 && flags & FILE_FLAG_REPLACEMENT_KNOWN == 0
+    {
+        return Err(FileDecodeError::InvalidFlags(flags));
+    }
+    if flags & FILE_FLAG_COMPLETE == 0 {
+        return Err(FileDecodeError::IncompletePath);
+    }
+    if path_len == 0 || path_len > FILE_PATH_LEN || new_path_len > FILE_PATH_LEN {
+        return Err(FileDecodeError::InvalidPathLength);
+    }
+    let path_offset = 64;
+    let new_path_offset = path_offset + FILE_PATH_LEN;
+    let decode_path = |slice: &[u8]| {
+        let value = core::str::from_utf8(slice).map_err(|_| FileDecodeError::InvalidUtf8)?;
+        event_model::FileActivityPath::new(value.to_owned()).map_err(FileDecodeError::InvalidPath)
+    };
+    let path = decode_path(&bytes[path_offset..path_offset + path_len])?;
+    let new_path = (new_path_len != 0)
+        .then(|| decode_path(&bytes[new_path_offset..new_path_offset + new_path_len]))
+        .transpose()?;
+    let payload = match operation {
+        FILE_OPERATION_CREATE if new_path.is_none() => {
+            EventPayload::FileCreate(event_model::FileCreate { path })
+        }
+        FILE_OPERATION_MODIFY if new_path.is_none() => {
+            EventPayload::FileModify(event_model::FileModify { path })
+        }
+        FILE_OPERATION_DELETE if new_path.is_none() => {
+            EventPayload::FileDelete(event_model::FileDelete { path })
+        }
+        FILE_OPERATION_RENAME => EventPayload::FileRename(event_model::FileRename::new(
+            path,
+            new_path.ok_or(FileDecodeError::InvalidPathLength)?,
+            (flags & FILE_FLAG_REPLACEMENT_KNOWN != 0).then_some(flags & FILE_FLAG_REPLACED != 0),
+        )?),
+        value => return Err(FileDecodeError::UnsupportedOperation(value)),
+    };
+    let mut command = [0; COMMAND_LEN];
+    command.copy_from_slice(&bytes[48..64]);
+    let mut raw_path = [0; FILE_PATH_LEN];
+    raw_path.copy_from_slice(&bytes[path_offset..new_path_offset]);
+    let mut raw_new_path = [0; FILE_PATH_LEN];
+    raw_new_path.copy_from_slice(&bytes[new_path_offset..new_path_offset + FILE_PATH_LEN]);
+    Ok(DecodedFileEvent {
+        kernel: FileKernelEvent {
+            timestamp_ns: u64_at(0),
+            cgroup_id: u64_at(8),
+            pid_tgid: u64_at(16),
+            descriptor_generation: u64_at(24),
+            fd: i32_at(32),
+            result: i32_at(36),
+            path_len: path_len as u16,
+            new_path_len: new_path_len as u16,
+            operation,
+            flags,
+            padding: [bytes[46], bytes[47]],
+            command,
+            path: raw_path,
+            new_path: raw_new_path,
+        },
+        payload,
+    })
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -401,5 +507,51 @@ mod tests {
             panic!("expected listener");
         };
         assert_eq!(listener.local_port, 8080);
+    }
+
+    #[test]
+    fn decodes_file_records_and_rejects_invalid_layout_semantics() {
+        let mut bytes = vec![0_u8; FileKernelEvent::SIZE];
+        bytes[0..8].copy_from_slice(&11_u64.to_ne_bytes());
+        bytes[8..16].copy_from_slice(&12_u64.to_ne_bytes());
+        bytes[16..24].copy_from_slice(&13_u64.to_ne_bytes());
+        bytes[24..32].copy_from_slice(&14_u64.to_ne_bytes());
+        bytes[32..36].copy_from_slice(&7_i32.to_ne_bytes());
+        bytes[36..40].copy_from_slice(&1_i32.to_ne_bytes());
+        let path = b"/app/data/report";
+        bytes[40..42].copy_from_slice(&(path.len() as u16).to_ne_bytes());
+        bytes[44] = FILE_OPERATION_MODIFY;
+        bytes[45] = FILE_FLAG_COMPLETE;
+        bytes[48..51].copy_from_slice(b"api");
+        bytes[64..64 + path.len()].copy_from_slice(path);
+        let decoded = decode_file(&bytes).unwrap();
+        assert_eq!(decoded.kernel.descriptor_generation, 14);
+        assert!(matches!(decoded.payload, EventPayload::FileModify(_)));
+
+        let mut incomplete = bytes.clone();
+        incomplete[45] = 0;
+        assert_eq!(
+            decode_file(&incomplete),
+            Err(FileDecodeError::IncompletePath)
+        );
+        let mut unknown = bytes.clone();
+        unknown[44] = 99;
+        assert_eq!(
+            decode_file(&unknown),
+            Err(FileDecodeError::UnsupportedOperation(99))
+        );
+        let mut relative = bytes;
+        let relative_path = b"relative/report";
+        relative[40..42].copy_from_slice(&(relative_path.len() as u16).to_ne_bytes());
+        relative[64..64 + path.len()].fill(0);
+        relative[64..64 + relative_path.len()].copy_from_slice(relative_path);
+        assert!(matches!(
+            decode_file(&relative),
+            Err(FileDecodeError::InvalidPath(_))
+        ));
+        assert!(matches!(
+            decode_file(&[0; 2]),
+            Err(FileDecodeError::Layout(_))
+        ));
     }
 }

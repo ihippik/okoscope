@@ -788,6 +788,7 @@ components:
         - { $ref: '#/components/schemas/InboundNetworkSemanticSummary' }
         - { $ref: '#/components/schemas/NetworkDnsQuerySemanticSummary' }
         - { $ref: '#/components/schemas/NetworkDnsResponseSemanticSummary' }
+        - { $ref: '#/components/schemas/FileActivitySemanticSummary' }
     ProcessExecSemanticSummary:
       type: object
       additionalProperties: false
@@ -842,6 +843,16 @@ components:
         response_code: { $ref: '#/components/schemas/DnsResponseCode' }
         transport: { $ref: '#/components/schemas/DnsTransport' }
         direction: { $ref: '#/components/schemas/DnsDirection' }
+    FileActivitySemanticSummary:
+      type: object
+      additionalProperties: false
+      required: [process_command, operation, path]
+      properties:
+        process_command: { type: string, minLength: 1 }
+        operation: { type: string, enum: [create, modify, delete, rename] }
+        path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
+        new_path: { type: [string, 'null'], maxLength: 1024, pattern: '^/' }
+        replaced: { type: [boolean, 'null'] }
     RuntimeEventPayload:
       oneOf:
         - { $ref: '#/components/schemas/ProcessExecPayload' }
@@ -851,6 +862,10 @@ components:
         - { $ref: '#/components/schemas/NetworkAcceptPayload' }
         - { $ref: '#/components/schemas/NetworkDnsQueryPayload' }
         - { $ref: '#/components/schemas/NetworkDnsResponsePayload' }
+        - { $ref: '#/components/schemas/FileCreatePayload' }
+        - { $ref: '#/components/schemas/FileModifyPayload' }
+        - { $ref: '#/components/schemas/FileDeletePayload' }
+        - { $ref: '#/components/schemas/FileRenamePayload' }
     ProcessExecPayload:
       type: object
       additionalProperties: false
@@ -876,6 +891,47 @@ components:
           required: [name]
           properties:
             name: { type: string, minLength: 1 }
+    FilePathData:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
+    FileCreatePayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: FileCreate }
+        data: { $ref: '#/components/schemas/FilePathData' }
+    FileModifyPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: FileModify }
+        data: { $ref: '#/components/schemas/FilePathData' }
+    FileDeletePayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: FileDelete }
+        data: { $ref: '#/components/schemas/FilePathData' }
+    FileRenamePayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: FileRename }
+        data:
+          type: object
+          additionalProperties: false
+          required: [old_path, new_path, replaced]
+          properties:
+            old_path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
+            new_path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
+            replaced: { type: [boolean, 'null'] }
     NetworkConnectPayload:
       type: object
       additionalProperties: false
@@ -1508,7 +1564,7 @@ components:
                 maxItems: 200,
                 items: { $ref: '#/components/schemas/RecoveryOperationDelivery' },
               }
-    InventoryKind: { type: string, enum: [process, destination, domain, syscall, inbound_endpoint] }
+    InventoryKind: { type: string, enum: [process, destination, domain, syscall, inbound_endpoint, file_activity] }
     InventoryReleasePresence:
       {
         type: string,
@@ -1522,6 +1578,7 @@ components:
         - { $ref: '#/components/schemas/InventoryDomainIdentity' }
         - { $ref: '#/components/schemas/InventorySyscallIdentity' }
         - { $ref: '#/components/schemas/InventoryInboundEndpointIdentity' }
+        - { $ref: '#/components/schemas/InventoryFileActivityIdentity' }
     InventoryProcessIdentity:
       type: object
       additionalProperties: false
@@ -1563,6 +1620,16 @@ components:
         local_port: { type: integer, minimum: 1, maximum: 65535, example: 8080 }
         listener_observed: { type: boolean }
         accept_observed: { type: boolean }
+    InventoryFileActivityIdentity:
+      type: object
+      additionalProperties: false
+      required: [process_command, operation, path]
+      properties:
+        process_command: { type: string, minLength: 1 }
+        operation: { type: string, enum: [create, modify, delete, rename] }
+        path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
+        new_path: { type: [string, 'null'], maxLength: 1024, pattern: '^/' }
+        replaced: { type: [boolean, 'null'] }
     InventoryItem:
       type: object
       additionalProperties: false

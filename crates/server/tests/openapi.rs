@@ -307,7 +307,8 @@ fn assert_inventory_contract(document: &serde_json::Value) {
             "destination",
             "domain",
             "syscall",
-            "inbound_endpoint"
+            "inbound_endpoint",
+            "file_activity"
         ])
     );
     assert_eq!(
@@ -320,6 +321,7 @@ fn assert_inventory_contract(document: &serde_json::Value) {
         "InventoryDomainIdentity",
         "InventorySyscallIdentity",
         "InventoryInboundEndpointIdentity",
+        "InventoryFileActivityIdentity",
         "InventoryItem",
         "InventoryReleaseEvidence",
         "InventorySighting",

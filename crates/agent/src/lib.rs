@@ -7,6 +7,7 @@ pub mod dns;
 pub mod dns_runtime;
 pub mod dns_state;
 pub mod dns_tcp;
+pub mod file_runtime;
 pub mod kernel_event;
 #[cfg(target_os = "linux")]
 pub mod observer;

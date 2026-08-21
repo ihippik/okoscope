@@ -1,6 +1,10 @@
 //! Transport-independent runtime event domain model.
 
-use std::net::IpAddr;
+use std::{
+    net::IpAddr,
+    path::{Component, Path},
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,6 +13,8 @@ use uuid::Uuid;
 
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
 pub const PROTOCOL_VERSION: u32 = 1;
+pub const MAX_FILE_PATH_BYTES: usize = 1024;
+pub const FILE_MODIFY_AGGREGATION_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeEvent {
@@ -31,6 +37,10 @@ impl RuntimeEvent {
             EventPayload::NetworkAccept(_) => "network.accept",
             EventPayload::NetworkDnsQuery(_) => "network.dns.query",
             EventPayload::NetworkDnsResponse(_) => "network.dns.response",
+            EventPayload::FileCreate(_) => "file.create",
+            EventPayload::FileModify(_) => "file.modify",
+            EventPayload::FileDelete(_) => "file.delete",
+            EventPayload::FileRename(_) => "file.rename",
         }
     }
 }
@@ -70,6 +80,10 @@ pub enum EventPayload {
     NetworkAccept(NetworkAccept),
     NetworkDnsQuery(NetworkDnsQuery),
     NetworkDnsResponse(NetworkDnsResponse),
+    FileCreate(FileCreate),
+    FileModify(FileModify),
+    FileDelete(FileDelete),
+    FileRename(FileRename),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +95,122 @@ pub struct ProcessExec {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyscallEvent {
     pub name: String,
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum FileActivityError {
+    #[error("file path must be an absolute normalized path")]
+    InvalidPath,
+    #[error("file path exceeds {MAX_FILE_PATH_BYTES} bytes")]
+    PathTooLong,
+    #[error("rename paths must differ")]
+    SameRenamePath,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct FileActivityPath(String);
+
+impl<'de> Deserialize<'de> for FileActivityPath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl FileActivityPath {
+    pub fn new(value: impl Into<String>) -> Result<Self, FileActivityError> {
+        let value = value.into();
+        if value.len() > MAX_FILE_PATH_BYTES {
+            return Err(FileActivityError::PathTooLong);
+        }
+        if !is_normalized_absolute_path(&value) {
+            return Err(FileActivityError::InvalidPath);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_equal_or_descendant_of(&self, prefix: &Self) -> bool {
+        self == prefix
+            || self
+                .0
+                .strip_prefix(prefix.as_str())
+                .is_some_and(|suffix| prefix.as_str() == "/" || suffix.starts_with('/'))
+    }
+}
+
+impl From<FileActivityPath> for String {
+    fn from(value: FileActivityPath) -> Self {
+        value.0
+    }
+}
+
+fn is_normalized_absolute_path(value: &str) -> bool {
+    if value.is_empty() || value.contains('\0') || !value.starts_with('/') {
+        return false;
+    }
+    if value != "/"
+        && value
+            .split('/')
+            .skip(1)
+            .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        return false;
+    }
+    let mut components = Path::new(value).components();
+    if !matches!(components.next(), Some(Component::RootDir)) {
+        return false;
+    }
+    if components.any(|component| !matches!(component, Component::Normal(_))) {
+        return false;
+    }
+    value == "/" || !value.ends_with('/')
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileCreate {
+    pub path: FileActivityPath,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileModify {
+    pub path: FileActivityPath,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileDelete {
+    pub path: FileActivityPath,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileRename {
+    pub old_path: FileActivityPath,
+    pub new_path: FileActivityPath,
+    pub replaced: Option<bool>,
+}
+
+impl FileRename {
+    pub fn new(
+        old_path: FileActivityPath,
+        new_path: FileActivityPath,
+        replaced: Option<bool>,
+    ) -> Result<Self, FileActivityError> {
+        if old_path == new_path {
+            return Err(FileActivityError::SameRenamePath);
+        }
+        Ok(Self {
+            old_path,
+            new_path,
+            replaced,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -732,6 +862,46 @@ mod tests {
                 0,
             ),
             Err(InboundNetworkError::ZeroRemotePort)
+        );
+    }
+
+    #[test]
+    fn file_paths_are_absolute_normalized_bounded_and_component_aware() {
+        let root = FileActivityPath::new("/").unwrap();
+        let included = FileActivityPath::new("/app/data").unwrap();
+        let child = FileActivityPath::new("/app/data/report.csv").unwrap();
+        let textual_prefix = FileActivityPath::new("/app/database/report.csv").unwrap();
+        assert!(child.is_equal_or_descendant_of(&included));
+        assert!(child.is_equal_or_descendant_of(&root));
+        assert!(!textual_prefix.is_equal_or_descendant_of(&included));
+        for invalid in [
+            "",
+            "relative",
+            "/app/../secret",
+            "/app//data",
+            "/app/data/",
+            "/bad\0path",
+        ] {
+            assert!(
+                FileActivityPath::new(invalid).is_err(),
+                "accepted {invalid:?}"
+            );
+        }
+        assert!(matches!(
+            FileActivityPath::new(format!("/{}", "x".repeat(MAX_FILE_PATH_BYTES))),
+            Err(FileActivityError::PathTooLong)
+        ));
+        assert_eq!(FILE_MODIFY_AGGREGATION_WINDOW, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn rename_requires_distinct_valid_paths() {
+        let old_path = FileActivityPath::new("/app/old").unwrap();
+        let new_path = FileActivityPath::new("/app/new").unwrap();
+        assert!(FileRename::new(old_path.clone(), new_path, Some(true)).is_ok());
+        assert_eq!(
+            FileRename::new(old_path.clone(), old_path, Some(false)),
+            Err(FileActivityError::SameRenamePath)
         );
     }
 }

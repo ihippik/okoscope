@@ -24,8 +24,16 @@ data:
     observation:
       processExec: true
       syscalls: [ptrace, setns]
+      files:
+        enabled: false
+        operations: [create, modify, delete, rename]
+        includePaths: [/tmp/okoscope-files]
+        excludePaths: [/tmp/okoscope-files/excluded]
       network:
         connect: true
+        listen: true
+        accept: true
+        maxAcceptedEventsPerSecond: 100
         dns:
           enabled: false
           udp: true

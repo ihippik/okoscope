@@ -9,18 +9,25 @@ use agent_ebpf_common::{
     DNS_COUNTER_UNSUPPORTED_FRAMING, DNS_DIRECTION_EGRESS, DNS_DIRECTION_INGRESS,
     DNS_TRANSPORT_TCP, DNS_TRANSPORT_UDP, DnsPacketRecord, EVENT_KIND_EXEC,
     EVENT_KIND_NETWORK_ACCEPT, EVENT_KIND_NETWORK_CONNECT, EVENT_KIND_NETWORK_LISTEN,
-    EVENT_KIND_SYSCALL, INBOUND_COUNTER_ATTRIBUTION_FAILED, INBOUND_COUNTER_CORRELATION_MISS,
-    INBOUND_COUNTER_COUNT, INBOUND_COUNTER_DECODE_FAILED, INBOUND_COUNTER_KERNEL_LOST,
-    INBOUND_COUNTER_UNSUPPORTED_FAMILY, InboundEndpoints, InboundKernelEvent, KernelEvent,
-    NETWORK_ADDRESS_LEN, NETWORK_COUNTER_CAPACITY, NETWORK_COUNTER_CORRELATION_MISS,
-    NETWORK_COUNTER_COUNT, NETWORK_COUNTER_DECODE_FAILED, NETWORK_COUNTER_KERNEL_LOST,
-    NETWORK_COUNTER_UNSUPPORTED_FAMILY, PendingConnect,
+    EVENT_KIND_SYSCALL, FILE_COUNTER_CORRELATION_CAPACITY, FILE_COUNTER_CORRELATION_MISS,
+    FILE_COUNTER_COUNT, FILE_COUNTER_FD_MISS, FILE_COUNTER_KERNEL_LOST, FILE_COUNTER_PATH_OVERSIZE,
+    FILE_COUNTER_PATH_READ_FAILED, FILE_COUNTER_PATH_RELATIVE, FILE_FLAG_COMPLETE,
+    FILE_FLAG_REPLACEMENT_KNOWN, FILE_OPERATION_CLOSE, FILE_OPERATION_CREATE,
+    FILE_OPERATION_DELETE, FILE_OPERATION_MODIFY, FILE_OPERATION_OPEN, FILE_OPERATION_RENAME,
+    FILE_PATH_LEN, FileDescriptorKey, FileKernelEvent, INBOUND_COUNTER_ATTRIBUTION_FAILED,
+    INBOUND_COUNTER_CORRELATION_MISS, INBOUND_COUNTER_COUNT, INBOUND_COUNTER_DECODE_FAILED,
+    INBOUND_COUNTER_KERNEL_LOST, INBOUND_COUNTER_UNSUPPORTED_FAMILY, InboundEndpoints,
+    InboundKernelEvent, KernelEvent, NETWORK_ADDRESS_LEN, NETWORK_COUNTER_CAPACITY,
+    NETWORK_COUNTER_CORRELATION_MISS, NETWORK_COUNTER_COUNT, NETWORK_COUNTER_DECODE_FAILED,
+    NETWORK_COUNTER_KERNEL_LOST, NETWORK_COUNTER_UNSUPPORTED_FAMILY, PendingConnect,
+    PendingFileOperation, TrackedFileDescriptor,
 };
 use aya_ebpf::{
     EbpfContext,
     helpers::{
         bpf_get_current_cgroup_id, bpf_get_current_comm, bpf_get_current_pid_tgid,
-        bpf_get_socket_cookie, bpf_ktime_get_ns, bpf_probe_read_user, bpf_skb_cgroup_id,
+        bpf_get_socket_cookie, bpf_ktime_get_ns, bpf_probe_read_user,
+        bpf_probe_read_user_str_bytes, bpf_skb_cgroup_id,
     },
     macros::{cgroup_skb, kretprobe, map, tracepoint},
     maps::{HashMap, LruHashMap, PerCpuArray, RingBuf},
@@ -57,6 +64,28 @@ static mut DNS_EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 1024, 0);
 #[map]
 static mut DNS_COUNTERS: PerCpuArray<u64> = PerCpuArray::with_max_entries(DNS_COUNTER_COUNT, 0);
 
+#[map]
+static mut FILE_EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 1024, 0);
+
+#[map]
+static mut PENDING_FILE_OPERATIONS: HashMap<u64, PendingFileOperation> =
+    HashMap::with_max_entries(4096, 0);
+
+#[map]
+static mut TRACKED_FILE_DESCRIPTORS: LruHashMap<FileDescriptorKey, TrackedFileDescriptor> =
+    LruHashMap::with_max_entries(16_384, 0);
+
+#[map]
+static mut FILE_OPERATION_SCRATCH: PerCpuArray<PendingFileOperation> =
+    PerCpuArray::with_max_entries(1, 0);
+
+#[map]
+static mut FILE_DESCRIPTOR_SCRATCH: PerCpuArray<TrackedFileDescriptor> =
+    PerCpuArray::with_max_entries(1, 0);
+
+#[map]
+static mut FILE_COUNTERS: PerCpuArray<u64> = PerCpuArray::with_max_entries(FILE_COUNTER_COUNT, 0);
+
 const AF_INET: u16 = 2;
 const AF_INET6: u16 = 10;
 const EINPROGRESS: i64 = 115;
@@ -69,6 +98,10 @@ const TCP_ESTABLISHED: i32 = 1;
 const TCP_SYN_RECV: i32 = 3;
 const TCP_LISTEN: i32 = 10;
 const TCP_NEW_SYN_RECV: i32 = 12;
+const O_CREAT: u64 = 0o100;
+const O_EXCL: u64 = 0o200;
+const AT_REMOVEDIR: u64 = 0x200;
+const RENAME_NOREPLACE: u64 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -103,6 +136,80 @@ pub fn okoscope_sys_enter(ctx: TracePointContext) -> u32 {
         Ok(()) => 0,
         Err(error) => error,
     }
+}
+
+#[tracepoint]
+pub fn okoscope_file_open_enter(ctx: TracePointContext) -> u32 {
+    file_path_enter(&ctx, FILE_OPERATION_OPEN, 24, None, 32)
+}
+
+#[tracepoint]
+pub fn okoscope_file_open_exit(ctx: TracePointContext) -> u32 {
+    file_open_exit(&ctx)
+}
+
+#[tracepoint]
+pub fn okoscope_file_write_enter(ctx: TracePointContext) -> u32 {
+    file_fd_enter(&ctx, FILE_OPERATION_MODIFY)
+}
+
+#[tracepoint]
+pub fn okoscope_file_write_exit(ctx: TracePointContext) -> u32 {
+    file_operation_exit(&ctx, true)
+}
+
+#[tracepoint]
+pub fn okoscope_file_truncate_enter(ctx: TracePointContext) -> u32 {
+    file_path_enter(&ctx, FILE_OPERATION_MODIFY, 16, None, 0)
+}
+
+#[tracepoint]
+pub fn okoscope_file_truncate_exit(ctx: TracePointContext) -> u32 {
+    file_operation_exit(&ctx, false)
+}
+
+#[tracepoint]
+pub fn okoscope_file_ftruncate_enter(ctx: TracePointContext) -> u32 {
+    file_fd_enter(&ctx, FILE_OPERATION_MODIFY)
+}
+
+#[tracepoint]
+pub fn okoscope_file_ftruncate_exit(ctx: TracePointContext) -> u32 {
+    file_operation_exit(&ctx, false)
+}
+
+#[tracepoint]
+pub fn okoscope_file_unlink_enter(ctx: TracePointContext) -> u32 {
+    let flags: u64 = unsafe { ctx.read_at(32).unwrap_or(AT_REMOVEDIR) };
+    if flags & AT_REMOVEDIR != 0 {
+        return 0;
+    }
+    file_path_enter(&ctx, FILE_OPERATION_DELETE, 24, None, 0)
+}
+
+#[tracepoint]
+pub fn okoscope_file_unlink_exit(ctx: TracePointContext) -> u32 {
+    file_operation_exit(&ctx, false)
+}
+
+#[tracepoint]
+pub fn okoscope_file_rename_enter(ctx: TracePointContext) -> u32 {
+    file_path_enter(&ctx, FILE_OPERATION_RENAME, 24, Some(40), 48)
+}
+
+#[tracepoint]
+pub fn okoscope_file_rename_exit(ctx: TracePointContext) -> u32 {
+    file_operation_exit(&ctx, false)
+}
+
+#[tracepoint]
+pub fn okoscope_file_close_enter(ctx: TracePointContext) -> u32 {
+    file_fd_enter(&ctx, FILE_OPERATION_CLOSE)
+}
+
+#[tracepoint]
+pub fn okoscope_file_close_exit(ctx: TracePointContext) -> u32 {
+    file_close_exit(&ctx)
 }
 
 #[tracepoint]
@@ -330,6 +437,260 @@ fn try_sys_enter(ctx: &TracePointContext) -> Result<(), u32> {
         return Ok(());
     }
     emit(EVENT_KIND_SYSCALL, syscall_id)
+}
+
+fn file_path_enter(
+    ctx: &TracePointContext,
+    mut operation: u8,
+    path_offset: usize,
+    new_path_offset: Option<usize>,
+    flags_offset: usize,
+) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let Some(scratch_ptr) = (unsafe { FILE_OPERATION_SCRATCH.get_ptr_mut(0) }) else {
+        increment_file_counter(FILE_COUNTER_CORRELATION_CAPACITY);
+        return 0;
+    };
+    let scratch = unsafe { &mut *scratch_ptr };
+    scratch.cgroup_id = unsafe { bpf_get_current_cgroup_id() };
+    scratch.pid_tgid = pid_tgid;
+    scratch.fd = -1;
+    scratch.operation = operation;
+    scratch.flags = FILE_FLAG_COMPLETE;
+    scratch.path_len = 0;
+    scratch.new_path_len = 0;
+    scratch.command = bpf_get_current_comm().unwrap_or([0; 16]);
+    let path_ptr: u64 = match unsafe { ctx.read_at(path_offset) } {
+        Ok(value) => value,
+        Err(_) => {
+            increment_file_counter(FILE_COUNTER_PATH_READ_FAILED);
+            return 0;
+        }
+    };
+    let Ok(path) =
+        (unsafe { bpf_probe_read_user_str_bytes(path_ptr as *const u8, &mut scratch.path) })
+    else {
+        increment_file_counter(FILE_COUNTER_PATH_READ_FAILED);
+        return 0;
+    };
+    if path.is_empty() || path[0] != b'/' {
+        increment_file_counter(FILE_COUNTER_PATH_RELATIVE);
+        return 0;
+    }
+    if path.len() >= FILE_PATH_LEN {
+        increment_file_counter(FILE_COUNTER_PATH_OVERSIZE);
+        return 0;
+    }
+    scratch.path_len = path.len() as u16;
+    if let Some(offset) = new_path_offset {
+        let new_path_ptr: u64 = match unsafe { ctx.read_at(offset) } {
+            Ok(value) => value,
+            Err(_) => {
+                increment_file_counter(FILE_COUNTER_PATH_READ_FAILED);
+                return 0;
+            }
+        };
+        let Ok(new_path) = (unsafe {
+            bpf_probe_read_user_str_bytes(new_path_ptr as *const u8, &mut scratch.new_path)
+        }) else {
+            increment_file_counter(FILE_COUNTER_PATH_READ_FAILED);
+            return 0;
+        };
+        if new_path.is_empty() || new_path[0] != b'/' {
+            increment_file_counter(FILE_COUNTER_PATH_RELATIVE);
+            return 0;
+        }
+        if new_path.len() >= FILE_PATH_LEN {
+            increment_file_counter(FILE_COUNTER_PATH_OVERSIZE);
+            return 0;
+        }
+        scratch.new_path_len = new_path.len() as u16;
+    }
+    if flags_offset != 0 {
+        let flags: u64 = unsafe { ctx.read_at(flags_offset).unwrap_or(0) };
+        if operation == FILE_OPERATION_OPEN && flags & (O_CREAT | O_EXCL) == (O_CREAT | O_EXCL) {
+            operation = FILE_OPERATION_CREATE;
+            scratch.operation = operation;
+        }
+        if operation == FILE_OPERATION_RENAME && flags & RENAME_NOREPLACE != 0 {
+            scratch.flags |= FILE_FLAG_REPLACEMENT_KNOWN;
+        }
+    }
+    if unsafe { PENDING_FILE_OPERATIONS.insert(&pid_tgid, scratch, 0) }.is_err() {
+        increment_file_counter(FILE_COUNTER_CORRELATION_CAPACITY);
+    }
+    0
+}
+
+fn file_fd_enter(ctx: &TracePointContext, operation: u8) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let fd_raw: u64 = match unsafe { ctx.read_at(16) } {
+        Ok(value) => value,
+        Err(_) => return 0,
+    };
+    let fd = fd_raw as i32;
+    let key = FileDescriptorKey {
+        tgid: (pid_tgid >> 32) as u32,
+        fd,
+    };
+    let Some(tracked_ptr) = (unsafe { TRACKED_FILE_DESCRIPTORS.get_ptr(&key) }) else {
+        if operation == FILE_OPERATION_MODIFY {
+            increment_file_counter(FILE_COUNTER_FD_MISS);
+        }
+        return 0;
+    };
+    let Some(scratch_ptr) = (unsafe { FILE_OPERATION_SCRATCH.get_ptr_mut(0) }) else {
+        increment_file_counter(FILE_COUNTER_CORRELATION_CAPACITY);
+        return 0;
+    };
+    let tracked = unsafe { &*tracked_ptr };
+    let scratch = unsafe { &mut *scratch_ptr };
+    scratch.cgroup_id = tracked.cgroup_id;
+    scratch.pid_tgid = pid_tgid;
+    scratch.fd = fd;
+    scratch.operation = operation;
+    scratch.flags = FILE_FLAG_COMPLETE;
+    scratch.path_len = tracked.path_len;
+    scratch.new_path_len = 0;
+    scratch.command = tracked.command;
+    let mut index = 0;
+    while index < FILE_PATH_LEN {
+        if index >= usize::from(tracked.path_len) {
+            break;
+        }
+        scratch.path[index] = tracked.path[index];
+        index += 1;
+    }
+    if unsafe { PENDING_FILE_OPERATIONS.insert(&pid_tgid, scratch, 0) }.is_err() {
+        increment_file_counter(FILE_COUNTER_CORRELATION_CAPACITY);
+    }
+    0
+}
+
+fn file_open_exit(ctx: &TracePointContext) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let Some(pending_ptr) = (unsafe { PENDING_FILE_OPERATIONS.get_ptr(&pid_tgid) }) else {
+        increment_file_counter(FILE_COUNTER_CORRELATION_MISS);
+        return 0;
+    };
+    let pending = unsafe { &*pending_ptr };
+    let result: i64 = unsafe { ctx.read_at(16).unwrap_or(-1) };
+    if result < 0 || result > i64::from(i32::MAX) {
+        let _ = unsafe { PENDING_FILE_OPERATIONS.remove(&pid_tgid) };
+        return 0;
+    }
+    let fd = result as i32;
+    let Some(descriptor_ptr) = (unsafe { FILE_DESCRIPTOR_SCRATCH.get_ptr_mut(0) }) else {
+        increment_file_counter(FILE_COUNTER_CORRELATION_CAPACITY);
+        return 0;
+    };
+    let descriptor = unsafe { &mut *descriptor_ptr };
+    descriptor.cgroup_id = pending.cgroup_id;
+    descriptor.pid_tgid = pending.pid_tgid;
+    descriptor.generation = unsafe { bpf_ktime_get_ns() };
+    descriptor.path_len = pending.path_len;
+    descriptor.command = pending.command;
+    let mut index = 0;
+    while index < FILE_PATH_LEN {
+        if index >= usize::from(pending.path_len) {
+            break;
+        }
+        descriptor.path[index] = pending.path[index];
+        index += 1;
+    }
+    let key = FileDescriptorKey {
+        tgid: (pending.pid_tgid >> 32) as u32,
+        fd,
+    };
+    if unsafe { TRACKED_FILE_DESCRIPTORS.insert(&key, descriptor, 0) }.is_err() {
+        increment_file_counter(FILE_COUNTER_CORRELATION_CAPACITY);
+        let _ = unsafe { PENDING_FILE_OPERATIONS.remove(&pid_tgid) };
+        return 0;
+    }
+    if pending.operation == FILE_OPERATION_CREATE {
+        emit_file(pending, descriptor.generation, fd, 0);
+    }
+    let _ = unsafe { PENDING_FILE_OPERATIONS.remove(&pid_tgid) };
+    0
+}
+
+fn file_operation_exit(ctx: &TracePointContext, positive_result: bool) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let Some(pending_ptr) = (unsafe { PENDING_FILE_OPERATIONS.get_ptr(&pid_tgid) }) else {
+        increment_file_counter(FILE_COUNTER_CORRELATION_MISS);
+        return 0;
+    };
+    let pending = unsafe { &*pending_ptr };
+    let result: i64 = unsafe { ctx.read_at(16).unwrap_or(-1) };
+    if (positive_result && result <= 0) || (!positive_result && result != 0) {
+        let _ = unsafe { PENDING_FILE_OPERATIONS.remove(&pid_tgid) };
+        return 0;
+    }
+    let generation = if pending.fd >= 0 {
+        let key = FileDescriptorKey {
+            tgid: (pending.pid_tgid >> 32) as u32,
+            fd: pending.fd,
+        };
+        unsafe { TRACKED_FILE_DESCRIPTORS.get(&key) }.map_or(0, |tracked| tracked.generation)
+    } else {
+        0
+    };
+    emit_file(pending, generation, pending.fd, result as i32);
+    let _ = unsafe { PENDING_FILE_OPERATIONS.remove(&pid_tgid) };
+    0
+}
+
+fn file_close_exit(ctx: &TracePointContext) -> u32 {
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let Some(pending_ptr) = (unsafe { PENDING_FILE_OPERATIONS.get_ptr(&pid_tgid) }) else {
+        return 0;
+    };
+    let pending = unsafe { &*pending_ptr };
+    let result: i64 = unsafe { ctx.read_at(16).unwrap_or(-1) };
+    if result == 0 {
+        let key = FileDescriptorKey {
+            tgid: (pending.pid_tgid >> 32) as u32,
+            fd: pending.fd,
+        };
+        let _ = unsafe { TRACKED_FILE_DESCRIPTORS.remove(&key) };
+    }
+    let _ = unsafe { PENDING_FILE_OPERATIONS.remove(&pid_tgid) };
+    0
+}
+
+fn emit_file(pending: &PendingFileOperation, generation: u64, fd: i32, result: i32) {
+    let Some(mut slot) = (unsafe { FILE_EVENTS.reserve::<FileKernelEvent>(0) }) else {
+        increment_file_counter(FILE_COUNTER_KERNEL_LOST);
+        return;
+    };
+    let record = unsafe { &mut *slot.as_mut_ptr() };
+    record.timestamp_ns = unsafe { bpf_ktime_get_ns() };
+    record.cgroup_id = pending.cgroup_id;
+    record.pid_tgid = pending.pid_tgid;
+    record.descriptor_generation = generation;
+    record.fd = fd;
+    record.result = result;
+    record.path_len = pending.path_len;
+    record.new_path_len = pending.new_path_len;
+    record.operation = pending.operation;
+    record.flags = pending.flags;
+    record.padding = [0; 2];
+    record.command = pending.command;
+    let mut index = 0;
+    while index < FILE_PATH_LEN {
+        record.path[index] = if index < usize::from(pending.path_len) {
+            pending.path[index]
+        } else {
+            0
+        };
+        record.new_path[index] = if index < usize::from(pending.new_path_len) {
+            pending.new_path[index]
+        } else {
+            0
+        };
+        index += 1;
+    }
+    slot.submit(0);
 }
 
 fn emit(event_kind: u8, syscall_id: u32) -> Result<(), u32> {
@@ -581,6 +942,14 @@ fn increment_inbound_counter(index: u32) {
 
 fn increment_dns_counter(index: u32) {
     if let Some(value) = unsafe { DNS_COUNTERS.get_ptr_mut(index) } {
+        unsafe {
+            *value = (*value).saturating_add(1);
+        }
+    }
+}
+
+fn increment_file_counter(index: u32) {
+    if let Some(value) = unsafe { FILE_COUNTERS.get_ptr_mut(index) } {
         unsafe {
             *value = (*value).saturating_add(1);
         }

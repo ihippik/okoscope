@@ -66,6 +66,10 @@ impl AgentService for AgentSessionService {
         let (agent_id, _session_id) = register(&self.pool, scope, &hello)
             .await
             .map_err(internal)?;
+        let file_activity_capable = hello
+            .capabilities
+            .iter()
+            .any(|value| value == protocol::FILE_ACTIVITY_CAPABILITY);
         let (sender, receiver) = mpsc::channel(32);
         sender
             .send(Ok(ServerMessage {
@@ -88,6 +92,13 @@ impl AgentService for AgentSessionService {
                     match message.message {
                         Some(agent_message::Message::EventBatch(batch)) => {
                             let events = batch.events.into_iter().map(event_model::RuntimeEvent::try_from).collect::<Result<Vec<_>, _>>().map_err(|error| Status::invalid_argument(error.to_string()))?;
+                            if !file_activity_capable && events.iter().any(|event| matches!(event.payload,
+                                event_model::EventPayload::FileCreate(_)
+                                | event_model::EventPayload::FileModify(_)
+                                | event_model::EventPayload::FileDelete(_)
+                                | event_model::EventPayload::FileRename(_))) {
+                                return Err(Status::failed_precondition("file activity event requires file.activity.syscall-path/v1 capability"));
+                            }
                             let accepted = persist_batch(&pool, IngestionContext { scope, agent_id }, &events).await.map_err(internal)?;
                             sender.send(Ok(ServerMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(server_message::Message::BatchAcknowledgement(BatchAcknowledgement { sequence: batch.sequence, accepted_events: accepted })) })).await.map_err(|_| Status::unavailable("session response channel closed"))?;
                         }

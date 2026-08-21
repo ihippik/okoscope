@@ -14,8 +14,8 @@
 ## 3. eBPF Capture and Userspace Decoding
 
 - [x] 3.1 Extend the fixed kernel/userspace ABI with aligned inbound event records, compile-time size assertions, explicit event kinds, and bounded counters.
-- [ ] 3.2 Implement verified TCP listener transition capture with effective local address/port and safe process/cgroup context.
-- [ ] 3.3 Implement verified server-side accepted-connection capture with canonical local/remote endpoints and safe process/cgroup context.
+- [x] 3.2 Implement verified TCP listener transition capture with effective local address/port and safe process/cgroup context.
+- [x] 3.3 Implement verified server-side accepted-connection capture with canonical local/remote endpoints and safe process/cgroup context.
 - [ ] 3.4 Add eBPF predicate, address decoding, wildcard, dual-stack, transition deduplication, malformed context, and ring-capacity tests or fixtures supported by the kernel harness.
 - [x] 3.5 Extend userspace kernel record decoding and validation with unit tests for both event kinds and every loss reason.
 

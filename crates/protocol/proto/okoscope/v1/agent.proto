@@ -70,6 +70,10 @@ message RuntimeEvent {
     NetworkDnsResponse network_dns_response = 14;
     NetworkListen network_listen = 15;
     NetworkAccept network_accept = 16;
+    FileCreate file_create = 17;
+    FileModify file_modify = 18;
+    FileDelete file_delete = 19;
+    FileRename file_rename = 20;
   }
 }
 
@@ -102,6 +106,15 @@ message ProcessExec {
 
 message Syscall {
   string name = 1;
+}
+
+message FileCreate { string path = 1; }
+message FileModify { string path = 1; }
+message FileDelete { string path = 1; }
+message FileRename {
+  string old_path = 1;
+  string new_path = 2;
+  optional bool replaced = 3;
 }
 
 message NetworkConnect {
@@ -254,6 +267,20 @@ message DropCounters {
   uint64 inbound_kernel_lost = 28;
   uint64 inbound_rate_limited = 29;
   uint64 inbound_correlation_miss = 30;
+  uint64 file_correlation_capacity = 31;
+  uint64 file_correlation_miss = 32;
+  uint64 file_path_read_failed = 33;
+  uint64 file_path_relative = 34;
+  uint64 file_path_invalid = 35;
+  uint64 file_path_oversize = 36;
+  uint64 file_fd_miss = 37;
+  uint64 file_filtered = 38;
+  uint64 file_kernel_lost = 39;
+  uint64 file_aggregation_capacity = 40;
+  uint64 file_decode_failed = 41;
+  uint64 file_attribution_failed = 42;
+  uint64 file_rate_limited = 43;
+  uint64 file_unsupported_object = 44;
 }
 
 message ControlMessage {

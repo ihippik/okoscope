@@ -36,6 +36,26 @@ pub const DNS_COUNTER_DECODE_FAILED: u32 = 2;
 pub const DNS_COUNTER_OVERSIZE: u32 = 3;
 pub const DNS_COUNTER_RING_LOST: u32 = 4;
 pub const DNS_COUNTER_COUNT: u32 = 5;
+pub const FILE_PATH_LEN: usize = 1024;
+pub const FILE_OPERATION_CREATE: u8 = 1;
+pub const FILE_OPERATION_MODIFY: u8 = 2;
+pub const FILE_OPERATION_DELETE: u8 = 3;
+pub const FILE_OPERATION_RENAME: u8 = 4;
+pub const FILE_OPERATION_OPEN: u8 = 5;
+pub const FILE_OPERATION_CLOSE: u8 = 6;
+pub const FILE_FLAG_REPLACED: u8 = 1;
+pub const FILE_FLAG_COMPLETE: u8 = 2;
+pub const FILE_FLAG_REPLACEMENT_KNOWN: u8 = 4;
+pub const FILE_COUNTER_CORRELATION_CAPACITY: u32 = 0;
+pub const FILE_COUNTER_CORRELATION_MISS: u32 = 1;
+pub const FILE_COUNTER_PATH_READ_FAILED: u32 = 2;
+pub const FILE_COUNTER_PATH_RELATIVE: u32 = 3;
+pub const FILE_COUNTER_PATH_INVALID: u32 = 4;
+pub const FILE_COUNTER_PATH_OVERSIZE: u32 = 5;
+pub const FILE_COUNTER_FD_MISS: u32 = 6;
+pub const FILE_COUNTER_FILTERED: u32 = 7;
+pub const FILE_COUNTER_KERNEL_LOST: u32 = 8;
+pub const FILE_COUNTER_COUNT: u32 = 9;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -129,9 +149,69 @@ impl DnsPacketRecord {
     pub const SIZE: usize = core::mem::size_of::<Self>();
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileKernelEvent {
+    pub timestamp_ns: u64,
+    pub cgroup_id: u64,
+    pub pid_tgid: u64,
+    pub descriptor_generation: u64,
+    pub fd: i32,
+    pub result: i32,
+    pub path_len: u16,
+    pub new_path_len: u16,
+    pub operation: u8,
+    pub flags: u8,
+    pub padding: [u8; 2],
+    pub command: [u8; COMMAND_LEN],
+    pub path: [u8; FILE_PATH_LEN],
+    pub new_path: [u8; FILE_PATH_LEN],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PendingFileOperation {
+    pub cgroup_id: u64,
+    pub pid_tgid: u64,
+    pub fd: i32,
+    pub operation: u8,
+    pub flags: u8,
+    pub path_len: u16,
+    pub new_path_len: u16,
+    pub padding: [u8; 2],
+    pub command: [u8; COMMAND_LEN],
+    pub path: [u8; FILE_PATH_LEN],
+    pub new_path: [u8; FILE_PATH_LEN],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TrackedFileDescriptor {
+    pub cgroup_id: u64,
+    pub pid_tgid: u64,
+    pub generation: u64,
+    pub path_len: u16,
+    pub padding: [u8; 6],
+    pub command: [u8; COMMAND_LEN],
+    pub path: [u8; FILE_PATH_LEN],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileDescriptorKey {
+    pub tgid: u32,
+    pub fd: i32,
+}
+
+impl FileKernelEvent {
+    pub const SIZE: usize = core::mem::size_of::<Self>();
+}
+
 const _: [(); 72] = [(); core::mem::size_of::<KernelEvent>()];
 const _: [(); 64] = [(); core::mem::size_of::<PendingConnect>()];
 const _: [(); 48] = [(); core::mem::size_of::<InboundEndpoints>()];
 const _: [(); 80] = [(); core::mem::size_of::<InboundKernelEvent>()];
 const _: [(); 1312] = [(); core::mem::size_of::<DnsPacketRecord>()];
 const _: [(); 8] = [(); core::mem::align_of::<DnsPacketRecord>()];
+const _: [(); 2112] = [(); core::mem::size_of::<FileKernelEvent>()];
+const _: [(); 8] = [(); core::mem::align_of::<FileKernelEvent>()];

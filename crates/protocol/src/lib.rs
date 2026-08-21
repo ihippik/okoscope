@@ -10,10 +10,10 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use chrono::{DateTime, Utc};
 use event_model::{
     DnsAddressAnswer, DnsCname, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
-    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAccept,
-    NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery,
-    NetworkDnsResponse, NetworkListen, PROTOCOL_VERSION, ProcessExec, ProcessIdentity,
-    RuntimeEvent, SyscallEvent,
+    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, FileActivityPath, FileCreate, FileDelete,
+    FileModify, FileRename, KubernetesAttribution, NetworkAccept, NetworkAddressFamily,
+    NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, NetworkListen,
+    PROTOCOL_VERSION, ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -23,6 +23,7 @@ pub const NETWORK_LISTEN_CAPABILITY: &str = "network.listen/v1";
 pub const NETWORK_ACCEPT_CAPABILITY: &str = "network.accept/v1";
 pub const NETWORK_DNS_UDP_CAPABILITY: &str = "network.dns.udp/v1";
 pub const NETWORK_DNS_TCP_CAPABILITY: &str = "network.dns.tcp/v1";
+pub const FILE_ACTIVITY_CAPABILITY: &str = "file.activity.syscall-path/v1";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProtocolError {
@@ -40,6 +41,8 @@ pub enum ProtocolError {
     InvalidNetwork(&'static str),
     #[error("invalid DNS field: {0}")]
     InvalidDns(&'static str),
+    #[error("invalid file activity field: {0}")]
+    InvalidFile(&'static str),
 }
 
 /// Validates the wire protocol version.
@@ -115,6 +118,28 @@ impl From<RuntimeEvent> for v1::RuntimeEvent {
             }
             EventPayload::NetworkDnsResponse(response) => {
                 v1::runtime_event::Payload::NetworkDnsResponse(encode_dns_response(response))
+            }
+            EventPayload::FileCreate(value) => {
+                v1::runtime_event::Payload::FileCreate(v1::FileCreate {
+                    path: value.path.into(),
+                })
+            }
+            EventPayload::FileModify(value) => {
+                v1::runtime_event::Payload::FileModify(v1::FileModify {
+                    path: value.path.into(),
+                })
+            }
+            EventPayload::FileDelete(value) => {
+                v1::runtime_event::Payload::FileDelete(v1::FileDelete {
+                    path: value.path.into(),
+                })
+            }
+            EventPayload::FileRename(value) => {
+                v1::runtime_event::Payload::FileRename(v1::FileRename {
+                    old_path: value.old_path.into(),
+                    new_path: value.new_path.into(),
+                    replaced: value.replaced,
+                })
             }
         };
         let a = event.attribution;
@@ -213,6 +238,23 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
             v1::runtime_event::Payload::NetworkDnsResponse(response) => {
                 decode_dns_response(&response)?
             }
+            v1::runtime_event::Payload::FileCreate(value) => EventPayload::FileCreate(FileCreate {
+                path: decode_file_path(value.path, "path")?,
+            }),
+            v1::runtime_event::Payload::FileModify(value) => EventPayload::FileModify(FileModify {
+                path: decode_file_path(value.path, "path")?,
+            }),
+            v1::runtime_event::Payload::FileDelete(value) => EventPayload::FileDelete(FileDelete {
+                path: decode_file_path(value.path, "path")?,
+            }),
+            v1::runtime_event::Payload::FileRename(value) => EventPayload::FileRename(
+                FileRename::new(
+                    decode_file_path(value.old_path, "old_path")?,
+                    decode_file_path(value.new_path, "new_path")?,
+                    value.replaced,
+                )
+                .map_err(|_| ProtocolError::InvalidFile("rename"))?,
+            ),
         };
         Ok(Self {
             id,
@@ -223,6 +265,10 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
             payload,
         })
     }
+}
+
+fn decode_file_path(value: String, field: &'static str) -> Result<FileActivityPath, ProtocolError> {
+    FileActivityPath::new(value).map_err(|_| ProtocolError::InvalidFile(field))
 }
 
 fn encode_network_ip(address: IpAddr) -> (v1::NetworkAddressFamily, Vec<u8>) {
@@ -908,6 +954,53 @@ mod tests {
         assert!(matches!(
             RuntimeEvent::try_from(wire),
             Err(ProtocolError::InvalidDns("context.ambiguous"))
+        ));
+    }
+
+    #[test]
+    fn file_payloads_round_trip_and_reject_malformed_paths() {
+        let path = FileActivityPath::new("/app/data/report").unwrap();
+        let payloads = [
+            EventPayload::FileCreate(FileCreate { path: path.clone() }),
+            EventPayload::FileModify(FileModify { path: path.clone() }),
+            EventPayload::FileDelete(FileDelete { path: path.clone() }),
+            EventPayload::FileRename(
+                FileRename::new(
+                    path,
+                    FileActivityPath::new("/app/data/report.done").unwrap(),
+                    Some(true),
+                )
+                .unwrap(),
+            ),
+        ];
+        for payload in payloads {
+            let mut value = event();
+            value.payload = payload;
+            assert_eq!(
+                RuntimeEvent::try_from(v1::RuntimeEvent::from(value.clone())).unwrap(),
+                value
+            );
+        }
+
+        for invalid in ["", "relative", "/app/../secret", "/bad\0path"] {
+            let mut wire = v1::RuntimeEvent::from(event());
+            wire.payload = Some(v1::runtime_event::Payload::FileCreate(v1::FileCreate {
+                path: invalid.into(),
+            }));
+            assert!(matches!(
+                RuntimeEvent::try_from(wire),
+                Err(ProtocolError::InvalidFile("path"))
+            ));
+        }
+        let mut wire = v1::RuntimeEvent::from(event());
+        wire.payload = Some(v1::runtime_event::Payload::FileRename(v1::FileRename {
+            old_path: "/same".into(),
+            new_path: "/same".into(),
+            replaced: Some(false),
+        }));
+        assert!(matches!(
+            RuntimeEvent::try_from(wire),
+            Err(ProtocolError::InvalidFile("rename"))
         ));
     }
 }

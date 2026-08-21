@@ -167,6 +167,20 @@ async fn persist_event(
             "DNS event ingested"
         );
     }
+    if matches!(
+        &event.payload,
+        EventPayload::FileCreate(_)
+            | EventPayload::FileModify(_)
+            | EventPayload::FileDelete(_)
+            | EventPayload::FileRename(_)
+    ) {
+        crate::metrics::record_file_event(grouping.group_created);
+        tracing::debug!(
+            outcome = "accepted",
+            group_created = grouping.group_created,
+            "file activity event ingested"
+        );
+    }
     Ok(1)
 }
 
@@ -181,7 +195,11 @@ fn validate_dns_event(event: &RuntimeEvent) -> Result<(), IngestionError> {
         | EventPayload::Syscall(_)
         | EventPayload::NetworkListen(_)
         | EventPayload::NetworkAccept(_)
-        | EventPayload::NetworkDnsQuery(_) => true,
+        | EventPayload::NetworkDnsQuery(_)
+        | EventPayload::FileCreate(_)
+        | EventPayload::FileModify(_)
+        | EventPayload::FileDelete(_)
+        | EventPayload::FileRename(_) => true,
     };
     valid.then_some(()).ok_or(IngestionError::InvalidDns)
 }

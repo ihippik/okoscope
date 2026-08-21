@@ -18,6 +18,8 @@ static NETWORK_ACCEPT_GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
 static DNS_EVENTS_ACCEPTED: AtomicU64 = AtomicU64::new(0);
 static DNS_GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
 static DNS_AMBIGUOUS_CONTEXTS: AtomicU64 = AtomicU64::new(0);
+static FILE_EVENTS_ACCEPTED: AtomicU64 = AtomicU64::new(0);
+static FILE_GROUPS_CREATED: AtomicU64 = AtomicU64::new(0);
 static API_REQUESTS: AtomicU64 = AtomicU64::new(0);
 static BACKFILL_SCANNED: AtomicU64 = AtomicU64::new(0);
 static BACKFILL_GROUPED: AtomicU64 = AtomicU64::new(0);
@@ -103,6 +105,11 @@ pub fn record_dns_event(group_created: bool) {
 
 pub fn record_dns_ambiguous_context() {
     DNS_AMBIGUOUS_CONTEXTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_file_event(group_created: bool) {
+    FILE_EVENTS_ACCEPTED.fetch_add(1, Ordering::Relaxed);
+    FILE_GROUPS_CREATED.fetch_add(u64::from(group_created), Ordering::Relaxed);
 }
 
 pub fn record_api_request() {
@@ -360,6 +367,14 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         (
             "okoscope_dns_ambiguous_contexts_total",
             DNS_AMBIGUOUS_CONTEXTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_file_events_accepted_total",
+            FILE_EVENTS_ACCEPTED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_file_groups_created_total",
+            FILE_GROUPS_CREATED.load(Ordering::Relaxed),
         ),
         (
             "okoscope_api_requests_total",
