@@ -669,19 +669,13 @@ fn emit_file(pending: &PendingFileOperation, generation: u64, fd: i32, result: i
     record.flags = pending.flags;
     record.padding = [0; 2];
     record.command = pending.command;
-    let mut index = 0;
-    while index < FILE_PATH_LEN {
-        record.path[index] = if index < usize::from(pending.path_len) {
-            pending.path[index]
-        } else {
-            0
-        };
-        record.new_path[index] = if index < usize::from(pending.new_path_len) {
-            pending.new_path[index]
-        } else {
-            0
-        };
-        index += 1;
+    if unsafe { bpf_probe_read_kernel_buf(pending.path.as_ptr(), &mut record.path) }.is_err()
+        || unsafe { bpf_probe_read_kernel_buf(pending.new_path.as_ptr(), &mut record.new_path) }
+            .is_err()
+    {
+        increment_file_counter(FILE_COUNTER_PATH_READ_FAILED);
+        slot.discard(0);
+        return;
     }
     slot.submit(0);
 }
