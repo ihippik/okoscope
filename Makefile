@@ -1,4 +1,4 @@
-.PHONY: build build-ebpf check test proto-check deployment-test
+.PHONY: build build-ebpf check test proto-check deployment-test file-activity-e2e
 
 build:
 	cargo build --workspace --exclude agent-ebpf
@@ -20,3 +20,6 @@ deployment-test:
 	deploy/tests/manifest-policy.sh
 	deploy/tests/secret-preflight.sh
 	deploy/tests/deployment-workflow.sh
+
+file-activity-e2e:
+	deploy/tests/file-activity-e2e.sh

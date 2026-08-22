@@ -64,6 +64,23 @@ paths:
           '200': { $ref: '#/components/responses/Application' },
           '404': { $ref: '#/components/responses/Error' },
         }
+  /api/v1/projects/{project_id}/applications/{application_id}/workers:
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
+    get:
+      operationId: listApplicationWorkers
+      parameters:
+        [{ $ref: '#/components/parameters/OpaqueCursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        {
+          '200': { $ref: '#/components/responses/ApplicationWorkerPage' },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory:
     parameters:
       [
@@ -633,7 +650,7 @@ components:
         service_version: { type: string, example: 0.1.0 }
         git_commit: { type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a }
         api_version: { type: string, const: v1 }
-        required_database_migration: { type: integer, format: int64, example: 7 }
+        required_database_migration: { type: integer, format: int64, example: 12 }
     Organization:
       type: object
       additionalProperties: false
@@ -692,6 +709,40 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Application' } }
         next_cursor: { $ref: '#/components/schemas/NullableUuid' }
+    ApplicationWorker:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          agent_id,
+          cluster_id,
+          cluster_name,
+          node_name,
+          agent_version,
+          architecture,
+          kernel_release,
+          first_observed_at,
+          last_observed_at,
+          agent_last_seen_at,
+        ]
+      properties:
+        agent_id: { $ref: '#/components/schemas/Uuid' }
+        cluster_id: { $ref: '#/components/schemas/Uuid' }
+        cluster_name: { type: string, minLength: 1, maxLength: 200 }
+        node_name: { type: string, minLength: 1, maxLength: 253 }
+        agent_version: { type: string, minLength: 1, maxLength: 200 }
+        architecture: { type: [string, 'null'], minLength: 1, maxLength: 64 }
+        kernel_release: { type: [string, 'null'], minLength: 1, maxLength: 255 }
+        first_observed_at: { $ref: '#/components/schemas/Timestamp' }
+        last_observed_at: { $ref: '#/components/schemas/Timestamp' }
+        agent_last_seen_at: { $ref: '#/components/schemas/Timestamp' }
+    ApplicationWorkerPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ApplicationWorker' } }
+        next_cursor: { $ref: '#/components/schemas/NullableOpaqueCursor' }
     RuntimeGroup:
       type: object
       additionalProperties: false
@@ -2001,6 +2052,13 @@ components:
         description: Application page,
         headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
         content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationPage' } } },
+      }
+    ApplicationWorkerPage:
+      {
+        description: Application worker platform metadata page,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/ApplicationWorkerPage' } } },
       }
     InventorySummary:
       {

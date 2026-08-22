@@ -72,3 +72,19 @@ Rollback is disable-only: set `files.enabled: false` and restart the agent. This
 profile and removes the capability from the next session; stored additive events and schema stay
 readable and require no destructive database rollback. If startup is unready, inspect the error
 for the exact missing tracepoint/map/profile component; partial hook coverage is never advertised.
+
+## Automated end-to-end acceptance
+
+Run the repeatable kernel-to-release test against the `aliens` context with a selected workload
+release and an earlier baseline release:
+
+```sh
+E2E_RELEASE_VERSION=smoke-v2 \
+E2E_BASELINE_RELEASE_ID=00000000-0000-0000-0000-000000000000 \
+make file-activity-e2e
+```
+
+File observation must already be enabled. The test generates unique create, aggregated modify,
+rename, and delete operations in the bounded fixture, then verifies capability registration, raw
+durability, group occurrences, first-seen outbox work, inventory navigation and sightings, release
+projections, release-diff classification, and selected/excluded workload isolation.

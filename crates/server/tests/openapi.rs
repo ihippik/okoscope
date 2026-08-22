@@ -11,6 +11,10 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "get",
     ),
     (
+        "/api/v1/projects/{project_id}/applications/{application_id}/workers",
+        "get",
+    ),
+    (
         "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory",
         "get",
     ),
@@ -171,6 +175,12 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     );
     assert_query_parameters(
         &document,
+        "/api/v1/projects/{project_id}/applications/{application_id}/workers",
+        "get",
+        &["cursor", "limit"],
+    );
+    assert_query_parameters(
+        &document,
         "/api/v1/runtime-groups",
         "get",
         &[
@@ -196,6 +206,23 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         "get",
         &["cursor", "limit"],
     );
+    let worker_required = document["components"]["schemas"]["ApplicationWorker"]["required"]
+        .as_array()
+        .expect("ApplicationWorker required fields");
+    for field in [
+        "agent_id",
+        "cluster_id",
+        "cluster_name",
+        "node_name",
+        "agent_version",
+        "architecture",
+        "kernel_release",
+        "first_observed_at",
+        "last_observed_at",
+        "agent_last_seen_at",
+    ] {
+        assert!(worker_required.iter().any(|value| value == field));
+    }
     assert_query_parameters(
         &document,
         "/api/v1/runtime-groups/{group_id}/occurrences",

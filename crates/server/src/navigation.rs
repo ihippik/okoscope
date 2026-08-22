@@ -39,6 +39,10 @@ pub fn router(pool: PgPool) -> Router {
             "/api/v1/projects/{project_id}/applications/{application_id}",
             get(application),
         )
+        .route(
+            "/api/v1/projects/{project_id}/applications/{application_id}/workers",
+            get(application_workers),
+        )
         .layer(middleware::from_fn(track_navigation))
         .with_state(state)
 }
@@ -152,6 +156,38 @@ struct ApplicationSummary {
 struct Page<T> {
     items: Vec<T>,
     next_cursor: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkerPageQuery {
+    cursor: Option<String>,
+    limit: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct WorkerCursor {
+    last_observed_at: DateTime<Utc>,
+    agent_id: Uuid,
+}
+
+#[derive(Debug, FromRow, Serialize)]
+struct ApplicationWorker {
+    agent_id: Uuid,
+    cluster_id: Uuid,
+    cluster_name: String,
+    node_name: String,
+    agent_version: String,
+    architecture: Option<String>,
+    kernel_release: Option<String>,
+    first_observed_at: DateTime<Utc>,
+    last_observed_at: DateTime<Utc>,
+    agent_last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkerPage {
+    items: Vec<ApplicationWorker>,
+    next_cursor: Option<String>,
 }
 
 async fn principal(
@@ -273,6 +309,92 @@ async fn application(
     let item = sqlx::query_as::<_, ApplicationSummary>("SELECT a.id,a.project_id,a.slug,a.name,a.created_at,(SELECT count(*) FROM releases r WHERE r.organization_id=a.organization_id AND r.project_id=a.project_id AND r.application_id=a.id) release_count,(SELECT count(*) FROM runtime_event_groups g WHERE g.organization_id=a.organization_id AND g.project_id=a.project_id AND g.application_id=a.id) runtime_group_count,(SELECT max(e.observed_at) FROM runtime_events e WHERE e.organization_id=a.organization_id AND e.project_id=a.project_id AND e.application_id=a.id) latest_observed_at FROM applications a WHERE a.organization_id=$1 AND a.project_id=$2 AND a.id=$3")
         .bind(principal.organization_id).bind(project_id).bind(application_id).fetch_optional(&state.pool).await.map_err(|error| NavigationError::database(&error, &request_id))?.ok_or_else(|| NavigationError::not_found(&request_id))?;
     Ok(Json(item))
+}
+
+async fn application_workers(
+    State(state): State<StateData>,
+    headers: HeaderMap,
+    Extension(request_id): Extension<RequestId>,
+    Path((project_id, application_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<WorkerPageQuery>,
+) -> Result<Json<WorkerPage>, NavigationError> {
+    let principal = principal(&headers, &state, &request_id).await?;
+    let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM applications WHERE organization_id=$1 AND project_id=$2 AND id=$3)")
+        .bind(principal.organization_id)
+        .bind(project_id)
+        .bind(application_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|error| NavigationError::database(&error, &request_id))?;
+    if !owned {
+        return Err(NavigationError::not_found(&request_id));
+    }
+    let limit = page_limit(query.limit, &request_id)?;
+    let cursor = query
+        .cursor
+        .as_deref()
+        .map(decode_worker_cursor)
+        .transpose()
+        .map_err(|message| NavigationError::invalid(message, &request_id))?;
+    if let Some(cursor) = &cursor {
+        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runtime_events WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND agent_id=$4 GROUP BY agent_id HAVING max(observed_at)=$5)")
+            .bind(principal.organization_id)
+            .bind(project_id)
+            .bind(application_id)
+            .bind(cursor.agent_id)
+            .bind(cursor.last_observed_at)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|error| NavigationError::database(&error, &request_id))?;
+        if !valid {
+            return Err(NavigationError::invalid(
+                "cursor is outside this scope",
+                &request_id,
+            ));
+        }
+    }
+    let cursor_time = cursor.as_ref().map(|value| value.last_observed_at);
+    let cursor_agent = cursor.as_ref().map(|value| value.agent_id);
+    let mut items = sqlx::query_as::<_, ApplicationWorker>("WITH observed AS (SELECT agent_id,min(observed_at) first_observed_at,max(observed_at) last_observed_at FROM runtime_events WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 GROUP BY agent_id) SELECT a.id agent_id,a.cluster_id,c.name cluster_name,a.node_name,a.agent_version,a.architecture,a.kernel_release,o.first_observed_at,o.last_observed_at,a.last_seen_at agent_last_seen_at FROM observed o JOIN agents a ON a.organization_id=$1 AND a.id=o.agent_id JOIN clusters c ON c.organization_id=$1 AND c.id=a.cluster_id WHERE ($4::timestamptz IS NULL OR (o.last_observed_at,o.agent_id)<($4,$5)) ORDER BY o.last_observed_at DESC,o.agent_id DESC LIMIT $6")
+        .bind(principal.organization_id)
+        .bind(project_id)
+        .bind(application_id)
+        .bind(cursor_time)
+        .bind(cursor_agent)
+        .bind(limit + 1)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|error| NavigationError::database(&error, &request_id))?;
+    let next_cursor = if items.len() > usize::try_from(limit).unwrap_or(usize::MAX) {
+        items.pop();
+        items
+            .last()
+            .map(|item| {
+                encode_worker_cursor(&WorkerCursor {
+                    last_observed_at: item.last_observed_at,
+                    agent_id: item.agent_id,
+                })
+            })
+            .transpose()
+            .map_err(|message| NavigationError::invalid(message, &request_id))?
+    } else {
+        None
+    };
+    Ok(Json(WorkerPage { items, next_cursor }))
+}
+
+fn encode_worker_cursor(cursor: &WorkerCursor) -> Result<String, &'static str> {
+    serde_json::to_vec(cursor)
+        .map(hex::encode)
+        .map_err(|_| "cursor cannot be encoded")
+}
+
+fn decode_worker_cursor(cursor: &str) -> Result<WorkerCursor, &'static str> {
+    if cursor.len() > 1024 {
+        return Err("cursor is invalid");
+    }
+    let bytes = hex::decode(cursor).map_err(|_| "cursor is invalid")?;
+    serde_json::from_slice(&bytes).map_err(|_| "cursor is invalid")
 }
 
 async fn ensure_project(

@@ -137,12 +137,22 @@ async fn register(
     scope: SessionScope,
     hello: &AgentHello,
 ) -> Result<(Uuid, Uuid), sqlx::Error> {
-    let agent_id: Uuid = sqlx::query_scalar("INSERT INTO agents (id, organization_id, cluster_id, node_name, agent_version, capabilities) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (cluster_id, node_name) DO UPDATE SET agent_version=EXCLUDED.agent_version, capabilities=EXCLUDED.capabilities, last_seen_at=now() RETURNING id")
-        .bind(Uuid::new_v4()).bind(scope.organization_id).bind(scope.cluster_id).bind(&hello.node_name).bind(&hello.agent_version).bind(serde_json::json!(hello.capabilities)).fetch_one(pool).await?;
+    let architecture = platform_value(&hello.architecture, 64);
+    let kernel_release = platform_value(&hello.kernel_release, 255);
+    let agent_id: Uuid = sqlx::query_scalar("INSERT INTO agents (id, organization_id, cluster_id, node_name, agent_version, architecture, kernel_release, capabilities) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (cluster_id, node_name) DO UPDATE SET agent_version=EXCLUDED.agent_version, architecture=EXCLUDED.architecture, kernel_release=EXCLUDED.kernel_release, capabilities=EXCLUDED.capabilities, last_seen_at=now() RETURNING id")
+        .bind(Uuid::new_v4()).bind(scope.organization_id).bind(scope.cluster_id).bind(&hello.node_name).bind(&hello.agent_version).bind(architecture).bind(kernel_release).bind(serde_json::json!(hello.capabilities)).fetch_one(pool).await?;
     let session_id = Uuid::new_v4();
     sqlx::query("INSERT INTO agent_sessions (id, organization_id, cluster_id, agent_id, protocol_version) VALUES ($1,$2,$3,$4,$5)")
         .bind(session_id).bind(scope.organization_id).bind(scope.cluster_id).bind(agent_id).bind(i32::try_from(event_model::PROTOCOL_VERSION).unwrap_or(i32::MAX)).execute(pool).await?;
     Ok((agent_id, session_id))
+}
+
+fn platform_value(value: &str, max_len: usize) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()
+        && !value.eq_ignore_ascii_case("unknown")
+        && value.chars().count() <= max_len)
+        .then_some(value)
 }
 
 async fn touch_agent(pool: &PgPool, agent_id: Uuid) -> Result<(), sqlx::Error> {
@@ -156,4 +166,82 @@ async fn touch_agent(pool: &PgPool, agent_id: Uuid) -> Result<(), sqlx::Error> {
 fn internal(error: impl std::fmt::Display) -> Status {
     tracing::error!(%error, "agent session failure");
     Status::internal("internal server error")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bootstrap::{BootstrapConfig, bootstrap};
+
+    fn config(name: &str) -> BootstrapConfig {
+        BootstrapConfig {
+            organization_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            cluster_id: Uuid::new_v4(),
+            application_id: Uuid::new_v4(),
+            organization_slug: name.into(),
+            organization_name: name.into(),
+            project_slug: "project".into(),
+            project_name: "Project".into(),
+            cluster_external_id: "cluster".into(),
+            cluster_name: "Cluster".into(),
+            application_slug: "app".into(),
+            application_name: "Application".into(),
+            cluster_credential: format!("cluster-{name}"),
+            api_credential: format!("api-{name}"),
+        }
+    }
+
+    fn hello(node_name: &str, architecture: &str, kernel_release: &str) -> AgentHello {
+        AgentHello {
+            agent_version: "test".into(),
+            node_name: node_name.into(),
+            architecture: architecture.into(),
+            kernel_release: kernel_release.into(),
+            capabilities: vec!["process.exec/v1".into()],
+            drop_counters: None,
+        }
+    }
+
+    #[test]
+    fn normalizes_platform_values() {
+        assert_eq!(platform_value(" x86_64 ", 64), Some("x86_64"));
+        assert_eq!(platform_value("", 64), None);
+        assert_eq!(platform_value(" UNKNOWN ", 64), None);
+        assert_eq!(platform_value(&"x".repeat(65), 64), None);
+    }
+
+    #[sqlx::test(migrator = "crate::database::MIGRATOR")]
+    #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+    async fn registration_persists_normalizes_and_refreshes_platform(pool: PgPool) {
+        let values = config("agent-platform");
+        let ids = bootstrap(&pool, &values).await.unwrap();
+        let scope = SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        };
+
+        let (agent_id, _) = register(&pool, scope, &hello("node-a", " x86_64 ", "6.8.1"))
+            .await
+            .unwrap();
+        let stored: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT architecture,kernel_release FROM agents WHERE id=$1")
+                .bind(agent_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, (Some("x86_64".into()), Some("6.8.1".into())));
+
+        let (same_agent_id, _) = register(&pool, scope, &hello("node-a", "unknown", "6.9.2"))
+            .await
+            .unwrap();
+        assert_eq!(same_agent_id, agent_id);
+        let refreshed: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT architecture,kernel_release FROM agents WHERE id=$1")
+                .bind(agent_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(refreshed, (None, Some("6.9.2".into())));
+    }
 }
