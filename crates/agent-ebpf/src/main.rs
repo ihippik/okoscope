@@ -460,6 +460,7 @@ fn try_sys_enter(ctx: &TracePointContext) -> Result<(), u32> {
     emit(EVENT_KIND_SYSCALL, syscall_id)
 }
 
+#[inline(always)]
 fn file_path_enter(
     ctx: &TracePointContext,
     mut operation: u8,
@@ -546,6 +547,7 @@ fn file_path_enter(
     0
 }
 
+#[inline(always)]
 fn file_fd_enter(ctx: &TracePointContext, operation: u8) -> u32 {
     let pid_tgid = bpf_get_current_pid_tgid();
     let fd_raw: u64 = match unsafe { ctx.read_at(16) } {
@@ -587,6 +589,7 @@ fn file_fd_enter(ctx: &TracePointContext, operation: u8) -> u32 {
     0
 }
 
+#[inline(always)]
 fn file_open_exit(ctx: &TracePointContext) -> u32 {
     let pid_tgid = bpf_get_current_pid_tgid();
     let Some(pending_ptr) = (unsafe { PENDING_FILE_OPERATIONS.get_ptr(&pid_tgid) }) else {
@@ -631,6 +634,7 @@ fn file_open_exit(ctx: &TracePointContext) -> u32 {
     0
 }
 
+#[inline(always)]
 fn file_operation_exit(ctx: &TracePointContext, positive_result: bool) -> u32 {
     let pid_tgid = bpf_get_current_pid_tgid();
     let Some(pending_ptr) = (unsafe { PENDING_FILE_OPERATIONS.get_ptr(&pid_tgid) }) else {
@@ -657,6 +661,7 @@ fn file_operation_exit(ctx: &TracePointContext, positive_result: bool) -> u32 {
     0
 }
 
+#[inline(always)]
 fn file_close_exit(ctx: &TracePointContext) -> u32 {
     let pid_tgid = bpf_get_current_pid_tgid();
     let Some(pending_ptr) = (unsafe { PENDING_FILE_OPERATIONS.get_ptr(&pid_tgid) }) else {
@@ -675,6 +680,7 @@ fn file_close_exit(ctx: &TracePointContext) -> u32 {
     0
 }
 
+#[inline(always)]
 fn emit_file(pending: &PendingFileOperation, generation: u64, fd: i32, result: i32) {
     let Some(mut slot) = (unsafe { FILE_EVENTS.reserve::<FileKernelEvent>(0) }) else {
         increment_file_counter(FILE_COUNTER_KERNEL_LOST);
@@ -959,6 +965,7 @@ fn increment_dns_counter(index: u32) {
     }
 }
 
+#[inline(always)]
 fn increment_file_counter(index: u32) {
     if let Some(value) = unsafe { FILE_COUNTERS.get_ptr_mut(index) } {
         unsafe {
