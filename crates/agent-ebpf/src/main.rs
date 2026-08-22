@@ -100,6 +100,7 @@ const TCP_LISTEN: i32 = 10;
 const TCP_NEW_SYN_RECV: i32 = 12;
 const O_CREAT: u64 = 0o100;
 const O_EXCL: u64 = 0o200;
+const O_TRUNC: u64 = 0o1000;
 const AT_REMOVEDIR: u64 = 0x200;
 const RENAME_NOREPLACE: u64 = 1;
 
@@ -193,12 +194,32 @@ pub fn okoscope_file_unlink_exit(ctx: TracePointContext) -> u32 {
 }
 
 #[tracepoint]
+pub fn okoscope_file_unlink_legacy_enter(ctx: TracePointContext) -> u32 {
+    file_path_enter(&ctx, FILE_OPERATION_DELETE, 16, None, 0)
+}
+
+#[tracepoint]
+pub fn okoscope_file_unlink_legacy_exit(ctx: TracePointContext) -> u32 {
+    file_operation_exit(&ctx, false)
+}
+
+#[tracepoint]
 pub fn okoscope_file_rename_enter(ctx: TracePointContext) -> u32 {
     file_path_enter(&ctx, FILE_OPERATION_RENAME, 24, Some(40), 48)
 }
 
 #[tracepoint]
 pub fn okoscope_file_rename_exit(ctx: TracePointContext) -> u32 {
+    file_operation_exit(&ctx, false)
+}
+
+#[tracepoint]
+pub fn okoscope_file_rename_legacy_enter(ctx: TracePointContext) -> u32 {
+    file_path_enter(&ctx, FILE_OPERATION_RENAME, 16, Some(24), 0)
+}
+
+#[tracepoint]
+pub fn okoscope_file_rename_legacy_exit(ctx: TracePointContext) -> u32 {
     file_operation_exit(&ctx, false)
 }
 
@@ -511,6 +532,9 @@ fn file_path_enter(
         if operation == FILE_OPERATION_OPEN && flags & (O_CREAT | O_EXCL) == (O_CREAT | O_EXCL) {
             operation = FILE_OPERATION_CREATE;
             scratch.operation = operation;
+        } else if operation == FILE_OPERATION_OPEN && flags & O_TRUNC != 0 {
+            operation = FILE_OPERATION_MODIFY;
+            scratch.operation = operation;
         }
         if operation == FILE_OPERATION_RENAME && flags & RENAME_NOREPLACE != 0 {
             scratch.flags |= FILE_FLAG_REPLACEMENT_KNOWN;
@@ -600,7 +624,7 @@ fn file_open_exit(ctx: &TracePointContext) -> u32 {
         let _ = unsafe { PENDING_FILE_OPERATIONS.remove(&pid_tgid) };
         return 0;
     }
-    if pending.operation == FILE_OPERATION_CREATE {
+    if pending.operation == FILE_OPERATION_CREATE || pending.operation == FILE_OPERATION_MODIFY {
         emit_file(pending, descriptor.generation, fd, 0);
     }
     let _ = unsafe { PENDING_FILE_OPERATIONS.remove(&pid_tgid) };

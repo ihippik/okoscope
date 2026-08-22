@@ -10,9 +10,9 @@ The syscall tracepoint field layouts below were checked on the live `aliens` nod
 |---|---|---|---|
 | open/create | `sys_enter_openat`, `sys_exit_openat` | `dfd`, pathname, flags | returned fd >= 0; create is certain only with `O_CREAT|O_EXCL` |
 | modify | `sys_enter_write`, `sys_exit_write` | fd resolved through a successful tracked open | return > 0 |
-| truncate | `sys_enter_truncate`, `sys_exit_truncate` and tracked `ftruncate` | absolute pathname or tracked fd | return == 0 |
-| delete | `sys_enter_unlinkat`, `sys_exit_unlinkat` | `dfd`, pathname, flags | return == 0 and `AT_REMOVEDIR` is absent |
-| rename | `sys_enter_renameat2`, `sys_exit_renameat2` | old/new dirfd, old/new pathname, flags | return == 0; replacement is known false only with `RENAME_NOREPLACE`, otherwise unknown |
+| truncate | `openat` with `O_TRUNC`, `sys_enter_truncate`, `sys_exit_truncate` and tracked `ftruncate` | absolute pathname or tracked fd | successful open or return == 0 |
+| delete | `unlink` and `unlinkat` entry/exit pairs | pathname, plus `dfd` and flags for `unlinkat` | return == 0 and `AT_REMOVEDIR` is absent |
+| rename | `rename` and `renameat2` entry/exit pairs | ordered old/new pathnames, plus dirfds and flags for `renameat2` | return == 0; replacement is known false only with `RENAME_NOREPLACE`, otherwise unknown |
 | lifecycle | `sys_enter_close`, `sys_exit_close` | fd | successful close removes tracked fd state |
 
 All argument slots are eight bytes in the checked tracepoint formats; syscall return is the signed eight-byte field at offset 16. The probe reads pathname bytes with a fixed user-string bound and rejects relative, non-normalized, unterminated, oversized, or unreadable values before they can enter output.

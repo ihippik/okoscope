@@ -121,8 +121,12 @@ fn attach_configured_programs(ebpf: &mut Ebpf, programs: ObservationPrograms) ->
             ("okoscope_file_ftruncate_exit", "sys_exit_ftruncate"),
             ("okoscope_file_unlink_enter", "sys_enter_unlinkat"),
             ("okoscope_file_unlink_exit", "sys_exit_unlinkat"),
+            ("okoscope_file_unlink_legacy_enter", "sys_enter_unlink"),
+            ("okoscope_file_unlink_legacy_exit", "sys_exit_unlink"),
             ("okoscope_file_rename_enter", "sys_enter_renameat2"),
             ("okoscope_file_rename_exit", "sys_exit_renameat2"),
+            ("okoscope_file_rename_legacy_enter", "sys_enter_rename"),
+            ("okoscope_file_rename_legacy_exit", "sys_exit_rename"),
             ("okoscope_file_close_enter", "sys_enter_close"),
             ("okoscope_file_close_exit", "sys_exit_close"),
         ] {
