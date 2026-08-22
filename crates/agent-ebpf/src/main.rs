@@ -26,7 +26,7 @@ use aya_ebpf::{
     EbpfContext,
     helpers::{
         bpf_get_current_cgroup_id, bpf_get_current_comm, bpf_get_current_pid_tgid,
-        bpf_get_socket_cookie, bpf_ktime_get_ns, bpf_probe_read_user,
+        bpf_get_socket_cookie, bpf_ktime_get_ns, bpf_probe_read_kernel_buf, bpf_probe_read_user,
         bpf_probe_read_user_str_bytes, bpf_skb_cgroup_id,
     },
     macros::{cgroup_skb, kretprobe, map, tracepoint},
@@ -553,12 +553,9 @@ fn file_fd_enter(ctx: &TracePointContext, operation: u8) -> u32 {
     scratch.path_len = tracked.path_len;
     scratch.new_path_len = 0;
     scratch.command = tracked.command;
-    let mut index = 0;
-    // Keep the bound independent of path_len. A data-dependent exit here makes older
-    // verifiers fork a state per byte and can exceed their one-million instruction limit.
-    while index < FILE_PATH_LEN {
-        scratch.path[index] = tracked.path[index];
-        index += 1;
+    if unsafe { bpf_probe_read_kernel_buf(tracked.path.as_ptr(), &mut scratch.path) }.is_err() {
+        increment_file_counter(FILE_COUNTER_PATH_READ_FAILED);
+        return 0;
     }
     if unsafe { PENDING_FILE_OPERATIONS.insert(&pid_tgid, scratch, 0) }.is_err() {
         increment_file_counter(FILE_COUNTER_CORRELATION_CAPACITY);
@@ -589,11 +586,10 @@ fn file_open_exit(ctx: &TracePointContext) -> u32 {
     descriptor.generation = unsafe { bpf_ktime_get_ns() };
     descriptor.path_len = pending.path_len;
     descriptor.command = pending.command;
-    let mut index = 0;
-    // See file_fd_enter: copying the fixed buffer keeps verifier complexity linear.
-    while index < FILE_PATH_LEN {
-        descriptor.path[index] = pending.path[index];
-        index += 1;
+    if unsafe { bpf_probe_read_kernel_buf(pending.path.as_ptr(), &mut descriptor.path) }.is_err() {
+        increment_file_counter(FILE_COUNTER_PATH_READ_FAILED);
+        let _ = unsafe { PENDING_FILE_OPERATIONS.remove(&pid_tgid) };
+        return 0;
     }
     let key = FileDescriptorKey {
         tgid: (pending.pid_tgid >> 32) as u32,
