@@ -173,14 +173,29 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         LIVE_OPERATIONS.len(),
         "documented route inventory drift"
     );
+    assert_navigation_and_group_contract(&document);
+    assert_network_contract(&document);
+    assert_inventory_contract(&document);
+    assert_notification_health_contract(&document);
+    assert_delivery_contract(&document);
+    assert_recovery_contract(&document);
     assert_query_parameters(
         &document,
+        "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
+        "get",
+        &["baseline_id", "cursor", "limit"],
+    );
+}
+
+fn assert_navigation_and_group_contract(document: &serde_json::Value) {
+    assert_query_parameters(
+        document,
         "/api/v1/projects/{project_id}/applications/{application_id}/workers",
         "get",
         &["cursor", "limit"],
     );
     assert_query_parameters(
-        &document,
+        document,
         "/api/v1/runtime-groups",
         "get",
         &[
@@ -200,59 +215,49 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
             "limit",
         ],
     );
-    assert_query_parameters(
-        &document,
+    for path in [
         "/api/v1/projects/{project_id}/applications/{application_id}/releases",
-        "get",
-        &["cursor", "limit"],
-    );
-    let worker_required = document["components"]["schemas"]["ApplicationWorker"]["required"]
-        .as_array()
-        .expect("ApplicationWorker required fields");
-    for field in [
-        "agent_id",
-        "cluster_id",
-        "cluster_name",
-        "node_name",
-        "agent_version",
-        "architecture",
-        "kernel_release",
-        "first_observed_at",
-        "last_observed_at",
-        "agent_last_seen_at",
-    ] {
-        assert!(worker_required.iter().any(|value| value == field));
-    }
-    assert_query_parameters(
-        &document,
         "/api/v1/runtime-groups/{group_id}/occurrences",
-        "get",
-        &["cursor", "limit"],
-    );
-    let runtime_group_required = document["components"]["schemas"]["RuntimeGroup"]["required"]
-        .as_array()
-        .expect("RuntimeGroup required fields");
-    for field in [
-        "first_seen_event_id",
-        "status_changed_at",
-        "status_changed_by",
     ] {
+        assert_query_parameters(document, path, "get", &["cursor", "limit"]);
+    }
+    assert_required_fields(
+        document,
+        "ApplicationWorker",
+        &[
+            "agent_id",
+            "cluster_id",
+            "cluster_name",
+            "node_name",
+            "agent_version",
+            "architecture",
+            "kernel_release",
+            "first_observed_at",
+            "last_observed_at",
+            "agent_last_seen_at",
+        ],
+    );
+    assert_required_fields(
+        document,
+        "RuntimeGroup",
+        &[
+            "first_seen_event_id",
+            "status_changed_at",
+            "status_changed_by",
+        ],
+    );
+}
+
+fn assert_required_fields(document: &serde_json::Value, schema: &str, expected: &[&str]) {
+    let required = document["components"]["schemas"][schema]["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{schema} required fields"));
+    for field in expected {
         assert!(
-            runtime_group_required.iter().any(|item| item == field),
-            "RuntimeGroup must require {field}"
+            required.iter().any(|value| value == field),
+            "{schema} must require {field}"
         );
     }
-    assert_network_contract(&document);
-    assert_inventory_contract(&document);
-    assert_notification_health_contract(&document);
-    assert_delivery_contract(&document);
-    assert_recovery_contract(&document);
-    assert_query_parameters(
-        &document,
-        "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
-        "get",
-        &["baseline_id", "cursor", "limit"],
-    );
 }
 
 #[test]
