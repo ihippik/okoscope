@@ -1,4 +1,5 @@
 pub mod api;
+pub mod attention;
 pub mod auth;
 pub mod backfill;
 pub mod bootstrap;

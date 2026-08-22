@@ -2,6 +2,11 @@ use std::collections::HashSet;
 
 const LIVE_OPERATIONS: &[(&str, &str)] = &[
     ("/api/v1/build-info", "get"),
+    ("/api/v1/attention-summary", "get"),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/attention-summary",
+        "get",
+    ),
     ("/api/v1/organization", "get"),
     ("/api/v1/projects", "get"),
     ("/api/v1/projects/{project_id}", "get"),
