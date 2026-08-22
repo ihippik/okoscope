@@ -554,10 +554,9 @@ fn file_fd_enter(ctx: &TracePointContext, operation: u8) -> u32 {
     scratch.new_path_len = 0;
     scratch.command = tracked.command;
     let mut index = 0;
+    // Keep the bound independent of path_len. A data-dependent exit here makes older
+    // verifiers fork a state per byte and can exceed their one-million instruction limit.
     while index < FILE_PATH_LEN {
-        if index >= usize::from(tracked.path_len) {
-            break;
-        }
         scratch.path[index] = tracked.path[index];
         index += 1;
     }
@@ -591,10 +590,8 @@ fn file_open_exit(ctx: &TracePointContext) -> u32 {
     descriptor.path_len = pending.path_len;
     descriptor.command = pending.command;
     let mut index = 0;
+    // See file_fd_enter: copying the fixed buffer keeps verifier complexity linear.
     while index < FILE_PATH_LEN {
-        if index >= usize::from(pending.path_len) {
-            break;
-        }
         descriptor.path[index] = pending.path[index];
         index += 1;
     }

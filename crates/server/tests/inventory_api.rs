@@ -191,7 +191,23 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
     assert_eq!(summary_response.status(), StatusCode::OK);
     let summary = json(summary_response).await;
     assert_eq!(summary["item_count"], 6);
-    assert_eq!(summary["kinds"].as_array().unwrap().len(), 4);
+    assert_eq!(summary["kinds"].as_array().unwrap().len(), 6);
+    assert_eq!(
+        summary["kinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["kind"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            "destination",
+            "domain",
+            "inbound_endpoint",
+            "file_activity",
+            "process",
+            "syscall",
+        ]
+    );
 
     for kind in ["process", "destination", "domain", "syscall"] {
         let response = app

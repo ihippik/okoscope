@@ -62,4 +62,4 @@
 - [ ] 9.3 Run verifier and syscall tracepoint acceptance on every claimed kernel profile and record any supported-platform adjustment before enabling the capability.
 - [ ] 9.4 Add end-to-end tests from kernel observation through attribution, transport, durable raw storage, grouping, first-seen work, inventory, occurrences, and release diff.
 - [x] 9.5 Document configuration, five-second visibility delay, syscall-path semantics and size contract, relative/symlink/mmap limitations, privacy boundary, counters, troubleshooting, staged enablement, and disable-only rollback.
-- [ ] 9.6 Validate the complete OpenSpec change and run the relevant Rust, migration, protobuf, OpenAPI, and deployment manifest test suites.
+- [x] 9.6 Validate the complete OpenSpec change and run the relevant Rust, migration, protobuf, OpenAPI, and deployment manifest test suites.
