@@ -28,6 +28,8 @@ pub enum IngestionError {
     Serialization(#[from] serde_json::Error),
     #[error("DNS evidence violates bounded canonical invariants")]
     InvalidDns,
+    #[error("termination or lifecycle evidence violates bounded invariants")]
+    InvalidTermination,
 }
 
 pub async fn persist_batch(
@@ -51,6 +53,7 @@ async fn persist_event(
     event: &RuntimeEvent,
 ) -> Result<u32, IngestionError> {
     validate_dns_event(event)?;
+    validate_termination_event(event)?;
     if event.schema_version != EVENT_SCHEMA_VERSION {
         return Err(IngestionError::UnsupportedSchema(event.schema_version));
     }
@@ -130,6 +133,14 @@ async fn persist_event(
         event,
     )
     .await?;
+    crate::termination_projection::project_durable_evidence(
+        tx,
+        raw_event_id,
+        context.scope.organization_id,
+        context.scope.cluster_id,
+        event,
+    )
+    .await?;
     if matches!(&event.payload, EventPayload::NetworkConnect(_)) {
         crate::metrics::record_network_event(grouping.group_created);
         if matches!(&event.payload, EventPayload::NetworkConnect(connect) if connect.dns_context.as_ref().is_some_and(|context| context.ambiguous))
@@ -199,7 +210,145 @@ fn validate_dns_event(event: &RuntimeEvent) -> Result<(), IngestionError> {
         | EventPayload::FileCreate(_)
         | EventPayload::FileModify(_)
         | EventPayload::FileDelete(_)
-        | EventPayload::FileRename(_) => true,
+        | EventPayload::FileRename(_)
+        | EventPayload::ProcessExit(_)
+        | EventPayload::ContainerTermination(_)
+        | EventPayload::ContainerRestart(_) => true,
     };
     valid.then_some(()).ok_or(IngestionError::InvalidDns)
+}
+
+fn validate_termination_event(event: &RuntimeEvent) -> Result<(), IngestionError> {
+    use event_model::{EvidenceSource, GenerationCorrelation, ProcessTermination};
+
+    let valid = match &event.payload {
+        EventPayload::ProcessExit(value) => {
+            let termination_valid = match &value.termination {
+                ProcessTermination::Exited { status } => {
+                    value.raw_wait_status == i32::from(*status) << 8
+                }
+                ProcessTermination::Signaled {
+                    signal,
+                    signal_name,
+                    core_dump_flag,
+                } => {
+                    ProcessTermination::signaled(*signal, signal_name.clone(), *core_dump_flag)
+                        .is_ok()
+                        && value.raw_wait_status
+                            == i32::from(*signal) | if *core_dump_flag { 0x80 } else { 0 }
+                }
+            };
+            let correlation_valid = match &value.correlation {
+                GenerationCorrelation::Observed {
+                    generation,
+                    executable,
+                    ..
+                } => {
+                    *generation > 0
+                        && !executable.is_empty()
+                        && executable.len() <= event_model::MAX_TERMINATION_TEXT_BYTES
+                }
+                GenerationCorrelation::Unresolved { .. } => true,
+            };
+            value.source == EvidenceSource::Kernel && termination_valid && correlation_valid
+        }
+        EventPayload::ContainerTermination(value) => event_model::ContainerTermination::new(
+            value.runtime_container_id.clone(),
+            value.reason.clone(),
+            value.exit_code,
+            value.started_at,
+            value.finished_at,
+        )
+        .is_ok_and(|validated| validated == *value),
+        EventPayload::ContainerRestart(value) => event_model::ContainerRestart::new(
+            value.runtime_container_id.clone(),
+            value.restart_count,
+            value.restart_delta,
+            value.previous_termination.clone(),
+            value.waiting_reason.clone(),
+        )
+        .is_ok_and(|validated| validated == *value),
+        _ => true,
+    };
+    valid
+        .then_some(())
+        .ok_or(IngestionError::InvalidTermination)
+}
+
+#[cfg(test)]
+mod termination_tests {
+    use super::*;
+    use chrono::Utc;
+    use event_model::{
+        EvidenceSource, GenerationCorrelation, KubernetesAttribution, ProcessExit, ProcessIdentity,
+        ProcessTermination, UnresolvedGenerationReason,
+    };
+
+    fn event(payload: EventPayload) -> RuntimeEvent {
+        RuntimeEvent {
+            id: Uuid::new_v4(),
+            observed_at: Utc::now(),
+            schema_version: EVENT_SCHEMA_VERSION,
+            attribution: KubernetesAttribution {
+                project_id: Uuid::new_v4(),
+                application_id: Uuid::new_v4(),
+                node_name: "node".into(),
+                namespace: "default".into(),
+                pod_uid: "pod".into(),
+                pod_name: "pod".into(),
+                container_id: "abc".into(),
+                container_name: "worker".into(),
+                workload_uid: "workload".into(),
+                workload_kind: "Deployment".into(),
+                workload_name: "worker".into(),
+                release: None,
+            },
+            process: ProcessIdentity {
+                cgroup_id: 1,
+                pid: 2,
+                tgid: 2,
+                command: "worker".into(),
+            },
+            payload,
+        }
+    }
+
+    #[test]
+    fn validates_native_variants_and_rejects_contradictions() {
+        let valid = event(EventPayload::ProcessExit(ProcessExit::new(
+            0x8b,
+            ProcessTermination::signaled(11, "SIGSEGV", true).unwrap(),
+            GenerationCorrelation::Unresolved {
+                reason: UnresolvedGenerationReason::BeforeObservation,
+            },
+        )));
+        assert!(validate_termination_event(&valid).is_ok());
+        let mut invalid = valid;
+        if let EventPayload::ProcessExit(exit) = &mut invalid.payload {
+            exit.raw_wait_status = 11;
+        }
+        assert!(matches!(
+            validate_termination_event(&invalid),
+            Err(IngestionError::InvalidTermination)
+        ));
+        if let EventPayload::ProcessExit(exit) = &mut invalid.payload {
+            exit.raw_wait_status = 0x8b;
+            exit.source = EvidenceSource::Kubernetes;
+        }
+        assert!(matches!(
+            validate_termination_event(&invalid),
+            Err(IngestionError::InvalidTermination)
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_lifecycle_delta_after_deserialization() {
+        let mut restart = event_model::ContainerRestart::new("abc", 3, 1, None, None).unwrap();
+        restart.restart_delta = 0;
+        let invalid = event(EventPayload::ContainerRestart(restart));
+        assert!(matches!(
+            validate_termination_event(&invalid),
+            Err(IngestionError::InvalidTermination)
+        ));
+    }
 }

@@ -104,7 +104,10 @@ paths:
     get:
       operationId: listApplicationWorkers
       parameters:
-        [{ $ref: '#/components/parameters/OpaqueCursor' }, { $ref: '#/components/parameters/Limit' }]
+        [
+          { $ref: '#/components/parameters/OpaqueCursor' },
+          { $ref: '#/components/parameters/Limit' },
+        ]
       responses:
         {
           '200': { $ref: '#/components/responses/ApplicationWorkerPage' },
@@ -122,6 +125,11 @@ paths:
       operationId: listApplicationRuntimeInventory
       parameters:
         - { name: kind, in: query, schema: { $ref: '#/components/schemas/InventoryKind' } }
+        - {
+            name: operation,
+            in: query,
+            schema: { $ref: '#/components/schemas/FileActivityOperation' },
+          }
         - { name: release_id, in: query, schema: { type: string, format: uuid } }
         - { name: cluster_id, in: query, schema: { type: string, format: uuid } }
         - { name: namespace, in: query, schema: { type: string } }
@@ -160,6 +168,11 @@ paths:
     get:
       operationId: getApplicationRuntimeInventorySummary
       parameters:
+        - {
+            name: operation,
+            in: query,
+            schema: { $ref: '#/components/schemas/FileActivityOperation' },
+          }
         - { name: release_id, in: query, schema: { type: string, format: uuid } }
         - { name: cluster_id, in: query, schema: { type: string, format: uuid } }
         - { name: namespace, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
@@ -195,6 +208,11 @@ paths:
             in: query,
             required: true,
             schema: { $ref: '#/components/schemas/InventoryKind' },
+          }
+        - {
+            name: operation,
+            in: query,
+            schema: { $ref: '#/components/schemas/FileActivityOperation' },
           }
         - { name: release_id, in: query, schema: { type: string, format: uuid } }
         - { name: cluster_id, in: query, schema: { type: string, format: uuid } }
@@ -234,6 +252,11 @@ paths:
       description: Returns bounded dependent options. Every active filter except the requested facet's own value is applied. Cursors are opaque and valid only for the exact Application, facet, and normalized filter scope.
       parameters:
         - { name: kind, in: query, schema: { $ref: '#/components/schemas/InventoryKind' } }
+        - {
+            name: operation,
+            in: query,
+            schema: { $ref: '#/components/schemas/FileActivityOperation' },
+          }
         - { name: release_id, in: query, schema: { type: string, format: uuid } }
         - { name: cluster_id, in: query, schema: { type: string, format: uuid } }
         - { name: namespace, in: query, schema: { type: string, minLength: 1, maxLength: 253 } }
@@ -359,7 +382,7 @@ paths:
             required: true,
             schema: { type: string, format: uuid },
           }
-        - { name: event_kind, in: query, schema: { type: string } }
+        - { name: event_kind, in: query, schema: { $ref: '#/components/schemas/RuntimeEventKind' } }
         - {
             name: status,
             in: query,
@@ -706,7 +729,6 @@ components:
         - { $ref: '#/components/schemas/AttentionApplicationResourceRef' }
         - { $ref: '#/components/schemas/AttentionRuntimeGroupResourceRef' }
         - { $ref: '#/components/schemas/AttentionRuntimeDiffResourceRef' }
-      discriminator: { propertyName: type }
     AttentionProjectResourceRef:
       type: object
       additionalProperties: false
@@ -828,7 +850,7 @@ components:
         service_version: { type: string, example: 0.1.0 }
         git_commit: { type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a }
         api_version: { type: string, const: v1 }
-        required_database_migration: { type: integer, format: int64, example: 12 }
+        required_database_migration: { type: integer, format: int64, example: 13 }
     Organization:
       type: object
       additionalProperties: false
@@ -919,7 +941,8 @@ components:
       additionalProperties: false
       required: [items, next_cursor]
       properties:
-        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ApplicationWorker' } }
+        items:
+          { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ApplicationWorker' } }
         next_cursor: { $ref: '#/components/schemas/NullableOpaqueCursor' }
     RuntimeGroup:
       type: object
@@ -986,6 +1009,7 @@ components:
           process_command,
           event_kind,
           payload,
+          correlation,
           release_id,
           release_version,
         ]
@@ -1000,6 +1024,7 @@ components:
         process_command: { type: string }
         event_kind: { type: string }
         payload: { $ref: '#/components/schemas/RuntimeEventPayload' }
+        correlation: { $ref: '#/components/schemas/EventCorrelation' }
         release_id: { $ref: '#/components/schemas/NullableUuid' }
         release_version: { type: [string, 'null'] }
     OccurrencePage:
@@ -1018,6 +1043,10 @@ components:
         - { $ref: '#/components/schemas/NetworkDnsQuerySemanticSummary' }
         - { $ref: '#/components/schemas/NetworkDnsResponseSemanticSummary' }
         - { $ref: '#/components/schemas/FileActivitySemanticSummary' }
+        - { $ref: '#/components/schemas/ProcessExitSemanticSummary' }
+        - { $ref: '#/components/schemas/ContainerTerminationSemanticSummary' }
+        - { $ref: '#/components/schemas/ContainerRestartSemanticSummary' }
+        - { $ref: '#/components/schemas/RestartLoopSemanticSummary' }
     ProcessExecSemanticSummary:
       type: object
       additionalProperties: false
@@ -1075,13 +1104,117 @@ components:
     FileActivitySemanticSummary:
       type: object
       additionalProperties: false
-      required: [process_command, operation, path]
+      required: [operation, process_command, path]
       properties:
+        operation: { $ref: '#/components/schemas/FileActivityOperation' }
         process_command: { type: string, minLength: 1 }
-        operation: { type: string, enum: [create, modify, delete, rename] }
-        path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
-        new_path: { type: [string, 'null'], maxLength: 1024, pattern: '^/' }
-        replaced: { type: [boolean, 'null'] }
+        path: { type: string, minLength: 1, description: Path reported by the process syscall. }
+        new_path:
+          {
+            type: string,
+            minLength: 1,
+            description: Rename destination path reported by the process syscall.,
+          }
+        replaced:
+          {
+            type: [boolean, 'null'],
+            description: Whether rename replaced an existing destination; null means unknown.,
+          }
+    FileActivityOperation: { type: string, enum: [create, modify, delete, rename] }
+    RuntimeEventKind:
+      type: string
+      enum: [process.exec, syscall, network.connect, network.listen, network.accept, network.dns_query, network.dns_response, file.create, file.modify, file.delete, file.rename, process.exit, container.terminated, container.restart, container.restart_loop]
+    EvidenceSource: { type: string, enum: [kernel, kubernetes, derived] }
+    EventCorrelation:
+      type: object
+      additionalProperties: false
+      required: [status, candidate_count, related_event_ids]
+      properties:
+        status: { type: string, enum: [absent, qualified, ambiguous] }
+        candidate_count: { type: integer, minimum: 0, maximum: 2 }
+        tolerance_seconds: { type: integer, minimum: 1 }
+        related_event_ids: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/Uuid' } }
+    ProcessTermination:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [type, status]
+          properties:
+            type: { type: string, const: exited }
+            status: { type: integer, minimum: 0, maximum: 255 }
+        - type: object
+          additionalProperties: false
+          required: [type, signal, signal_name, core_dump_flag]
+          properties:
+            type: { type: string, const: signaled }
+            signal: { type: integer, minimum: 1, maximum: 64 }
+            signal_name: { type: string, pattern: '^SIG[A-Z0-9]+$' }
+            core_dump_flag: { type: boolean, description: Kernel wait-status flag; does not prove a core file was written. }
+            conventional_exit_code: { type: integer, minimum: 129, maximum: 192, readOnly: true }
+    GenerationCorrelation:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [status, generation, exec_event_id, executable]
+          properties:
+            status: { type: string, const: observed }
+            generation: { type: integer, format: int64, minimum: 1 }
+            exec_event_id: { $ref: '#/components/schemas/Uuid' }
+            executable: { type: string, minLength: 1, maxLength: 256 }
+        - type: object
+          additionalProperties: false
+          required: [status, reason]
+          properties:
+            status: { type: string, const: unresolved }
+            reason: { type: string, enum: [before_observation, evicted, generation_mismatch, container_lifetime_mismatch] }
+    KubernetesTermination:
+      type: object
+      additionalProperties: false
+      required: [source, runtime_container_id, reason, exit_code]
+      properties:
+        source: { type: string, const: kubernetes }
+        runtime_container_id: { type: string, minLength: 1, maxLength: 256 }
+        reason: { type: string, minLength: 1, maxLength: 256 }
+        exit_code: { type: integer, minimum: 0 }
+        started_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        finished_at: { $ref: '#/components/schemas/NullableTimestamp' }
+    ProcessExitSemanticSummary:
+      type: object
+      additionalProperties: true
+      required: [evidence_source, termination]
+      properties:
+        evidence_source: { type: string, const: kernel }
+        termination: { $ref: '#/components/schemas/ProcessTermination' }
+    ContainerTerminationSemanticSummary:
+      type: object
+      additionalProperties: true
+      required: [evidence_source, container_name, reason, exit_code]
+      properties:
+        evidence_source: { type: string, const: kubernetes }
+        container_name: { type: string, minLength: 1 }
+        reason: { type: string, minLength: 1 }
+        exit_code: { type: integer, minimum: 0 }
+    ContainerRestartSemanticSummary:
+      type: object
+      additionalProperties: true
+      required: [evidence_source, container_name]
+      properties:
+        evidence_source: { type: string, const: kubernetes }
+        container_name: { type: string, minLength: 1 }
+    RestartLoopSemanticSummary:
+      type: object
+      additionalProperties: false
+      required: [evidence_source, projection_version, threshold, window_started_at, window_ended_at, observed_restart_count, container_name]
+      properties:
+        evidence_source: { type: string, const: derived }
+        projection_version: { type: integer, minimum: 1 }
+        threshold: { type: integer, minimum: 1 }
+        window_started_at: { $ref: '#/components/schemas/Timestamp' }
+        window_ended_at: { $ref: '#/components/schemas/Timestamp' }
+        observed_restart_count: { type: integer, minimum: 1 }
+        container_name: { type: string, minLength: 1 }
+        latest_termination: { $ref: '#/components/schemas/KubernetesTermination' }
+        latest_waiting_reason: { type: [string, 'null'], maxLength: 256 }
     RuntimeEventPayload:
       oneOf:
         - { $ref: '#/components/schemas/ProcessExecPayload' }
@@ -1095,6 +1228,49 @@ components:
         - { $ref: '#/components/schemas/FileModifyPayload' }
         - { $ref: '#/components/schemas/FileDeletePayload' }
         - { $ref: '#/components/schemas/FileRenamePayload' }
+        - { $ref: '#/components/schemas/ProcessExitPayload' }
+        - { $ref: '#/components/schemas/ContainerTerminationPayload' }
+        - { $ref: '#/components/schemas/ContainerRestartPayload' }
+    ProcessExitPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: ProcessExit }
+        data:
+          type: object
+          additionalProperties: false
+          required: [source, raw_wait_status, termination, correlation]
+          properties:
+            source: { type: string, const: kernel }
+            raw_wait_status: { type: integer, format: int32 }
+            termination: { $ref: '#/components/schemas/ProcessTermination' }
+            correlation: { $ref: '#/components/schemas/GenerationCorrelation' }
+    ContainerTerminationPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: ContainerTermination }
+        data: { $ref: '#/components/schemas/KubernetesTermination' }
+    ContainerRestartPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: ContainerRestart }
+        data:
+          type: object
+          additionalProperties: false
+          required: [source, runtime_container_id, restart_count, restart_delta, observation_gap]
+          properties:
+            source: { type: string, const: kubernetes }
+            runtime_container_id: { type: string, minLength: 1, maxLength: 256 }
+            restart_count: { type: integer, minimum: 1 }
+            restart_delta: { type: integer, minimum: 1 }
+            observation_gap: { type: boolean }
+            previous_termination: { $ref: '#/components/schemas/KubernetesTermination' }
+            waiting_reason: { type: [string, 'null'], maxLength: 256 }
     ProcessExecPayload:
       type: object
       additionalProperties: false
@@ -1120,47 +1296,6 @@ components:
           required: [name]
           properties:
             name: { type: string, minLength: 1 }
-    FilePathData:
-      type: object
-      additionalProperties: false
-      required: [path]
-      properties:
-        path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
-    FileCreatePayload:
-      type: object
-      additionalProperties: false
-      required: [type, data]
-      properties:
-        type: { type: string, const: FileCreate }
-        data: { $ref: '#/components/schemas/FilePathData' }
-    FileModifyPayload:
-      type: object
-      additionalProperties: false
-      required: [type, data]
-      properties:
-        type: { type: string, const: FileModify }
-        data: { $ref: '#/components/schemas/FilePathData' }
-    FileDeletePayload:
-      type: object
-      additionalProperties: false
-      required: [type, data]
-      properties:
-        type: { type: string, const: FileDelete }
-        data: { $ref: '#/components/schemas/FilePathData' }
-    FileRenamePayload:
-      type: object
-      additionalProperties: false
-      required: [type, data]
-      properties:
-        type: { type: string, const: FileRename }
-        data:
-          type: object
-          additionalProperties: false
-          required: [old_path, new_path, replaced]
-          properties:
-            old_path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
-            new_path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
-            replaced: { type: [boolean, 'null'] }
     NetworkConnectPayload:
       type: object
       additionalProperties: false
@@ -1202,7 +1337,8 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [transport, address_family, local_address, local_port, remote_address, remote_port]
+          required:
+            [transport, address_family, local_address, local_port, remote_address, remote_port]
           properties:
             transport: { type: string, const: tcp }
             address_family: { type: string, enum: [ipv4, ipv6] }
@@ -1273,6 +1409,56 @@ components:
             cname_chain:
               { type: array, maxItems: 8, items: { $ref: '#/components/schemas/DnsCname' } }
             effective_ttl_seconds: { type: [integer, 'null'], minimum: 1, maximum: 86400 }
+    FileCreatePayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: file.create }
+        data:
+          type: object
+          additionalProperties: false
+          required: [path]
+          properties:
+            path: { type: string, minLength: 1 }
+    FileModifyPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: file.modify }
+        data:
+          type: object
+          additionalProperties: false
+          required: [path]
+          properties:
+            path: { type: string, minLength: 1 }
+    FileDeletePayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: file.delete }
+        data:
+          type: object
+          additionalProperties: false
+          required: [path]
+          properties:
+            path: { type: string, minLength: 1 }
+    FileRenamePayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: file.rename }
+        data:
+          type: object
+          additionalProperties: false
+          required: [path, new_path]
+          properties:
+            path: { type: string, minLength: 1 }
+            new_path: { type: string, minLength: 1 }
+            replaced: { type: [boolean, 'null'] }
     DnsName:
       type: string
       minLength: 1
@@ -1793,7 +1979,11 @@ components:
                 maxItems: 200,
                 items: { $ref: '#/components/schemas/RecoveryOperationDelivery' },
               }
-    InventoryKind: { type: string, enum: [process, destination, domain, syscall, inbound_endpoint, file_activity] }
+    InventoryKind:
+      {
+        type: string,
+        enum: [process, destination, domain, syscall, inbound_endpoint, file_activity],
+      }
     InventoryReleasePresence:
       {
         type: string,
@@ -1807,7 +1997,7 @@ components:
         - { $ref: '#/components/schemas/InventoryDomainIdentity' }
         - { $ref: '#/components/schemas/InventorySyscallIdentity' }
         - { $ref: '#/components/schemas/InventoryInboundEndpointIdentity' }
-        - { $ref: '#/components/schemas/InventoryFileActivityIdentity' }
+        - { $ref: '#/components/schemas/FileActivitySemanticSummary' }
     InventoryProcessIdentity:
       type: object
       additionalProperties: false
@@ -1849,16 +2039,6 @@ components:
         local_port: { type: integer, minimum: 1, maximum: 65535, example: 8080 }
         listener_observed: { type: boolean }
         accept_observed: { type: boolean }
-    InventoryFileActivityIdentity:
-      type: object
-      additionalProperties: false
-      required: [process_command, operation, path]
-      properties:
-        process_command: { type: string, minLength: 1 }
-        operation: { type: string, enum: [create, modify, delete, rename] }
-        path: { type: string, minLength: 1, maxLength: 1024, pattern: '^/' }
-        new_path: { type: [string, 'null'], maxLength: 1024, pattern: '^/' }
-        replaced: { type: [boolean, 'null'] }
     InventoryItem:
       type: object
       additionalProperties: false
@@ -1924,7 +2104,7 @@ components:
         first_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
         last_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
         kinds:
-          { type: array, maxItems: 5, items: { $ref: '#/components/schemas/InventoryKindCount' } }
+          { type: array, maxItems: 6, items: { $ref: '#/components/schemas/InventoryKindCount' } }
     InventoryDistributionEntry:
       type: object
       additionalProperties: false

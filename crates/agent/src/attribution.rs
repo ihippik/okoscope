@@ -1,6 +1,9 @@
 use std::{
     collections::BTreeMap,
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
     time::Duration,
 };
 
@@ -16,6 +19,7 @@ use kube::{
     runtime::watcher::{self, Event},
 };
 use thiserror::Error;
+use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
 use crate::config::{WorkloadMetadata, WorkloadSelector};
@@ -253,25 +257,83 @@ pub fn resolve_and_count(
     }
 }
 
-pub async fn run_watches(client: Client, cache: Arc<AttributionCache>) -> anyhow::Result<()> {
+pub async fn run_watches(
+    client: Client,
+    cache: Arc<AttributionCache>,
+    lifecycle_sender: mpsc::Sender<crate::lifecycle::LifecycleObservation>,
+    counters: Arc<Counters>,
+    readiness: watch::Sender<bool>,
+) -> anyhow::Result<()> {
     let pods: Api<Pod> = Api::all(client.clone());
     let replicas: Api<ReplicaSet> = Api::all(client.clone());
     let deployments: Api<Deployment> = Api::all(client);
-    tokio::try_join!(
-        watch_pods(pods, cache.clone()),
-        watch_replica_sets(replicas, cache.clone()),
-        watch_deployments(deployments, cache),
-    )?;
-    Ok(())
+    let initialized = Arc::new(AtomicU8::new(0));
+    let result = tokio::try_join!(
+        watch_pods(
+            pods,
+            cache.clone(),
+            lifecycle_sender,
+            counters,
+            initialized.clone(),
+            readiness.clone(),
+        ),
+        watch_replica_sets(
+            replicas,
+            cache.clone(),
+            initialized.clone(),
+            readiness.clone(),
+        ),
+        watch_deployments(deployments, cache, initialized, readiness.clone()),
+    );
+    readiness.send_replace(false);
+    result.map(|_| ())
 }
 
-async fn watch_pods(api: Api<Pod>, cache: Arc<AttributionCache>) -> anyhow::Result<()> {
+fn source_initialized(initialized: &AtomicU8, bit: u8, readiness: &watch::Sender<bool>) {
+    let previous = initialized.fetch_or(bit, Ordering::AcqRel);
+    if previous | bit == 0b111 {
+        readiness.send_replace(true);
+    }
+}
+
+async fn watch_pods(
+    api: Api<Pod>,
+    cache: Arc<AttributionCache>,
+    lifecycle_sender: mpsc::Sender<crate::lifecycle::LifecycleObservation>,
+    counters: Arc<Counters>,
+    initialized: Arc<AtomicU8>,
+    readiness: watch::Sender<bool>,
+) -> anyhow::Result<()> {
     let mut stream = watcher::watcher(api, watcher::Config::default()).boxed();
+    let mut lifecycle = crate::lifecycle::ContainerLifecycleStore::new(8192);
     while let Some(event) = stream.try_next().await? {
         match event {
-            Event::Apply(pod) | Event::InitApply(pod) => cache.apply_pod(&pod),
+            Event::Apply(pod) | Event::InitApply(pod) => {
+                cache.apply_pod(&pod);
+                let capacity_before = lifecycle.capacity_drops;
+                let invalid_before = lifecycle.invalid_statuses;
+                let dedup_before = lifecycle.deduplicated;
+                for observation in lifecycle.observe_pod(&pod) {
+                    if lifecycle_sender.try_send(observation).is_err() {
+                        counters.lifecycle_capacity.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                counters.lifecycle_capacity.fetch_add(
+                    lifecycle.capacity_drops.saturating_sub(capacity_before),
+                    Ordering::Relaxed,
+                );
+                counters.lifecycle_invalid_status.fetch_add(
+                    lifecycle.invalid_statuses.saturating_sub(invalid_before),
+                    Ordering::Relaxed,
+                );
+                counters.lifecycle_deduplicated.fetch_add(
+                    lifecycle.deduplicated.saturating_sub(dedup_before),
+                    Ordering::Relaxed,
+                );
+            }
             Event::Delete(pod) => cache.delete_pod(&pod),
-            Event::Init | Event::InitDone => {}
+            Event::Init => {}
+            Event::InitDone => source_initialized(&initialized, 0b001, &readiness),
         }
     }
     Ok(())
@@ -280,11 +342,17 @@ async fn watch_pods(api: Api<Pod>, cache: Arc<AttributionCache>) -> anyhow::Resu
 async fn watch_replica_sets(
     api: Api<ReplicaSet>,
     cache: Arc<AttributionCache>,
+    initialized: Arc<AtomicU8>,
+    readiness: watch::Sender<bool>,
 ) -> anyhow::Result<()> {
     let mut stream = watcher::watcher(api, watcher::Config::default()).boxed();
     while let Some(event) = stream.try_next().await? {
-        if let Event::Apply(resource) | Event::InitApply(resource) = event {
-            cache.apply_replica_set(&resource);
+        match event {
+            Event::Apply(resource) | Event::InitApply(resource) => {
+                cache.apply_replica_set(&resource);
+            }
+            Event::InitDone => source_initialized(&initialized, 0b010, &readiness),
+            Event::Delete(_) | Event::Init => {}
         }
     }
     Ok(())
@@ -293,11 +361,17 @@ async fn watch_replica_sets(
 async fn watch_deployments(
     api: Api<Deployment>,
     cache: Arc<AttributionCache>,
+    initialized: Arc<AtomicU8>,
+    readiness: watch::Sender<bool>,
 ) -> anyhow::Result<()> {
     let mut stream = watcher::watcher(api, watcher::Config::default()).boxed();
     while let Some(event) = stream.try_next().await? {
-        if let Event::Apply(resource) | Event::InitApply(resource) = event {
-            cache.apply_deployment(&resource);
+        match event {
+            Event::Apply(resource) | Event::InitApply(resource) => {
+                cache.apply_deployment(&resource);
+            }
+            Event::InitDone => source_initialized(&initialized, 0b100, &readiness),
+            Event::Delete(_) | Event::Init => {}
         }
     }
     Ok(())
@@ -336,6 +410,19 @@ mod tests {
         apimachinery::pkg::apis::meta::v1::{ObjectMeta, OwnerReference},
     };
     use uuid::Uuid;
+
+    #[test]
+    fn lifecycle_readiness_requires_every_source_and_can_be_withheld() {
+        let initialized = AtomicU8::new(0);
+        let (readiness, receiver) = watch::channel(false);
+        source_initialized(&initialized, 0b001, &readiness);
+        source_initialized(&initialized, 0b100, &readiness);
+        assert!(!*receiver.borrow());
+        source_initialized(&initialized, 0b010, &readiness);
+        assert!(*receiver.borrow());
+        readiness.send_replace(false);
+        assert!(!*receiver.borrow());
+    }
 
     fn owner(kind: &str, name: &str, uid: &str) -> OwnerReference {
         OwnerReference {

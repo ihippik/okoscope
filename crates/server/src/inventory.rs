@@ -1,6 +1,8 @@
 use std::fmt;
 
-use event_model::{EventPayload, NetworkAddressFamily, RuntimeEvent};
+use event_model::{
+    EventPayload, GenerationCorrelation, NetworkAddressFamily, ProcessTermination, RuntimeEvent,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -39,6 +41,9 @@ pub enum InventoryKind {
     Syscall,
     InboundEndpoint,
     FileActivity,
+    ProcessExit,
+    ContainerTermination,
+    ContainerRestart,
 }
 
 impl InventoryKind {
@@ -50,6 +55,9 @@ impl InventoryKind {
             Self::Syscall => "syscall",
             Self::InboundEndpoint => "inbound_endpoint",
             Self::FileActivity => "file_activity",
+            Self::ProcessExit => "process_exit",
+            Self::ContainerTermination => "container_termination",
+            Self::ContainerRestart => "container_restart",
         }
     }
 }
@@ -402,6 +410,59 @@ fn fingerprint_with_version(
             Some(value.new_path.as_str()),
             value.replaced,
         )?,
+        EventPayload::ProcessExit(value) => {
+            let identity = match &value.correlation {
+                GenerationCorrelation::Observed { executable, .. } => {
+                    required("executable", executable)?
+                }
+                GenerationCorrelation::Unresolved { .. } => {
+                    required("process_command", &event.process.command)?
+                }
+            };
+            encoder.field(InventoryKind::ProcessExit.as_str().as_bytes());
+            encoder.field(identity.as_bytes());
+            let termination = match &value.termination {
+                ProcessTermination::Exited { status } => {
+                    encoder.field(b"exited");
+                    encoder.field(&[*status]);
+                    json!({"type":"exited","status":status})
+                }
+                ProcessTermination::Signaled {
+                    signal,
+                    signal_name,
+                    ..
+                } => {
+                    encoder.field(b"signaled");
+                    encoder.field(&[*signal]);
+                    json!({"type":"signaled","signal":signal,"signal_name":signal_name})
+                }
+            };
+            (
+                InventoryKind::ProcessExit,
+                json!({"identity":identity,"termination":termination,"source":value.source}),
+            )
+        }
+        EventPayload::ContainerTermination(value) => {
+            let container = required("container_name", &event.attribution.container_name)?;
+            let reason = required("termination_reason", &value.reason)?;
+            encoder.field(InventoryKind::ContainerTermination.as_str().as_bytes());
+            encoder.field(container.as_bytes());
+            encoder.field(reason.as_bytes());
+            encoder.field(&value.exit_code.to_be_bytes());
+            (
+                InventoryKind::ContainerTermination,
+                json!({"container_name":container,"reason":reason,"exit_code":value.exit_code,"source":value.source}),
+            )
+        }
+        EventPayload::ContainerRestart(value) => {
+            let container = required("container_name", &event.attribution.container_name)?;
+            encoder.field(InventoryKind::ContainerRestart.as_str().as_bytes());
+            encoder.field(container.as_bytes());
+            (
+                InventoryKind::ContainerRestart,
+                json!({"container_name":container,"source":value.source,"restart_count":value.restart_count,"restart_delta":value.restart_delta,"observation_gap":value.observation_gap}),
+            )
+        }
     };
 
     Ok(InventoryFingerprint {

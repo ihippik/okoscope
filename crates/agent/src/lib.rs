@@ -9,7 +9,9 @@ pub mod dns_state;
 pub mod dns_tcp;
 pub mod file_runtime;
 pub mod kernel_event;
+pub mod lifecycle;
 #[cfg(target_os = "linux")]
 pub mod observer;
+pub mod process_runtime;
 pub mod session;
 pub mod syscall;

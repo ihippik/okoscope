@@ -1,14 +1,14 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use agent_ebpf_common::{
-    COMMAND_LEN, DNS_ADDRESS_LEN, DNS_CAPTURE_BYTES, DnsPacketRecord, FILE_FLAG_COMPLETE,
-    FILE_FLAG_REPLACED, FILE_FLAG_REPLACEMENT_KNOWN, FILE_OPERATION_CREATE, FILE_OPERATION_DELETE,
-    FILE_OPERATION_MODIFY, FILE_OPERATION_RENAME, FILE_PATH_LEN, FileKernelEvent,
-    InboundKernelEvent, KernelEvent, NETWORK_ADDRESS_LEN,
+    COMMAND_LEN, DNS_ADDRESS_LEN, DNS_CAPTURE_BYTES, DnsPacketRecord, ExitKernelEvent,
+    FILE_FLAG_COMPLETE, FILE_FLAG_REPLACED, FILE_FLAG_REPLACEMENT_KNOWN, FILE_OPERATION_CREATE,
+    FILE_OPERATION_DELETE, FILE_OPERATION_MODIFY, FILE_OPERATION_RENAME, FILE_PATH_LEN,
+    FileKernelEvent, InboundKernelEvent, KernelEvent, NETWORK_ADDRESS_LEN,
 };
 use event_model::{
     EventPayload, InboundNetworkError, NetworkAccept, NetworkAddressFamily, NetworkConnect,
-    NetworkConnectError, NetworkConnectOutcome, NetworkListen,
+    NetworkConnectError, NetworkConnectOutcome, NetworkListen, ProcessTermination,
 };
 use thiserror::Error;
 
@@ -16,6 +16,135 @@ use thiserror::Error;
 pub enum DecodeError {
     #[error("kernel event has size {actual}, expected {expected}")]
     InvalidSize { actual: usize, expected: usize },
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum ExitDecodeError {
+    #[error(transparent)]
+    Layout(#[from] DecodeError),
+    #[error("exit record reserved field is non-zero")]
+    InvalidReserved,
+    #[error("malformed Linux wait status {0:#x}")]
+    InvalidWaitStatus(i32),
+    #[error("unsupported Linux terminating signal {0}")]
+    UnsupportedSignal(u8),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodedExitEvent {
+    pub kernel: ExitKernelEvent,
+    pub termination: ProcessTermination,
+}
+
+pub fn decode_exit(bytes: &[u8]) -> Result<DecodedExitEvent, ExitDecodeError> {
+    if bytes.len() != ExitKernelEvent::SIZE {
+        return Err(DecodeError::InvalidSize {
+            actual: bytes.len(),
+            expected: ExitKernelEvent::SIZE,
+        }
+        .into());
+    }
+    let u64_at = |offset: usize| {
+        u64::from_ne_bytes(
+            bytes[offset..offset + 8]
+                .try_into()
+                .expect("validated fixed layout"),
+        )
+    };
+    let i32_at = |offset: usize| {
+        i32::from_ne_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .expect("validated fixed layout"),
+        )
+    };
+    let u32_at = |offset: usize| {
+        u32::from_ne_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .expect("validated fixed layout"),
+        )
+    };
+    let raw_wait_status = i32_at(24);
+    let reserved = u32_at(28);
+    if reserved != 0 {
+        return Err(ExitDecodeError::InvalidReserved);
+    }
+    let termination = decode_wait_status(raw_wait_status)?;
+    let mut command = [0; COMMAND_LEN];
+    command.copy_from_slice(&bytes[32..48]);
+    Ok(DecodedExitEvent {
+        kernel: ExitKernelEvent {
+            timestamp_ns: u64_at(0),
+            cgroup_id: u64_at(8),
+            pid_tgid: u64_at(16),
+            raw_wait_status,
+            reserved,
+            command,
+        },
+        termination,
+    })
+}
+
+pub fn decode_wait_status(raw: i32) -> Result<ProcessTermination, ExitDecodeError> {
+    if raw < 0 || raw & !0xffff != 0 {
+        return Err(ExitDecodeError::InvalidWaitStatus(raw));
+    }
+    let low = u8::try_from(raw & 0xff).expect("non-negative value is masked to one byte");
+    if low == 0 {
+        let status =
+            u8::try_from((raw >> 8) & 0xff).expect("non-negative value is masked to one byte");
+        return Ok(ProcessTermination::exited(status));
+    }
+    let signal = low & 0x7f;
+    let core_dump_flag = low & 0x80 != 0;
+    if raw & !0xff != 0 || signal == 0 || signal > event_model::MAX_LINUX_SIGNAL {
+        return Err(if signal > event_model::MAX_LINUX_SIGNAL {
+            ExitDecodeError::UnsupportedSignal(signal)
+        } else {
+            ExitDecodeError::InvalidWaitStatus(raw)
+        });
+    }
+    ProcessTermination::signaled(signal, canonical_signal_name(signal), core_dump_flag)
+        .map_err(|_| ExitDecodeError::UnsupportedSignal(signal))
+}
+
+fn canonical_signal_name(signal: u8) -> String {
+    let known = match signal {
+        1 => Some("SIGHUP"),
+        2 => Some("SIGINT"),
+        3 => Some("SIGQUIT"),
+        4 => Some("SIGILL"),
+        5 => Some("SIGTRAP"),
+        6 => Some("SIGABRT"),
+        7 => Some("SIGBUS"),
+        8 => Some("SIGFPE"),
+        9 => Some("SIGKILL"),
+        10 => Some("SIGUSR1"),
+        11 => Some("SIGSEGV"),
+        12 => Some("SIGUSR2"),
+        13 => Some("SIGPIPE"),
+        14 => Some("SIGALRM"),
+        15 => Some("SIGTERM"),
+        16 => Some("SIGSTKFLT"),
+        17 => Some("SIGCHLD"),
+        18 => Some("SIGCONT"),
+        19 => Some("SIGSTOP"),
+        20 => Some("SIGTSTP"),
+        21 => Some("SIGTTIN"),
+        22 => Some("SIGTTOU"),
+        23 => Some("SIGURG"),
+        24 => Some("SIGXCPU"),
+        25 => Some("SIGXFSZ"),
+        26 => Some("SIGVTALRM"),
+        27 => Some("SIGPROF"),
+        28 => Some("SIGWINCH"),
+        29 => Some("SIGIO"),
+        30 => Some("SIGPWR"),
+        31 => Some("SIGSYS"),
+        _ => None,
+    };
+    known.map_or_else(|| format!("SIGRTMIN+{}", signal - 32), str::to_owned)
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -365,6 +494,74 @@ pub fn inbound_payload(event: &InboundKernelEvent) -> Result<EventPayload, Netwo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exit_fixture(raw_wait_status: i32) -> [u8; ExitKernelEvent::SIZE] {
+        let mut bytes = [0; ExitKernelEvent::SIZE];
+        bytes[0..8].copy_from_slice(&1_u64.to_ne_bytes());
+        bytes[8..16].copy_from_slice(&2_u64.to_ne_bytes());
+        bytes[16..24].copy_from_slice(&3_u64.to_ne_bytes());
+        bytes[24..28].copy_from_slice(&raw_wait_status.to_ne_bytes());
+        bytes[32..38].copy_from_slice(b"worker");
+        bytes
+    }
+
+    #[test]
+    fn exit_fixtures_decode_native_wait_semantics() {
+        let cases = [
+            (7 << 8, ProcessTermination::Exited { status: 7 }, None),
+            (
+                15,
+                ProcessTermination::Signaled {
+                    signal: 15,
+                    signal_name: "SIGTERM".into(),
+                    core_dump_flag: false,
+                },
+                Some(143),
+            ),
+            (
+                9,
+                ProcessTermination::Signaled {
+                    signal: 9,
+                    signal_name: "SIGKILL".into(),
+                    core_dump_flag: false,
+                },
+                Some(137),
+            ),
+            (
+                0x8b,
+                ProcessTermination::Signaled {
+                    signal: 11,
+                    signal_name: "SIGSEGV".into(),
+                    core_dump_flag: true,
+                },
+                Some(139),
+            ),
+        ];
+        for (raw, expected, conventional) in cases {
+            let decoded = decode_exit(&exit_fixture(raw)).unwrap();
+            assert_eq!(decoded.termination, expected);
+            assert_eq!(decoded.termination.conventional_exit_code(), conventional);
+            assert_eq!(decoded.kernel.raw_wait_status, raw);
+            assert_eq!(&decoded.kernel.command[..6], b"worker");
+        }
+    }
+
+    #[test]
+    fn exit_decoder_rejects_layout_reserved_and_malformed_status() {
+        assert!(matches!(
+            decode_exit(&[0; 4]),
+            Err(ExitDecodeError::Layout(DecodeError::InvalidSize { .. }))
+        ));
+        let mut reserved = exit_fixture(0);
+        reserved[28] = 1;
+        assert_eq!(
+            decode_exit(&reserved),
+            Err(ExitDecodeError::InvalidReserved)
+        );
+        for raw in [-1, 0x1_0000, 0x100 | 9, 0x7f] {
+            assert!(decode_wait_status(raw).is_err(), "accepted {raw:#x}");
+        }
+    }
 
     #[test]
     fn rejects_wrong_size() {

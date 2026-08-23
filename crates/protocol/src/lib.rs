@@ -9,11 +9,13 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use chrono::{DateTime, Utc};
 use event_model::{
-    DnsAddressAnswer, DnsCname, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
-    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, FileActivityPath, FileCreate, FileDelete,
-    FileModify, FileRename, KubernetesAttribution, NetworkAccept, NetworkAddressFamily,
+    ContainerRestart, ContainerTermination, DnsAddressAnswer, DnsCname, DnsContext, DnsDirection,
+    DnsName, DnsQueryType, DnsResponseCode, DnsTransport, EVENT_SCHEMA_VERSION, EventPayload,
+    EvidenceSource, FileActivityPath, FileCreate, FileDelete, FileModify, FileRename,
+    GenerationCorrelation, KubernetesAttribution, NetworkAccept, NetworkAddressFamily,
     NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, NetworkListen,
-    PROTOCOL_VERSION, ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
+    PROTOCOL_VERSION, ProcessExec, ProcessExit, ProcessIdentity, ProcessTermination, RuntimeEvent,
+    SyscallEvent, UnresolvedGenerationReason,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -24,6 +26,8 @@ pub const NETWORK_ACCEPT_CAPABILITY: &str = "network.accept/v1";
 pub const NETWORK_DNS_UDP_CAPABILITY: &str = "network.dns.udp/v1";
 pub const NETWORK_DNS_TCP_CAPABILITY: &str = "network.dns.tcp/v1";
 pub const FILE_ACTIVITY_CAPABILITY: &str = "file.activity.syscall-path/v1";
+pub const PROCESS_EXIT_CAPABILITY: &str = "process.exit/v1";
+pub const CONTAINER_LIFECYCLE_CAPABILITY: &str = "container.lifecycle/v1";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProtocolError {
@@ -43,6 +47,8 @@ pub enum ProtocolError {
     InvalidDns(&'static str),
     #[error("invalid file activity field: {0}")]
     InvalidFile(&'static str),
+    #[error("invalid termination or lifecycle field: {0}")]
+    InvalidTermination(&'static str),
 }
 
 /// Validates the wire protocol version.
@@ -162,7 +168,248 @@ fn encode_payload(payload: EventPayload) -> v1::runtime_event::Payload {
             new_path: value.new_path.into(),
             replaced: value.replaced,
         }),
+        EventPayload::ProcessExit(value) => {
+            v1::runtime_event::Payload::ProcessExit(encode_process_exit(value))
+        }
+        EventPayload::ContainerTermination(value) => {
+            v1::runtime_event::Payload::ContainerTermination(encode_container_termination(value))
+        }
+        EventPayload::ContainerRestart(value) => {
+            v1::runtime_event::Payload::ContainerRestart(encode_container_restart(value))
+        }
     }
+}
+
+fn encode_source(source: EvidenceSource) -> i32 {
+    match source {
+        EvidenceSource::Kernel => v1::EvidenceSource::Kernel.into(),
+        EvidenceSource::Kubernetes => v1::EvidenceSource::Kubernetes.into(),
+        EvidenceSource::Derived => v1::EvidenceSource::Derived.into(),
+    }
+}
+
+fn decode_source(source: i32) -> Result<EvidenceSource, ProtocolError> {
+    match v1::EvidenceSource::try_from(source).ok() {
+        Some(v1::EvidenceSource::Kernel) => Ok(EvidenceSource::Kernel),
+        Some(v1::EvidenceSource::Kubernetes) => Ok(EvidenceSource::Kubernetes),
+        Some(v1::EvidenceSource::Derived) => Ok(EvidenceSource::Derived),
+        _ => Err(ProtocolError::InvalidTermination("source")),
+    }
+}
+
+fn encode_process_exit(value: ProcessExit) -> v1::ProcessExit {
+    let termination = match value.termination {
+        ProcessTermination::Exited { status } => {
+            v1::process_exit::Termination::Exited(v1::ProcessExited {
+                status: u32::from(status),
+            })
+        }
+        ProcessTermination::Signaled {
+            signal,
+            signal_name,
+            core_dump_flag,
+        } => v1::process_exit::Termination::Signaled(v1::ProcessSignaled {
+            signal: u32::from(signal),
+            signal_name,
+            core_dump_flag,
+        }),
+    };
+    let result = match value.correlation {
+        GenerationCorrelation::Observed {
+            generation,
+            exec_event_id,
+            executable,
+        } => v1::generation_correlation::Result::Observed(v1::ObservedGeneration {
+            generation,
+            exec_event_id: exec_event_id.to_string(),
+            executable,
+        }),
+        GenerationCorrelation::Unresolved { reason } => {
+            let reason = match reason {
+                UnresolvedGenerationReason::BeforeObservation => {
+                    v1::UnresolvedGenerationReason::BeforeObservation
+                }
+                UnresolvedGenerationReason::Evicted => v1::UnresolvedGenerationReason::Evicted,
+                UnresolvedGenerationReason::GenerationMismatch => {
+                    v1::UnresolvedGenerationReason::GenerationMismatch
+                }
+                UnresolvedGenerationReason::ContainerLifetimeMismatch => {
+                    v1::UnresolvedGenerationReason::ContainerLifetimeMismatch
+                }
+            };
+            v1::generation_correlation::Result::Unresolved(v1::UnresolvedGeneration {
+                reason: reason.into(),
+            })
+        }
+    };
+    v1::ProcessExit {
+        source: encode_source(value.source),
+        raw_wait_status: value.raw_wait_status,
+        termination: Some(termination),
+        correlation: Some(v1::GenerationCorrelation {
+            result: Some(result),
+        }),
+    }
+}
+
+fn encode_container_termination(value: ContainerTermination) -> v1::ContainerTermination {
+    v1::ContainerTermination {
+        source: encode_source(value.source),
+        runtime_container_id: value.runtime_container_id,
+        reason: value.reason,
+        exit_code: value.exit_code,
+        started_at_unix_nanos: value
+            .started_at
+            .and_then(|value| value.timestamp_nanos_opt()),
+        finished_at_unix_nanos: value
+            .finished_at
+            .and_then(|value| value.timestamp_nanos_opt()),
+    }
+}
+
+fn encode_container_restart(value: ContainerRestart) -> v1::ContainerRestart {
+    v1::ContainerRestart {
+        source: encode_source(value.source),
+        runtime_container_id: value.runtime_container_id,
+        restart_count: value.restart_count,
+        restart_delta: value.restart_delta,
+        observation_gap: value.observation_gap,
+        previous_termination: value.previous_termination.map(encode_container_termination),
+        waiting_reason: value.waiting_reason,
+    }
+}
+
+fn decode_process_exit(value: v1::ProcessExit) -> Result<ProcessExit, ProtocolError> {
+    if decode_source(value.source)? != EvidenceSource::Kernel {
+        return Err(ProtocolError::InvalidTermination("process_exit.source"));
+    }
+    let termination = match value
+        .termination
+        .ok_or(ProtocolError::Missing("process_exit.termination"))?
+    {
+        v1::process_exit::Termination::Exited(exited) => {
+            let status = u8::try_from(exited.status)
+                .map_err(|_| ProtocolError::InvalidTermination("exit.status"))?;
+            if value.raw_wait_status != i32::from(status) << 8 {
+                return Err(ProtocolError::InvalidTermination("exit.raw_wait_status"));
+            }
+            ProcessTermination::exited(status)
+        }
+        v1::process_exit::Termination::Signaled(signaled) => {
+            let signal = u8::try_from(signaled.signal)
+                .map_err(|_| ProtocolError::InvalidTermination("signal"))?;
+            let expected = i32::from(signal) | if signaled.core_dump_flag { 0x80 } else { 0 };
+            if value.raw_wait_status != expected {
+                return Err(ProtocolError::InvalidTermination("signal.raw_wait_status"));
+            }
+            ProcessTermination::signaled(signal, signaled.signal_name, signaled.core_dump_flag)
+                .map_err(|_| ProtocolError::InvalidTermination("signal"))?
+        }
+    };
+    let correlation = decode_generation_correlation(
+        value
+            .correlation
+            .ok_or(ProtocolError::Missing("process_exit.correlation"))?,
+    )?;
+    Ok(ProcessExit::new(
+        value.raw_wait_status,
+        termination,
+        correlation,
+    ))
+}
+
+fn decode_generation_correlation(
+    value: v1::GenerationCorrelation,
+) -> Result<GenerationCorrelation, ProtocolError> {
+    match value
+        .result
+        .ok_or(ProtocolError::Missing("generation_correlation.result"))?
+    {
+        v1::generation_correlation::Result::Observed(observed) => GenerationCorrelation::observed(
+            observed.generation,
+            parse_uuid("exec_event_id", &observed.exec_event_id)?,
+            observed.executable,
+        )
+        .map_err(|_| ProtocolError::InvalidTermination("generation_correlation.observed")),
+        v1::generation_correlation::Result::Unresolved(unresolved) => {
+            let reason = match v1::UnresolvedGenerationReason::try_from(unresolved.reason).ok() {
+                Some(v1::UnresolvedGenerationReason::BeforeObservation) => {
+                    UnresolvedGenerationReason::BeforeObservation
+                }
+                Some(v1::UnresolvedGenerationReason::Evicted) => {
+                    UnresolvedGenerationReason::Evicted
+                }
+                Some(v1::UnresolvedGenerationReason::GenerationMismatch) => {
+                    UnresolvedGenerationReason::GenerationMismatch
+                }
+                Some(v1::UnresolvedGenerationReason::ContainerLifetimeMismatch) => {
+                    UnresolvedGenerationReason::ContainerLifetimeMismatch
+                }
+                _ => {
+                    return Err(ProtocolError::InvalidTermination(
+                        "generation_correlation.reason",
+                    ));
+                }
+            };
+            Ok(GenerationCorrelation::Unresolved { reason })
+        }
+    }
+}
+
+fn decode_optional_timestamp(value: Option<i64>) -> Result<Option<DateTime<Utc>>, ProtocolError> {
+    value
+        .map(|value| {
+            let secs = value.div_euclid(1_000_000_000);
+            let nanos = u32::try_from(value.rem_euclid(1_000_000_000))
+                .map_err(|_| ProtocolError::InvalidTimestamp)?;
+            DateTime::<Utc>::from_timestamp(secs, nanos).ok_or(ProtocolError::InvalidTimestamp)
+        })
+        .transpose()
+}
+
+fn decode_container_termination(
+    value: v1::ContainerTermination,
+) -> Result<ContainerTermination, ProtocolError> {
+    if decode_source(value.source)? != EvidenceSource::Kubernetes {
+        return Err(ProtocolError::InvalidTermination(
+            "container_termination.source",
+        ));
+    }
+    ContainerTermination::new(
+        value.runtime_container_id,
+        value.reason,
+        value.exit_code,
+        decode_optional_timestamp(value.started_at_unix_nanos)?,
+        decode_optional_timestamp(value.finished_at_unix_nanos)?,
+    )
+    .map_err(|_| ProtocolError::InvalidTermination("container_termination"))
+}
+
+fn decode_container_restart(
+    value: v1::ContainerRestart,
+) -> Result<ContainerRestart, ProtocolError> {
+    if decode_source(value.source)? != EvidenceSource::Kubernetes {
+        return Err(ProtocolError::InvalidTermination(
+            "container_restart.source",
+        ));
+    }
+    let restart = ContainerRestart::new(
+        value.runtime_container_id,
+        value.restart_count,
+        value.restart_delta,
+        value
+            .previous_termination
+            .map(decode_container_termination)
+            .transpose()?,
+        value.waiting_reason,
+    )
+    .map_err(|_| ProtocolError::InvalidTermination("container_restart"))?;
+    if restart.observation_gap != value.observation_gap {
+        return Err(ProtocolError::InvalidTermination(
+            "container_restart.observation_gap",
+        ));
+    }
+    Ok(restart)
 }
 
 impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
@@ -247,6 +494,15 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
                 )
                 .map_err(|_| ProtocolError::InvalidFile("rename"))?,
             ),
+            v1::runtime_event::Payload::ProcessExit(value) => {
+                EventPayload::ProcessExit(decode_process_exit(value)?)
+            }
+            v1::runtime_event::Payload::ContainerTermination(value) => {
+                EventPayload::ContainerTermination(decode_container_termination(value)?)
+            }
+            v1::runtime_event::Payload::ContainerRestart(value) => {
+                EventPayload::ContainerRestart(decode_container_restart(value)?)
+            }
         };
         Ok(Self {
             id,
@@ -993,6 +1249,125 @@ mod tests {
         assert!(matches!(
             RuntimeEvent::try_from(wire),
             Err(ProtocolError::InvalidFile("rename"))
+        ));
+    }
+
+    #[test]
+    fn termination_and_lifecycle_payloads_round_trip() {
+        let now = Utc::now();
+        let termination =
+            ContainerTermination::new("containerd://abc", "OOMKilled", 137, Some(now), Some(now))
+                .unwrap();
+        let payloads = [
+            EventPayload::ProcessExit(ProcessExit::new(
+                0x8b,
+                ProcessTermination::signaled(11, "SIGSEGV", true).unwrap(),
+                GenerationCorrelation::observed(7, Uuid::new_v4(), "/app/worker").unwrap(),
+            )),
+            EventPayload::ProcessExit(ProcessExit::new(
+                7 << 8,
+                ProcessTermination::exited(7),
+                GenerationCorrelation::Unresolved {
+                    reason: UnresolvedGenerationReason::GenerationMismatch,
+                },
+            )),
+            EventPayload::ContainerTermination(termination.clone()),
+            EventPayload::ContainerRestart(
+                ContainerRestart::new(
+                    "containerd://abc",
+                    7,
+                    3,
+                    Some(termination),
+                    Some("CrashLoopBackOff".into()),
+                )
+                .unwrap(),
+            ),
+        ];
+        for payload in payloads {
+            let mut value = event();
+            value.payload = payload;
+            assert_eq!(
+                RuntimeEvent::try_from(v1::RuntimeEvent::from(value.clone())).unwrap(),
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_contradictory_exit_and_unknown_termination_enums() {
+        let mut wire = v1::RuntimeEvent::from(event());
+        wire.payload = Some(v1::runtime_event::Payload::ProcessExit(v1::ProcessExit {
+            source: v1::EvidenceSource::Kernel.into(),
+            raw_wait_status: 9,
+            termination: Some(v1::process_exit::Termination::Exited(v1::ProcessExited {
+                status: 9,
+            })),
+            correlation: Some(v1::GenerationCorrelation {
+                result: Some(v1::generation_correlation::Result::Unresolved(
+                    v1::UnresolvedGeneration {
+                        reason: v1::UnresolvedGenerationReason::Evicted.into(),
+                    },
+                )),
+            }),
+        }));
+        assert!(matches!(
+            RuntimeEvent::try_from(wire),
+            Err(ProtocolError::InvalidTermination("exit.raw_wait_status"))
+        ));
+
+        let mut wire = v1::RuntimeEvent::from(event());
+        wire.payload = Some(v1::runtime_event::Payload::ProcessExit(v1::ProcessExit {
+            source: 999,
+            raw_wait_status: 9,
+            termination: Some(v1::process_exit::Termination::Signaled(
+                v1::ProcessSignaled {
+                    signal: 9,
+                    signal_name: "SIGKILL".into(),
+                    core_dump_flag: false,
+                },
+            )),
+            correlation: Some(v1::GenerationCorrelation {
+                result: Some(v1::generation_correlation::Result::Unresolved(
+                    v1::UnresolvedGeneration {
+                        reason: v1::UnresolvedGenerationReason::Evicted.into(),
+                    },
+                )),
+            }),
+        }));
+        assert!(matches!(
+            RuntimeEvent::try_from(wire),
+            Err(ProtocolError::InvalidTermination("source"))
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_restart_delta_and_observation_gap() {
+        let mut wire = v1::RuntimeEvent::from(event());
+        wire.payload = Some(v1::runtime_event::Payload::ContainerRestart(
+            v1::ContainerRestart {
+                source: v1::EvidenceSource::Kubernetes.into(),
+                runtime_container_id: "containerd://abc".into(),
+                restart_count: 4,
+                restart_delta: 0,
+                observation_gap: false,
+                previous_termination: None,
+                waiting_reason: None,
+            },
+        ));
+        assert!(matches!(
+            RuntimeEvent::try_from(wire),
+            Err(ProtocolError::InvalidTermination("container_restart"))
+        ));
+
+        let mut restart = ContainerRestart::new("containerd://abc", 4, 1, None, None).unwrap();
+        restart.observation_gap = true;
+        let mut value = event();
+        value.payload = EventPayload::ContainerRestart(restart);
+        assert!(matches!(
+            RuntimeEvent::try_from(v1::RuntimeEvent::from(value)),
+            Err(ProtocolError::InvalidTermination(
+                "container_restart.observation_gap"
+            ))
         ));
     }
 }

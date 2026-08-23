@@ -5,6 +5,7 @@ build:
 
 build-ebpf:
 	cargo +nightly build -p agent-ebpf --target bpfel-unknown-none -Z build-std=core
+	$(MAKE) -C crates/agent-ebpf-core
 
 check:
 	cargo fmt --all -- --check

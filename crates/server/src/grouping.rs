@@ -1,6 +1,8 @@
 use std::fmt;
 
-use event_model::{EventPayload, NetworkAddressFamily, RuntimeEvent};
+use event_model::{
+    EventPayload, GenerationCorrelation, NetworkAddressFamily, ProcessTermination, RuntimeEvent,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -377,6 +379,58 @@ pub fn fingerprint_v1(
             Some(value.new_path.as_str()),
             value.replaced,
         )?,
+        EventPayload::ProcessExit(value) => {
+            let identity = match &value.correlation {
+                GenerationCorrelation::Observed { executable, .. } => {
+                    required("executable", executable)?
+                }
+                GenerationCorrelation::Unresolved { .. } => {
+                    required("process_command", &event.process.command)?
+                }
+            };
+            encoder.field(identity.as_bytes());
+            match &value.termination {
+                ProcessTermination::Exited { status } => {
+                    encoder.field(b"exited");
+                    encoder.field(&[*status]);
+                }
+                ProcessTermination::Signaled { signal, .. } => {
+                    encoder.field(b"signaled");
+                    encoder.field(&[*signal]);
+                }
+            }
+            json!({
+                "identity": identity,
+                "termination": value.termination,
+                "source": value.source,
+                "correlation": value.correlation
+            })
+        }
+        EventPayload::ContainerTermination(value) => {
+            let container_name = required("container_name", &event.attribution.container_name)?;
+            let reason = required("termination_reason", &value.reason)?;
+            encoder.field(container_name.as_bytes());
+            encoder.field(reason.as_bytes());
+            encoder.field(&value.exit_code.to_be_bytes());
+            json!({
+                "container_name": container_name,
+                "reason": reason,
+                "exit_code": value.exit_code,
+                "source": value.source
+            })
+        }
+        EventPayload::ContainerRestart(value) => {
+            let container_name = required("container_name", &event.attribution.container_name)?;
+            encoder.field(container_name.as_bytes());
+            json!({
+                "container_name": container_name,
+                "source": value.source,
+                "restart_count": value.restart_count,
+                "restart_delta": value.restart_delta,
+                "observation_gap": value.observation_gap,
+                "waiting_reason": value.waiting_reason
+            })
+        }
     };
 
     Ok(EventFingerprint {
@@ -477,11 +531,12 @@ impl CanonicalEncoder {
 mod tests {
     use chrono::Utc;
     use event_model::{
-        DnsAddressAnswer, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
-        DnsTransport, EventPayload, FileActivityPath, FileModify, FileRename,
-        KubernetesAttribution, NetworkAccept, NetworkAddressFamily, NetworkConnect,
-        NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, NetworkListen, ProcessExec,
-        ProcessIdentity, RuntimeEvent, SyscallEvent,
+        ContainerRestart, ContainerTermination, DnsAddressAnswer, DnsContext, DnsDirection,
+        DnsName, DnsQueryType, DnsResponseCode, DnsTransport, EventPayload, FileActivityPath,
+        FileModify, FileRename, GenerationCorrelation, KubernetesAttribution, NetworkAccept,
+        NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery,
+        NetworkDnsResponse, NetworkListen, ProcessExec, ProcessExit, ProcessIdentity,
+        ProcessTermination, RuntimeEvent, SyscallEvent, UnresolvedGenerationReason,
     };
 
     use super::*;
@@ -818,5 +873,76 @@ mod tests {
         assert_eq!(summary["path"], "/app/data/report");
         assert_eq!(summary["new_path"], "/app/data/report.done");
         assert!(summary["replaced"].is_null());
+    }
+
+    #[test]
+    fn termination_fingerprints_exclude_occurrence_identity_and_preserve_semantics() {
+        let exit = ProcessExit::new(
+            0x8b,
+            ProcessTermination::signaled(11, "SIGSEGV", true).unwrap(),
+            GenerationCorrelation::Unresolved {
+                reason: UnresolvedGenerationReason::BeforeObservation,
+            },
+        );
+        let first = event(EventPayload::ProcessExit(exit.clone()));
+        let mut repeated = first.clone();
+        repeated.id = Uuid::from_u128(999);
+        repeated.process.pid = 999;
+        repeated.process.tgid = 999;
+        if let EventPayload::ProcessExit(value) = &mut repeated.payload {
+            value.raw_wait_status = 0x8b;
+            if let ProcessTermination::Signaled { core_dump_flag, .. } = &mut value.termination {
+                *core_dump_flag = false;
+            }
+        }
+        assert_eq!(
+            fingerprint_v1(&scope(&first), &first).unwrap().digest,
+            fingerprint_v1(&scope(&repeated), &repeated).unwrap().digest
+        );
+
+        let killed = event(EventPayload::ProcessExit(ProcessExit::new(
+            9,
+            ProcessTermination::signaled(9, "SIGKILL", false).unwrap(),
+            GenerationCorrelation::Unresolved {
+                reason: UnresolvedGenerationReason::Evicted,
+            },
+        )));
+        assert_ne!(
+            fingerprint_v1(&scope(&first), &first).unwrap().digest,
+            fingerprint_v1(&scope(&killed), &killed).unwrap().digest
+        );
+    }
+
+    #[test]
+    fn lifecycle_fingerprints_ignore_runtime_ids_counts_and_replacement_pods() {
+        let terminated = ContainerTermination::new("old", "OOMKilled", 137, None, None).unwrap();
+        let first = event(EventPayload::ContainerTermination(terminated));
+        let mut replacement = first.clone();
+        replacement.attribution.pod_uid = "replacement".into();
+        replacement.attribution.container_id = "new".into();
+        if let EventPayload::ContainerTermination(value) = &mut replacement.payload {
+            value.runtime_container_id = "new".into();
+        }
+        assert_eq!(
+            fingerprint_v1(&scope(&first), &first).unwrap().digest,
+            fingerprint_v1(&scope(&replacement), &replacement)
+                .unwrap()
+                .digest
+        );
+
+        let restart_one = event(EventPayload::ContainerRestart(
+            ContainerRestart::new("one", 4, 1, None, None).unwrap(),
+        ));
+        let restart_jump = event(EventPayload::ContainerRestart(
+            ContainerRestart::new("two", 9, 3, None, None).unwrap(),
+        ));
+        assert_eq!(
+            fingerprint_v1(&scope(&restart_one), &restart_one)
+                .unwrap()
+                .digest,
+            fingerprint_v1(&scope(&restart_jump), &restart_jump)
+                .unwrap()
+                .digest
+        );
     }
 }

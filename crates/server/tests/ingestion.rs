@@ -70,6 +70,110 @@ fn event(project_id: Uuid, application_id: Uuid) -> RuntimeEvent {
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn termination_correlation_and_restart_projection_are_durable_and_replay_safe(
+    pool: sqlx::PgPool,
+) {
+    use event_model::{
+        ContainerRestart, ContainerTermination, GenerationCorrelation, ProcessExit,
+        ProcessTermination, UnresolvedGenerationReason,
+    };
+
+    let ids = bootstrap(&pool, &config("termination-projection"))
+        .await
+        .unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,'node-termination','test')")
+        .bind(agent_id).bind(ids.organization_id).bind(ids.cluster_id).execute(&pool).await.unwrap();
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id,
+    };
+    let now = Utc::now();
+    let mut kernel = event(ids.project_id, ids.application_id);
+    kernel.observed_at = now;
+    kernel.payload = EventPayload::ProcessExit(ProcessExit::new(
+        9,
+        ProcessTermination::signaled(9, "SIGKILL", false).unwrap(),
+        GenerationCorrelation::Unresolved {
+            reason: UnresolvedGenerationReason::BeforeObservation,
+        },
+    ));
+    let termination = ContainerTermination::new(
+        "abc",
+        "OOMKilled",
+        137,
+        Some(now - Duration::seconds(2)),
+        Some(now),
+    )
+    .unwrap();
+    let mut lifecycle = event(ids.project_id, ids.application_id);
+    lifecycle.observed_at = now + Duration::seconds(1);
+    lifecycle.payload = EventPayload::ContainerTermination(termination.clone());
+    persist_batch(&pool, context, &[kernel, lifecycle])
+        .await
+        .unwrap();
+    let outcome: (String, i32, i64) = sqlx::query_as(
+        "SELECT o.status,o.candidate_count,(SELECT count(*) FROM runtime_event_correlations) FROM runtime_event_correlation_outcomes o",
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(outcome, ("qualified".into(), 1, 1));
+
+    let mut restarts = Vec::new();
+    for index in 1..=3_u32 {
+        let mut restart = event(ids.project_id, ids.application_id);
+        restart.observed_at = now + Duration::minutes(i64::from(index));
+        restart.payload = EventPayload::ContainerRestart(
+            ContainerRestart::new(
+                "abc",
+                index,
+                1,
+                Some(termination.clone()),
+                Some("CrashLoopBackOff".into()),
+            )
+            .unwrap(),
+        );
+        restarts.push(restart);
+    }
+    assert_eq!(
+        persist_batch(&pool, context, &restarts[..1]).await.unwrap(),
+        1
+    );
+    let second = restarts[1].clone();
+    let third = restarts[2].clone();
+    let second_batch = [second];
+    let third_batch = [third];
+    let (second_result, third_result) = tokio::join!(
+        persist_batch(&pool, context, &second_batch),
+        persist_batch(&pool, context, &third_batch),
+    );
+    assert_eq!(second_result.unwrap() + third_result.unwrap(), 2);
+    assert_eq!(persist_batch(&pool, context, &restarts).await.unwrap(), 0);
+    let projected: (i64, i64, i32) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM runtime_restart_projection_memberships),(SELECT count(*) FROM runtime_event_groups WHERE event_kind='container.restart_loop'),(SELECT observed_restart_count FROM runtime_restart_loop_projections)",
+    ).fetch_one(&pool).await.unwrap();
+    assert_eq!(projected, (3, 1, 3));
+    let first_raw_id: Uuid = sqlx::query_scalar("SELECT id FROM runtime_events WHERE event_id=$1")
+        .bind(restarts[0].id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO runtime_restart_projection_memberships (organization_id,project_id,projection_version,event_id,window_started_at,window_ended_at,restart_delta) VALUES($1,$2,2,$3,$4,$5,1)")
+        .bind(ids.organization_id).bind(ids.project_id).bind(first_raw_id)
+        .bind(restarts[0].observed_at-Duration::minutes(10)).bind(restarts[0].observed_at)
+        .execute(&pool).await.unwrap();
+    let versions: i64 = sqlx::query_scalar(
+        "SELECT count(DISTINCT projection_version) FROM runtime_restart_projection_memberships",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(versions, 2);
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn file_activity_is_persisted_grouped_inventoried_and_replay_safe(pool: sqlx::PgPool) {
     let ids = bootstrap(&pool, &config("file-activity")).await.unwrap();
     let agent_id = Uuid::new_v4();

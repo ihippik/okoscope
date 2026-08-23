@@ -46,6 +46,18 @@ pub struct Counters {
     pub file_attribution_failed: AtomicU64,
     pub file_rate_limited: AtomicU64,
     pub file_unsupported_object: AtomicU64,
+    pub exit_decode_failed: AtomicU64,
+    pub exit_kernel_lost: AtomicU64,
+    pub exit_attribution_failed: AtomicU64,
+    pub exit_rate_limited: AtomicU64,
+    pub exit_correlation_before_observation: AtomicU64,
+    pub exit_correlation_evicted: AtomicU64,
+    pub exit_correlation_generation_mismatch: AtomicU64,
+    pub exit_correlation_container_mismatch: AtomicU64,
+    pub lifecycle_capacity: AtomicU64,
+    pub lifecycle_invalid_status: AtomicU64,
+    pub lifecycle_deduplicated: AtomicU64,
+    pub lifecycle_attribution_failed: AtomicU64,
     pub sent: AtomicU64,
     pub retried: AtomicU64,
     pub acknowledged: AtomicU64,
@@ -97,6 +109,18 @@ pub struct CounterSnapshot {
     pub file_attribution_failed: u64,
     pub file_rate_limited: u64,
     pub file_unsupported_object: u64,
+    pub exit_decode_failed: u64,
+    pub exit_kernel_lost: u64,
+    pub exit_attribution_failed: u64,
+    pub exit_rate_limited: u64,
+    pub exit_correlation_before_observation: u64,
+    pub exit_correlation_evicted: u64,
+    pub exit_correlation_generation_mismatch: u64,
+    pub exit_correlation_container_mismatch: u64,
+    pub lifecycle_capacity: u64,
+    pub lifecycle_invalid_status: u64,
+    pub lifecycle_deduplicated: u64,
+    pub lifecycle_attribution_failed: u64,
     pub sent: u64,
     pub retried: u64,
     pub acknowledged: u64,
@@ -142,7 +166,17 @@ pub struct FileKernelCounters {
     pub kernel_lost: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExitKernelCounters {
+    pub ring_lost: u64,
+}
+
 impl Counters {
+    pub fn update_exit_kernel(&self, value: ExitKernelCounters) {
+        self.exit_kernel_lost
+            .store(value.ring_lost, Ordering::Relaxed);
+    }
+
     pub fn update_file_kernel(&self, value: FileKernelCounters) {
         self.file_correlation_capacity
             .store(value.correlation_capacity, Ordering::Relaxed);
@@ -247,6 +281,18 @@ impl Counters {
             file_attribution_failed: load(&self.file_attribution_failed),
             file_rate_limited: load(&self.file_rate_limited),
             file_unsupported_object: load(&self.file_unsupported_object),
+            exit_decode_failed: load(&self.exit_decode_failed),
+            exit_kernel_lost: load(&self.exit_kernel_lost),
+            exit_attribution_failed: load(&self.exit_attribution_failed),
+            exit_rate_limited: load(&self.exit_rate_limited),
+            exit_correlation_before_observation: load(&self.exit_correlation_before_observation),
+            exit_correlation_evicted: load(&self.exit_correlation_evicted),
+            exit_correlation_generation_mismatch: load(&self.exit_correlation_generation_mismatch),
+            exit_correlation_container_mismatch: load(&self.exit_correlation_container_mismatch),
+            lifecycle_capacity: load(&self.lifecycle_capacity),
+            lifecycle_invalid_status: load(&self.lifecycle_invalid_status),
+            lifecycle_deduplicated: load(&self.lifecycle_deduplicated),
+            lifecycle_attribution_failed: load(&self.lifecycle_attribution_failed),
             sent: load(&self.sent),
             retried: load(&self.retried),
             acknowledged: load(&self.acknowledged),

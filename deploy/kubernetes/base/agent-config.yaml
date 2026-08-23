@@ -23,6 +23,7 @@ data:
           labels: {app: payment-api}
     observation:
       processExec: true
+      processExit: true
       syscalls: [ptrace, setns]
       files:
         enabled: false

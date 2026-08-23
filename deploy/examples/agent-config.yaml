@@ -26,6 +26,7 @@ data:
             app.kubernetes.io/name: payment-api
     observation:
       processExec: true
+      processExit: true
       syscalls:
         - ptrace
         - setns

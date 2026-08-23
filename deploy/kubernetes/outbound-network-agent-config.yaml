@@ -24,6 +24,7 @@ data:
           release: smoke-v2-20260817
     observation:
       processExec: true
+      processExit: true
       syscalls: [ptrace, setns]
       network:
         connect: true

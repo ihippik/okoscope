@@ -84,6 +84,8 @@ pub struct WorkloadMetadata {
 pub struct ObservationConfig {
     pub process_exec: bool,
     #[serde(default)]
+    pub process_exit: bool,
+    #[serde(default)]
     pub syscalls: Vec<String>,
     #[serde(default)]
     pub network: NetworkObservationConfig,

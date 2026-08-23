@@ -9,7 +9,8 @@ use aya::{
 
 use crate::{
     counters::{
-        DnsKernelCounters, FileKernelCounters, InboundKernelCounters, NetworkKernelCounters,
+        DnsKernelCounters, ExitKernelCounters, FileKernelCounters, InboundKernelCounters,
+        NetworkKernelCounters,
     },
     kernel_event,
     syscall::Architecture,
@@ -25,6 +26,13 @@ pub struct Observer {
     dns_counters: PerCpuArray<aya::maps::MapData, u64>,
     file_events: RingBuf<aya::maps::MapData>,
     file_counters: PerCpuArray<aya::maps::MapData, u64>,
+    exit: Option<ExitObserver>,
+}
+
+struct ExitObserver {
+    _ebpf: Ebpf,
+    events: RingBuf<aya::maps::MapData>,
+    counters: PerCpuArray<aya::maps::MapData, u64>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -199,7 +207,61 @@ impl Observer {
             dns_counters,
             file_events,
             file_counters,
+            exit: None,
         })
+    }
+
+    pub fn enable_process_exit(&mut self, path: &Path) -> Result<()> {
+        let mut ebpf = EbpfLoader::new()
+            .load_file(path)
+            .context("load process-exit C CO-RE object")?;
+        attach(
+            &mut ebpf,
+            "okoscope_process_exit",
+            "sched",
+            "sched_process_exit",
+        )?;
+        let events = RingBuf::try_from(
+            ebpf.take_map("EXIT_EVENTS")
+                .context("missing EXIT_EVENTS ring buffer")?,
+        )?;
+        let counters = PerCpuArray::try_from(
+            ebpf.take_map("EXIT_COUNTERS")
+                .context("missing EXIT_COUNTERS map")?,
+        )?;
+        self.exit = Some(ExitObserver {
+            _ebpf: ebpf,
+            events,
+            counters,
+        });
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn process_exit_enabled(&self) -> bool {
+        self.exit.is_some()
+    }
+
+    pub fn next_exit_event(
+        &mut self,
+    ) -> Option<Result<kernel_event::DecodedExitEvent, kernel_event::ExitDecodeError>> {
+        self.exit
+            .as_mut()
+            .and_then(|exit| exit.events.next())
+            .map(|item| kernel_event::decode_exit(&item))
+    }
+
+    pub fn exit_kernel_counters(&self) -> Result<ExitKernelCounters> {
+        let Some(exit) = &self.exit else {
+            return Ok(ExitKernelCounters::default());
+        };
+        let ring_lost = exit
+            .counters
+            .get(&agent_ebpf_common::EXIT_COUNTER_RING_LOST, 0)?
+            .iter()
+            .copied()
+            .sum();
+        Ok(ExitKernelCounters { ring_lost })
     }
 
     pub fn next_file_event(

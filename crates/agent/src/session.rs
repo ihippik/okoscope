@@ -154,6 +154,18 @@ impl From<CounterSnapshot> for DropCounters {
             file_attribution_failed: value.file_attribution_failed,
             file_rate_limited: value.file_rate_limited,
             file_unsupported_object: value.file_unsupported_object,
+            exit_decode_failed: value.exit_decode_failed,
+            exit_kernel_lost: value.exit_kernel_lost,
+            exit_attribution_failed: value.exit_attribution_failed,
+            exit_rate_limited: value.exit_rate_limited,
+            exit_correlation_before_observation: value.exit_correlation_before_observation,
+            exit_correlation_evicted: value.exit_correlation_evicted,
+            exit_correlation_generation_mismatch: value.exit_correlation_generation_mismatch,
+            exit_correlation_container_mismatch: value.exit_correlation_container_mismatch,
+            lifecycle_capacity: value.lifecycle_capacity,
+            lifecycle_invalid_status: value.lifecycle_invalid_status,
+            lifecycle_deduplicated: value.lifecycle_deduplicated,
+            lifecycle_attribution_failed: value.lifecycle_attribution_failed,
         }
     }
 }
@@ -267,5 +279,36 @@ mod tests {
         assert_eq!(wire.file_attribution_failed, 12);
         assert_eq!(wire.file_rate_limited, 13);
         assert_eq!(wire.file_unsupported_object, 14);
+    }
+
+    #[test]
+    fn termination_drop_counters_are_transported_additively() {
+        let wire = DropCounters::from(CounterSnapshot {
+            exit_decode_failed: 1,
+            exit_kernel_lost: 2,
+            exit_attribution_failed: 3,
+            exit_rate_limited: 4,
+            exit_correlation_before_observation: 5,
+            exit_correlation_evicted: 6,
+            exit_correlation_generation_mismatch: 7,
+            exit_correlation_container_mismatch: 8,
+            lifecycle_capacity: 9,
+            lifecycle_invalid_status: 10,
+            lifecycle_deduplicated: 11,
+            lifecycle_attribution_failed: 12,
+            ..CounterSnapshot::default()
+        });
+        assert_eq!(wire.exit_decode_failed, 1);
+        assert_eq!(wire.exit_kernel_lost, 2);
+        assert_eq!(wire.exit_attribution_failed, 3);
+        assert_eq!(wire.exit_rate_limited, 4);
+        assert_eq!(wire.exit_correlation_before_observation, 5);
+        assert_eq!(wire.exit_correlation_evicted, 6);
+        assert_eq!(wire.exit_correlation_generation_mismatch, 7);
+        assert_eq!(wire.exit_correlation_container_mismatch, 8);
+        assert_eq!(wire.lifecycle_capacity, 9);
+        assert_eq!(wire.lifecycle_invalid_status, 10);
+        assert_eq!(wire.lifecycle_deduplicated, 11);
+        assert_eq!(wire.lifecycle_attribution_failed, 12);
     }
 }

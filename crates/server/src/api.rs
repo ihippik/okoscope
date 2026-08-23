@@ -158,6 +158,7 @@ struct EventOccurrence {
     process_command: String,
     event_kind: String,
     payload: Value,
+    correlation: Value,
     release_id: Option<Uuid>,
     release_version: Option<String>,
 }
@@ -320,7 +321,7 @@ async fn list_occurrences(
     };
     let (cursor_time, cursor_id) = cursor.unzip();
     let mut items = sqlx::query_as::<_, EventOccurrence>(
-        "SELECT e.id,e.event_id,e.observed_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,e.release_id,r.version release_version FROM runtime_event_group_memberships m JOIN runtime_events e ON e.id=m.event_id AND e.organization_id=m.organization_id LEFT JOIN releases r ON r.id=e.release_id WHERE m.organization_id=$1 AND m.group_id=$2 AND ($3::timestamptz IS NULL OR (e.observed_at,e.id)<($3,$4)) ORDER BY e.observed_at DESC,e.id DESC LIMIT $5",
+        "SELECT e.id,e.event_id,e.observed_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,COALESCE((SELECT jsonb_build_object('status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version FROM runtime_event_group_memberships m JOIN runtime_events e ON e.id=m.event_id AND e.organization_id=m.organization_id LEFT JOIN releases r ON r.id=e.release_id WHERE m.organization_id=$1 AND m.group_id=$2 AND ($3::timestamptz IS NULL OR (e.observed_at,e.id)<($3,$4)) ORDER BY e.observed_at DESC,e.id DESC LIMIT $5",
     )
     .bind(principal.organization_id)
     .bind(group_id)
@@ -419,7 +420,7 @@ async fn event_by_id(
     event_id: Uuid,
 ) -> Result<Option<EventOccurrence>, sqlx::Error> {
     sqlx::query_as::<_, EventOccurrence>(
-        "SELECT e.id,e.event_id,e.observed_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,e.release_id,r.version release_version FROM runtime_events e LEFT JOIN releases r ON r.id=e.release_id WHERE e.organization_id=$1 AND e.id=$2",
+        "SELECT e.id,e.event_id,e.observed_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,COALESCE((SELECT jsonb_build_object('status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version FROM runtime_events e LEFT JOIN releases r ON r.id=e.release_id WHERE e.organization_id=$1 AND e.id=$2",
     )
     .bind(organization_id).bind(event_id).fetch_optional(pool).await
 }

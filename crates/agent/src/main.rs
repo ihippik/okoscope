@@ -20,6 +20,7 @@ mod linux {
         dns_runtime::DnsProcessor,
         file_runtime::{FileModifyAggregator, translate_rename_scope},
         observer::Observer,
+        process_runtime::ProcessGenerationStore,
         session::{connect_with_backoff, handle_control},
         syscall::{self, Architecture},
     };
@@ -28,8 +29,8 @@ mod linux {
     use chrono::Utc;
     use clap::Parser;
     use event_model::{
-        EVENT_SCHEMA_VERSION, EventPayload, ProcessExec, ProcessIdentity, RuntimeEvent,
-        SyscallEvent,
+        EVENT_SCHEMA_VERSION, EventPayload, GenerationCorrelation, ProcessExec, ProcessExit,
+        ProcessIdentity, RuntimeEvent, SyscallEvent, UnresolvedGenerationReason,
     };
     use protocol::v1::{
         AgentHello, AgentMessage, EventBatch, Heartbeat, agent_message, server_message,
@@ -51,6 +52,12 @@ mod linux {
             default_value = "/opt/okoscope/agent-ebpf"
         )]
         ebpf_object: PathBuf,
+        #[arg(
+            long,
+            env = "OKOSCOPE_PROCESS_EXIT_EBPF_OBJECT",
+            default_value = "/opt/okoscope/process-exit.bpf.o"
+        )]
+        process_exit_ebpf_object: PathBuf,
     }
 
     #[allow(clippy::too_many_lines)]
@@ -63,8 +70,21 @@ mod linux {
         let architecture = Architecture::current().context("unsupported CPU architecture")?;
         let (config, credential) = load_config(&args, architecture).await?;
         let counters = Arc::new(Counters::default());
-        let cache = start_attribution_cache().await?;
+        let (cache, mut lifecycle_receiver, mut lifecycle_readiness) =
+            start_attribution_cache(counters.clone()).await?;
         let mut observer = load_observer(&args, &config, architecture)?;
+        let process_exit_ready = if config.observation.process_exit {
+            match observer.enable_process_exit(&args.process_exit_ebpf_object) {
+                Ok(()) => true,
+                Err(error) => {
+                    tracing::warn!(%error, "process exit observation unavailable; capability withheld");
+                    counters.unsupported.fetch_add(1, Ordering::Relaxed);
+                    false
+                }
+            }
+        } else {
+            false
+        };
         let mut cgroup_resolver =
             cgroup::CgroupResolver::new("/sys/fs/cgroup").context("index host cgroup hierarchy")?;
         let mut buffer = EventBuffer::new(config.safety.queue_capacity, config.safety.batch_size);
@@ -75,8 +95,14 @@ mod linux {
             EventRateLimiter::new(config.observation.network.max_accepted_events_per_second);
         let mut dns_processor = DnsProcessor::new(&config.observation.network.dns);
         let mut file_aggregator = FileModifyAggregator::default();
+        let mut process_generations = ProcessGenerationStore::new(8192);
         loop {
-            let hello = hello(&config, &counters.snapshot());
+            let hello = hello(
+                &config,
+                &counters.snapshot(),
+                process_exit_ready,
+                *lifecycle_readiness.borrow(),
+            );
             let mut session =
                 connect_with_backoff(&config.server, credential.trim(), hello).await?;
             for batch in buffer.replay_pending(&counters) {
@@ -87,6 +113,24 @@ mod linux {
             loop {
                 tokio::select! {
                     _ = poll.tick() => {
+                        while let Ok(observation) = lifecycle_receiver.try_recv() {
+                            let Some(attribution) = resolve_and_count(
+                                &cache, &counters, Some(&observation.container_id),
+                                &config.identity.node_name, &config.scope.workloads,
+                            ) else {
+                                counters.lifecycle_attribution_failed.fetch_add(1, Ordering::Relaxed);
+                                continue;
+                            };
+                            let command = attribution.container_name.clone();
+                            let event = RuntimeEvent {
+                                id: Uuid::new_v4(), observed_at: Utc::now(),
+                                schema_version: EVENT_SCHEMA_VERSION, attribution,
+                                process: ProcessIdentity { cgroup_id: 0, pid: 0, tgid: 0, command },
+                                payload: observation.payload,
+                            };
+                            if rate_limiter.allow() { buffer.push(event, &counters); }
+                            else { counters.capacity_dropped.fetch_add(1, Ordering::Relaxed); }
+                        }
                         while let Some(decoded) = observer.next_file_event() {
                             let Ok(decoded) = decoded else {
                                 counters.decode_failed.fetch_add(1, Ordering::Relaxed);
@@ -148,10 +192,33 @@ mod linux {
                         }
                         while let Some(kernel) = observer.next_event()? {
                             let Some(event) = runtime_event(&kernel, architecture, &mut cgroup_resolver, &cache, &counters, &config, &mut dns_processor) else { continue };
+                            if let EventPayload::ProcessExec(exec) = &event.payload {
+                                process_generations.observe_exec(
+                                    kernel.pid_tgid, kernel.cgroup_id, kernel.timestamp_ns,
+                                    event.id, exec.executable.clone(),
+                                );
+                            }
                             if rate_limiter.allow() {
                                 buffer.push(event, &counters);
                             } else {
                                 counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        while let Some(decoded) = observer.next_exit_event() {
+                            let Ok(decoded) = decoded else {
+                                counters.decode_failed.fetch_add(1, Ordering::Relaxed);
+                                counters.exit_decode_failed.fetch_add(1, Ordering::Relaxed);
+                                continue;
+                            };
+                            let Some(event) = runtime_exit_event(
+                                decoded, &mut process_generations, &mut cgroup_resolver,
+                                &cache, &counters, &config,
+                            ) else { continue };
+                            if rate_limiter.allow() {
+                                buffer.push(event, &counters);
+                            } else {
+                                counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
+                                counters.exit_rate_limited.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                         if let Some(batch) = buffer.next_batch(&counters) { send_batch(&session.sender, batch).await?; }
@@ -161,6 +228,7 @@ mod linux {
                         counters.update_inbound_kernel(observer.inbound_kernel_counters()?);
                         counters.update_dns_kernel(observer.dns_kernel_counters()?);
                         counters.update_file_kernel(observer.file_kernel_counters()?);
+                        counters.update_exit_kernel(observer.exit_kernel_counters()?);
                         let snapshot = counters.snapshot();
                         tracing::info!(?snapshot, "agent status");
                         session.sender.send(AgentMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(agent_message::Message::Heartbeat(Heartbeat { sent_at_unix_nanos: Utc::now().timestamp_nanos_opt().unwrap_or_default(), drop_counters: Some(snapshot.into()) })) }).await?;
@@ -181,6 +249,14 @@ mod linux {
                             break;
                         }
                     }
+                    readiness = lifecycle_readiness.changed() => {
+                        if readiness.is_err() {
+                            tracing::warn!("Kubernetes lifecycle readiness channel closed");
+                        } else {
+                            tracing::info!(ready = *lifecycle_readiness.borrow(), "Kubernetes lifecycle readiness changed; reconnecting session");
+                        }
+                        break;
+                    }
                     _ = tokio::signal::ctrl_c() => {
                         for event in file_aggregator.drain_all() {
                             if rate_limiter.allow() { buffer.push(event, &counters); }
@@ -199,16 +275,32 @@ mod linux {
         }
     }
 
-    async fn start_attribution_cache() -> Result<Arc<AttributionCache>> {
+    async fn start_attribution_cache(
+        counters: Arc<Counters>,
+    ) -> Result<(
+        Arc<AttributionCache>,
+        tokio::sync::mpsc::Receiver<agent::lifecycle::LifecycleObservation>,
+        tokio::sync::watch::Receiver<bool>,
+    )> {
         let cache = Arc::new(AttributionCache::new(Duration::from_secs(30)));
         let watch_cache = cache.clone();
         let watch_client = kube::Client::try_default().await?;
+        let (lifecycle_sender, lifecycle_receiver) = tokio::sync::mpsc::channel(4096);
+        let (readiness_sender, readiness_receiver) = tokio::sync::watch::channel(false);
         tokio::spawn(async move {
-            if let Err(error) = run_watches(watch_client, watch_cache).await {
+            if let Err(error) = run_watches(
+                watch_client,
+                watch_cache,
+                lifecycle_sender,
+                counters,
+                readiness_sender,
+            )
+            .await
+            {
                 tracing::error!(%error, "Kubernetes attribution watch stopped");
             }
         });
-        Ok(cache)
+        Ok((cache, lifecycle_receiver, readiness_receiver))
     }
 
     fn load_observer(
@@ -424,13 +516,89 @@ mod linux {
         })
     }
 
-    fn hello(config: &AgentConfig, snapshot: &agent::counters::CounterSnapshot) -> AgentHello {
+    fn runtime_exit_event(
+        decoded: agent::kernel_event::DecodedExitEvent,
+        process_generations: &mut ProcessGenerationStore,
+        cgroup_resolver: &mut cgroup::CgroupResolver,
+        cache: &AttributionCache,
+        counters: &Counters,
+        config: &AgentConfig,
+    ) -> Option<RuntimeEvent> {
+        let kernel = decoded.kernel;
+        let pid = u32::try_from(kernel.pid_tgid & u64::from(u32::MAX)).ok()?;
+        let tgid = u32::try_from(kernel.pid_tgid >> 32).ok()?;
+        let container = cgroup_resolver.resolve(pid, kernel.cgroup_id).ok();
+        let Some(attribution) = resolve_and_count(
+            cache,
+            counters,
+            container.as_deref(),
+            &config.identity.node_name,
+            &config.scope.workloads,
+        ) else {
+            counters
+                .exit_attribution_failed
+                .fetch_add(1, Ordering::Relaxed);
+            return None;
+        };
+        let correlation = process_generations.consume_exit(
+            kernel.pid_tgid,
+            kernel.cgroup_id,
+            kernel.timestamp_ns,
+        );
+        if let GenerationCorrelation::Unresolved { reason } = &correlation {
+            match reason {
+                UnresolvedGenerationReason::BeforeObservation => counters
+                    .exit_correlation_before_observation
+                    .fetch_add(1, Ordering::Relaxed),
+                UnresolvedGenerationReason::Evicted => counters
+                    .exit_correlation_evicted
+                    .fetch_add(1, Ordering::Relaxed),
+                UnresolvedGenerationReason::GenerationMismatch => counters
+                    .exit_correlation_generation_mismatch
+                    .fetch_add(1, Ordering::Relaxed),
+                UnresolvedGenerationReason::ContainerLifetimeMismatch => counters
+                    .exit_correlation_container_mismatch
+                    .fetch_add(1, Ordering::Relaxed),
+            };
+        }
+        Some(RuntimeEvent {
+            id: Uuid::new_v4(),
+            observed_at: Utc::now(),
+            schema_version: EVENT_SCHEMA_VERSION,
+            attribution,
+            process: ProcessIdentity {
+                cgroup_id: kernel.cgroup_id,
+                pid,
+                tgid,
+                command: command(&kernel.command),
+            },
+            payload: EventPayload::ProcessExit(ProcessExit::new(
+                kernel.raw_wait_status,
+                decoded.termination,
+                correlation,
+            )),
+        })
+    }
+
+    fn hello(
+        config: &AgentConfig,
+        snapshot: &agent::counters::CounterSnapshot,
+        process_exit_ready: bool,
+        container_lifecycle_ready: bool,
+    ) -> AgentHello {
+        let mut capabilities = config.observation.capabilities();
+        if process_exit_ready {
+            capabilities.push(protocol::PROCESS_EXIT_CAPABILITY.into());
+        }
+        if container_lifecycle_ready {
+            capabilities.push(protocol::CONTAINER_LIFECYCLE_CAPABILITY.into());
+        }
         AgentHello {
             agent_version: env!("CARGO_PKG_VERSION").into(),
             node_name: config.identity.node_name.clone(),
             architecture: std::env::consts::ARCH.into(),
             kernel_release: kernel_release(),
-            capabilities: config.observation.capabilities(),
+            capabilities,
             drop_counters: Some((*snapshot).into()),
         }
     }

@@ -1,5 +1,9 @@
 //! Transport-independent runtime event domain model.
 
+mod termination;
+
+pub use termination::*;
+
 use std::{
     net::IpAddr,
     path::{Component, Path},
@@ -41,6 +45,9 @@ impl RuntimeEvent {
             EventPayload::FileModify(_) => "file.modify",
             EventPayload::FileDelete(_) => "file.delete",
             EventPayload::FileRename(_) => "file.rename",
+            EventPayload::ProcessExit(_) => "process.exit",
+            EventPayload::ContainerTermination(_) => "container.terminated",
+            EventPayload::ContainerRestart(_) => "container.restart",
         }
     }
 }
@@ -84,6 +91,9 @@ pub enum EventPayload {
     FileModify(FileModify),
     FileDelete(FileDelete),
     FileRename(FileRename),
+    ProcessExit(ProcessExit),
+    ContainerTermination(ContainerTermination),
+    ContainerRestart(ContainerRestart),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

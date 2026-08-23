@@ -251,7 +251,7 @@ mod tests {
             service_version: "1",
             git_commit: "unknown",
             api_version: "v1",
-            required_database_migration: 12,
+            required_database_migration: 13,
         };
         let value = serde_json::to_value(info).unwrap();
         assert_eq!(value["git_commit"], "unknown");

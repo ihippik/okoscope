@@ -74,6 +74,9 @@ message RuntimeEvent {
     FileModify file_modify = 18;
     FileDelete file_delete = 19;
     FileRename file_rename = 20;
+    ProcessExit process_exit = 21;
+    ContainerTermination container_termination = 22;
+    ContainerRestart container_restart = 23;
   }
 }
 
@@ -102,6 +105,60 @@ message ProcessIdentity {
 message ProcessExec {
   string executable = 1;
   string parent_command = 2;
+}
+
+message ProcessExit {
+  EvidenceSource source = 1;
+  sint32 raw_wait_status = 2;
+  oneof termination {
+    ProcessExited exited = 10;
+    ProcessSignaled signaled = 11;
+  }
+  GenerationCorrelation correlation = 12;
+}
+
+message ProcessExited { uint32 status = 1; }
+
+message ProcessSignaled {
+  uint32 signal = 1;
+  string signal_name = 2;
+  bool core_dump_flag = 3;
+}
+
+message GenerationCorrelation {
+  oneof result {
+    ObservedGeneration observed = 1;
+    UnresolvedGeneration unresolved = 2;
+  }
+}
+
+message ObservedGeneration {
+  uint64 generation = 1;
+  string exec_event_id = 2;
+  string executable = 3;
+}
+
+message UnresolvedGeneration {
+  UnresolvedGenerationReason reason = 1;
+}
+
+message ContainerTermination {
+  EvidenceSource source = 1;
+  string runtime_container_id = 2;
+  string reason = 3;
+  sint32 exit_code = 4;
+  optional int64 started_at_unix_nanos = 5;
+  optional int64 finished_at_unix_nanos = 6;
+}
+
+message ContainerRestart {
+  EvidenceSource source = 1;
+  string runtime_container_id = 2;
+  uint32 restart_count = 3;
+  uint32 restart_delta = 4;
+  bool observation_gap = 5;
+  ContainerTermination previous_termination = 6;
+  optional string waiting_reason = 7;
 }
 
 message Syscall {
@@ -236,6 +293,21 @@ enum NetworkConnectOutcome {
   NETWORK_CONNECT_OUTCOME_FAILED = 3;
 }
 
+enum EvidenceSource {
+  EVIDENCE_SOURCE_UNSPECIFIED = 0;
+  EVIDENCE_SOURCE_KERNEL = 1;
+  EVIDENCE_SOURCE_KUBERNETES = 2;
+  EVIDENCE_SOURCE_DERIVED = 3;
+}
+
+enum UnresolvedGenerationReason {
+  UNRESOLVED_GENERATION_REASON_UNSPECIFIED = 0;
+  UNRESOLVED_GENERATION_REASON_BEFORE_OBSERVATION = 1;
+  UNRESOLVED_GENERATION_REASON_EVICTED = 2;
+  UNRESOLVED_GENERATION_REASON_GENERATION_MISMATCH = 3;
+  UNRESOLVED_GENERATION_REASON_CONTAINER_LIFETIME_MISMATCH = 4;
+}
+
 message DropCounters {
   uint64 filtered = 1;
   uint64 unattributed = 2;
@@ -281,6 +353,18 @@ message DropCounters {
   uint64 file_attribution_failed = 42;
   uint64 file_rate_limited = 43;
   uint64 file_unsupported_object = 44;
+  uint64 exit_decode_failed = 45;
+  uint64 exit_kernel_lost = 46;
+  uint64 exit_attribution_failed = 47;
+  uint64 exit_rate_limited = 48;
+  uint64 exit_correlation_before_observation = 49;
+  uint64 exit_correlation_evicted = 50;
+  uint64 exit_correlation_generation_mismatch = 51;
+  uint64 exit_correlation_container_mismatch = 52;
+  uint64 lifecycle_capacity = 53;
+  uint64 lifecycle_invalid_status = 54;
+  uint64 lifecycle_deduplicated = 55;
+  uint64 lifecycle_attribution_failed = 56;
 }
 
 message ControlMessage {

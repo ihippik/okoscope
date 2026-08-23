@@ -301,6 +301,7 @@ fn assert_inventory_contract(document: &serde_json::Value) {
         "get",
         &[
             "kind",
+            "operation",
             "release_id",
             "cluster_id",
             "namespace",
@@ -321,6 +322,7 @@ fn assert_inventory_contract(document: &serde_json::Value) {
         "get",
         &[
             "kind",
+            "operation",
             "release_id",
             "cluster_id",
             "namespace",
@@ -358,7 +360,7 @@ fn assert_inventory_contract(document: &serde_json::Value) {
         "InventoryDomainIdentity",
         "InventorySyscallIdentity",
         "InventoryInboundEndpointIdentity",
-        "InventoryFileActivityIdentity",
+        "FileActivitySemanticSummary",
         "InventoryItem",
         "InventoryReleaseEvidence",
         "InventorySighting",

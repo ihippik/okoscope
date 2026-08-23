@@ -56,6 +56,8 @@ pub const FILE_COUNTER_FD_MISS: u32 = 6;
 pub const FILE_COUNTER_FILTERED: u32 = 7;
 pub const FILE_COUNTER_KERNEL_LOST: u32 = 8;
 pub const FILE_COUNTER_COUNT: u32 = 9;
+pub const EXIT_COUNTER_RING_LOST: u32 = 0;
+pub const EXIT_COUNTER_COUNT: u32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -76,6 +78,22 @@ pub struct KernelEvent {
 }
 
 impl KernelEvent {
+    pub const SIZE: usize = core::mem::size_of::<Self>();
+}
+
+/// Fixed kernel/userspace ABI emitted by the C CO-RE exit companion.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExitKernelEvent {
+    pub timestamp_ns: u64,
+    pub cgroup_id: u64,
+    pub pid_tgid: u64,
+    pub raw_wait_status: i32,
+    pub reserved: u32,
+    pub command: [u8; COMMAND_LEN],
+}
+
+impl ExitKernelEvent {
     pub const SIZE: usize = core::mem::size_of::<Self>();
 }
 
@@ -208,6 +226,10 @@ impl FileKernelEvent {
 }
 
 const _: [(); 72] = [(); core::mem::size_of::<KernelEvent>()];
+const _: [(); 48] = [(); core::mem::size_of::<ExitKernelEvent>()];
+const _: [(); 8] = [(); core::mem::align_of::<ExitKernelEvent>()];
+const _: [(); 24] = [(); core::mem::offset_of!(ExitKernelEvent, raw_wait_status)];
+const _: [(); 32] = [(); core::mem::offset_of!(ExitKernelEvent, command)];
 const _: [(); 64] = [(); core::mem::size_of::<PendingConnect>()];
 const _: [(); 48] = [(); core::mem::size_of::<InboundEndpoints>()];
 const _: [(); 80] = [(); core::mem::size_of::<InboundKernelEvent>()];

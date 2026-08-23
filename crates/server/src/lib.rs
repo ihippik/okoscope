@@ -17,5 +17,6 @@ pub mod notification_config;
 pub mod releases;
 pub mod repository;
 pub mod session;
+pub mod termination_projection;
 pub mod transport;
 pub mod web_api;
