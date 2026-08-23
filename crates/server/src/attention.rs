@@ -9,6 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -176,6 +177,7 @@ enum ItemKind {
     ReleaseRuntimeChanged,
     NewDiscovery,
     OpenDiscovery,
+    ContainerRestartLoop,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -187,6 +189,16 @@ enum ReasonCode {
     ReleaseRuntimeChanged,
     DiscoveryFirstSeenInWindow,
     DiscoveryOpen,
+    ContainerRestartLoopObserved,
+}
+#[derive(Clone, Debug, Serialize)]
+struct RestartLoopFacts {
+    projection_version: i64,
+    threshold: i64,
+    observed_restart_count: i64,
+    window_started_at: DateTime<Utc>,
+    window_ended_at: DateTime<Utc>,
+    container_name: String,
 }
 #[derive(Clone, Debug, Serialize)]
 #[allow(clippy::struct_field_names)]
@@ -200,6 +212,8 @@ struct AttentionFacts {
     failed_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     occurrence_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restart_loop: Option<RestartLoopFacts>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -251,6 +265,8 @@ struct DiscoveryRow {
     first_seen_at: DateTime<Utc>,
     last_seen_at: DateTime<Utc>,
     occurrence_count: i64,
+    event_kind: String,
+    semantic_summary: Value,
     is_new: bool,
 }
 
@@ -519,7 +535,7 @@ async fn load_discoveries(
     to: DateTime<Utc>,
     limit: i64,
 ) -> Result<Vec<DiscoveryRow>, sqlx::Error> {
-    sqlx::query_as("SELECT g.id group_id,g.project_id,p.name project_name,p.slug project_slug,g.application_id,a.name application_name,a.slug application_slug,g.first_seen_at,g.last_seen_at,g.occurrence_count,(g.first_seen_at BETWEEN $3 AND $4) is_new FROM runtime_event_groups g JOIN projects p ON p.organization_id=g.organization_id AND p.id=g.project_id JOIN applications a ON a.organization_id=g.organization_id AND a.project_id=g.project_id AND a.id=g.application_id WHERE g.organization_id=$1 AND ($2::uuid IS NULL OR g.application_id=$2) AND g.status='open' ORDER BY CASE WHEN g.first_seen_at BETWEEN $3 AND $4 THEN 0 ELSE 1 END,g.occurrence_count DESC,CASE WHEN g.first_seen_at BETWEEN $3 AND $4 THEN g.first_seen_at ELSE g.last_seen_at END DESC,g.id LIMIT $5")
+    sqlx::query_as("SELECT g.id group_id,g.project_id,p.name project_name,p.slug project_slug,g.application_id,a.name application_name,a.slug application_slug,g.first_seen_at,g.last_seen_at,g.occurrence_count,g.event_kind,g.semantic_summary,(g.first_seen_at BETWEEN $3 AND $4) is_new FROM runtime_event_groups g JOIN projects p ON p.organization_id=g.organization_id AND p.id=g.project_id JOIN applications a ON a.organization_id=g.organization_id AND a.project_id=g.project_id AND a.id=g.application_id WHERE g.organization_id=$1 AND ($2::uuid IS NULL OR g.application_id=$2) AND g.status='open' ORDER BY CASE WHEN g.event_kind='container.restart_loop' THEN 0 WHEN g.first_seen_at BETWEEN $3 AND $4 THEN 1 ELSE 2 END,g.occurrence_count DESC,CASE WHEN g.first_seen_at BETWEEN $3 AND $4 THEN g.first_seen_at ELSE g.last_seen_at END DESC,g.id LIMIT $5")
         .bind(organization_id).bind(application_id).bind(from).bind(to).bind(limit).fetch_all(&mut **tx).await
 }
 
@@ -633,6 +649,7 @@ fn build_recommendations(
                     disappeared_count: None,
                     failed_count: Some(p.failed_count),
                     occurrence_count: None,
+                    restart_loop: None,
                 },
                 project: p.project.clone(),
                 application: None,
@@ -654,6 +671,7 @@ fn build_recommendations(
                     disappeared_count: None,
                     failed_count: None,
                     occurrence_count: None,
+                    restart_loop: None,
                 },
                 project: p.project.clone(),
                 application: None,
@@ -680,6 +698,7 @@ fn build_recommendations(
                     disappeared_count: None,
                     failed_count: None,
                     occurrence_count: None,
+                    restart_loop: None,
                 },
                 project: p.project.clone(),
                 application: None,
@@ -702,6 +721,7 @@ fn build_recommendations(
                 disappeared_count: Some(r.disappeared_count),
                 failed_count: None,
                 occurrence_count: None,
+                restart_loop: None,
             },
             project: ProjectRef {
                 id: r.project_id,
@@ -732,6 +752,7 @@ fn build_recommendations(
                 disappeared_count: None,
                 failed_count: None,
                 occurrence_count: Some(r.discovery_count),
+                restart_loop: None,
             },
             project: ProjectRef {
                 id: r.project_id,
@@ -767,6 +788,24 @@ fn discovery_item(r: DiscoveryRow) -> PriorityItem {
     } else {
         r.last_seen_at
     };
+    let restart_loop = (r.event_kind == "container.restart_loop").then(|| RestartLoopFacts {
+        projection_version: r.semantic_summary["projection_version"]
+            .as_i64()
+            .unwrap_or(1),
+        threshold: r.semantic_summary["threshold"].as_i64().unwrap_or(3),
+        observed_restart_count: r.semantic_summary["observed_restart_count"]
+            .as_i64()
+            .unwrap_or(r.occurrence_count),
+        window_started_at: serde_json::from_value(r.semantic_summary["window_started_at"].clone())
+            .unwrap_or(r.first_seen_at),
+        window_ended_at: serde_json::from_value(r.semantic_summary["window_ended_at"].clone())
+            .unwrap_or(r.last_seen_at),
+        container_name: r.semantic_summary["container_name"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_owned(),
+    });
+    let is_restart_loop = restart_loop.is_some();
     PriorityItem {
         id: format!(
             "{}:{}",
@@ -777,13 +816,21 @@ fn discovery_item(r: DiscoveryRow) -> PriorityItem {
             },
             r.group_id
         ),
-        kind: if r.is_new {
+        kind: if is_restart_loop {
+            ItemKind::ContainerRestartLoop
+        } else if r.is_new {
             ItemKind::NewDiscovery
         } else {
             ItemKind::OpenDiscovery
         },
-        priority: Priority::Normal,
-        reason_code: if r.is_new {
+        priority: if is_restart_loop {
+            Priority::High
+        } else {
+            Priority::Normal
+        },
+        reason_code: if is_restart_loop {
+            ReasonCode::ContainerRestartLoopObserved
+        } else if r.is_new {
             ReasonCode::DiscoveryFirstSeenInWindow
         } else {
             ReasonCode::DiscoveryOpen
@@ -794,6 +841,7 @@ fn discovery_item(r: DiscoveryRow) -> PriorityItem {
             disappeared_count: None,
             failed_count: None,
             occurrence_count: Some(r.occurrence_count),
+            restart_loop,
         },
         occurred_at: relevant,
         project: ProjectRef {
@@ -826,6 +874,7 @@ fn changed_item(r: &ChangedRow) -> PriorityItem {
             disappeared_count: Some(r.disappeared_count),
             failed_count: None,
             occurrence_count: None,
+            restart_loop: None,
         },
         occurred_at: r.target_deployed_at,
         project: ProjectRef {
@@ -963,6 +1012,7 @@ async fn organization_summary(
                 disappeared_count: None,
                 failed_count: Some(p.failed_count),
                 occurrence_count: None,
+                restart_loop: None,
             },
             occurred_at: now,
             project: p.project.clone(),
@@ -1092,6 +1142,7 @@ async fn application_summary(
                 disappeared_count: Some(c.disappeared_count),
                 failed_count: None,
                 occurrence_count: None,
+                restart_loop: None,
             },
             project: project.clone(),
             application: Some(application.clone()),
@@ -1114,6 +1165,7 @@ async fn application_summary(
                 disappeared_count: None,
                 failed_count: None,
                 occurrence_count: Some(counts.0),
+                restart_loop: None,
             },
             project: project.clone(),
             application: Some(application.clone()),
@@ -1195,6 +1247,7 @@ mod tests {
                 disappeared_count: None,
                 failed_count: None,
                 occurrence_count: Some(count),
+                restart_loop: None,
             },
             occurred_at: at,
             project: p.clone(),
@@ -1229,6 +1282,7 @@ mod tests {
                 disappeared_count: None,
                 failed_count: None,
                 occurrence_count: Some(4),
+                restart_loop: None,
             },
             occurred_at: Utc::now(),
             project: ProjectRef {
@@ -1256,6 +1310,39 @@ mod tests {
         ] {
             assert!(!text.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn restart_loop_discovery_has_dedicated_attention_variant_and_facts() {
+        let now = Utc::now();
+        let item = discovery_item(DiscoveryRow {
+            group_id: Uuid::from_u128(1),
+            project_id: Uuid::from_u128(2),
+            project_name: "project".into(),
+            project_slug: "project".into(),
+            application_id: Uuid::from_u128(3),
+            application_name: "app".into(),
+            application_slug: "app".into(),
+            first_seen_at: now - Duration::minutes(5),
+            last_seen_at: now,
+            occurrence_count: 1,
+            event_kind: "container.restart_loop".into(),
+            semantic_summary: serde_json::json!({
+                "projection_version": 1,
+                "threshold": 3,
+                "observed_restart_count": 4,
+                "window_started_at": now - Duration::minutes(10),
+                "window_ended_at": now,
+                "container_name": "worker"
+            }),
+            is_new: true,
+        });
+        let value = serde_json::to_value(item).unwrap();
+        assert_eq!(value["kind"], "container_restart_loop");
+        assert_eq!(value["reason_code"], "container_restart_loop_observed");
+        assert_eq!(value["priority"], "high");
+        assert_eq!(value["facts"]["restart_loop"]["threshold"], 3);
+        assert_eq!(value["facts"]["restart_loop"]["observed_restart_count"], 4);
     }
 
     #[test]

@@ -151,6 +151,7 @@ struct EventOccurrence {
     id: Uuid,
     event_id: Uuid,
     observed_at: DateTime<Utc>,
+    received_at: DateTime<Utc>,
     node_name: String,
     namespace: String,
     pod_name: String,
@@ -159,14 +160,28 @@ struct EventOccurrence {
     event_kind: String,
     payload: Value,
     correlation: Value,
+    #[sqlx(skip)]
+    related_evidence: Vec<RelatedEvidence>,
     release_id: Option<Uuid>,
     release_version: Option<String>,
+}
+
+#[derive(Clone, Debug, FromRow, Serialize)]
+struct RelatedEvidence {
+    id: Uuid,
+    event_id: Uuid,
+    observed_at: DateTime<Utc>,
+    received_at: DateTime<Utc>,
+    event_kind: String,
+    source: String,
+    payload: Value,
 }
 
 #[derive(Debug, Serialize)]
 struct OccurrencePage {
     items: Vec<EventOccurrence>,
     next_cursor: Option<Uuid>,
+    ordering: &'static str,
 }
 
 #[derive(Debug, FromRow, Serialize)]
@@ -260,13 +275,30 @@ async fn get_group(
         "SELECT id,project_id,application_id,cluster_id,namespace,workload_kind,workload_name,fingerprint_version,event_kind,semantic_summary,status,first_seen_at,first_seen_event_id,last_seen_at,occurrence_count,representative_event_id,status_changed_at,status_changed_by FROM runtime_event_groups WHERE organization_id=$1 AND id=$2",
     )
     .bind(principal.organization_id).bind(group_id).fetch_optional(&state.pool).await?.ok_or(ApiError::NotFound)?;
-    let representative_event = event_by_id(
+    let mut representative_event = event_by_id(
         &state.pool,
         principal.organization_id,
         group.representative_event_id,
     )
     .await?
     .ok_or(ApiError::NotFound)?;
+    if group.event_kind == "container.restart_loop" {
+        representative_event
+            .event_kind
+            .clone_from(&group.event_kind);
+        representative_event.payload = serde_json::json!({
+            "type": "ContainerRestartLoop",
+            "data": group.semantic_summary.clone(),
+        });
+    }
+    representative_event.related_evidence = load_related_evidence(
+        &state.pool,
+        principal.organization_id,
+        group_id,
+        representative_event.id,
+        &representative_event.event_kind,
+    )
+    .await?;
     let notification =
         notification_summary(&state.pool, principal.organization_id, group_id).await?;
     Ok(Json(GroupDetail {
@@ -306,8 +338,8 @@ async fn list_occurrences(
     }
     let cursor = if let Some(cursor) = query.cursor {
         Some(
-            sqlx::query_as::<_, (DateTime<Utc>, Uuid)>(
-                "SELECT e.observed_at,e.id FROM runtime_event_group_memberships m JOIN runtime_events e ON e.id=m.event_id WHERE m.organization_id=$1 AND m.group_id=$2 AND e.id=$3",
+            sqlx::query_as::<_, (DateTime<Utc>, DateTime<Utc>, Uuid)>(
+                "SELECT e.received_at,e.observed_at,e.id FROM runtime_event_group_memberships m JOIN runtime_events e ON e.id=m.event_id WHERE m.organization_id=$1 AND m.group_id=$2 AND e.id=$3",
             )
             .bind(principal.organization_id)
             .bind(group_id)
@@ -319,24 +351,42 @@ async fn list_occurrences(
     } else {
         None
     };
-    let (cursor_time, cursor_id) = cursor.unzip();
+    let (cursor_received_at, cursor_observed_at, cursor_id) = cursor
+        .map_or((None, None, None), |(received_at, observed_at, id)| {
+            (Some(received_at), Some(observed_at), Some(id))
+        });
     let mut items = sqlx::query_as::<_, EventOccurrence>(
-        "SELECT e.id,e.event_id,e.observed_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,COALESCE((SELECT jsonb_build_object('status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version FROM runtime_event_group_memberships m JOIN runtime_events e ON e.id=m.event_id AND e.organization_id=m.organization_id LEFT JOIN releases r ON r.id=e.release_id WHERE m.organization_id=$1 AND m.group_id=$2 AND ($3::timestamptz IS NULL OR (e.observed_at,e.id)<($3,$4)) ORDER BY e.observed_at DESC,e.id DESC LIMIT $5",
+        "SELECT e.id,e.event_id,e.observed_at,e.received_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,CASE WHEN g.event_kind='container.restart_loop' THEN g.event_kind ELSE e.event_kind END event_kind,CASE WHEN g.event_kind='container.restart_loop' THEN jsonb_build_object('type','ContainerRestartLoop','data',g.semantic_summary) ELSE e.payload END payload,COALESCE((SELECT jsonb_build_object('status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version FROM runtime_event_group_memberships m JOIN runtime_event_groups g ON g.id=m.group_id AND g.organization_id=m.organization_id JOIN runtime_events e ON e.id=m.event_id AND e.organization_id=m.organization_id LEFT JOIN releases r ON r.id=e.release_id WHERE m.organization_id=$1 AND m.group_id=$2 AND ($3::timestamptz IS NULL OR (e.received_at,e.observed_at,e.id)<($3,$4,$5)) ORDER BY e.received_at DESC,e.observed_at DESC,e.id DESC LIMIT $6",
     )
     .bind(principal.organization_id)
     .bind(group_id)
-    .bind(cursor_time)
+    .bind(cursor_received_at)
+    .bind(cursor_observed_at)
     .bind(cursor_id)
     .bind(limit + 1)
     .fetch_all(&state.pool)
     .await?;
+    for occurrence in &mut items {
+        occurrence.related_evidence = load_related_evidence(
+            &state.pool,
+            principal.organization_id,
+            group_id,
+            occurrence.id,
+            &occurrence.event_kind,
+        )
+        .await?;
+    }
     let next_cursor = if i64::try_from(items.len()).unwrap_or(i64::MAX) > limit {
         items.pop();
         items.last().map(|event| event.id)
     } else {
         None
     };
-    Ok(Json(OccurrencePage { items, next_cursor }))
+    Ok(Json(OccurrencePage {
+        items,
+        next_cursor,
+        ordering: "received_at_desc_observed_at_desc_id_desc",
+    }))
 }
 
 async fn acknowledge_group(
@@ -420,7 +470,80 @@ async fn event_by_id(
     event_id: Uuid,
 ) -> Result<Option<EventOccurrence>, sqlx::Error> {
     sqlx::query_as::<_, EventOccurrence>(
-        "SELECT e.id,e.event_id,e.observed_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,COALESCE((SELECT jsonb_build_object('status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version FROM runtime_events e LEFT JOIN releases r ON r.id=e.release_id WHERE e.organization_id=$1 AND e.id=$2",
+        "SELECT e.id,e.event_id,e.observed_at,e.received_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,COALESCE((SELECT jsonb_build_object('status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version FROM runtime_events e LEFT JOIN releases r ON r.id=e.release_id WHERE e.organization_id=$1 AND e.id=$2",
     )
     .bind(organization_id).bind(event_id).fetch_optional(pool).await
+}
+
+const RELATED_EVIDENCE_LIMIT: i64 = 20;
+
+async fn load_related_evidence(
+    pool: &PgPool,
+    organization_id: Uuid,
+    group_id: Uuid,
+    event_id: Uuid,
+    event_kind: &str,
+) -> Result<Vec<RelatedEvidence>, sqlx::Error> {
+    if event_kind == "container.restart_loop" {
+        return sqlx::query_as::<_, RelatedEvidence>(
+            "SELECT e.id,e.event_id,e.observed_at,e.received_at,e.event_kind,COALESCE(e.payload#>>'{data,source}','unknown') source,e.payload FROM runtime_restart_loop_projections p JOIN runtime_restart_projection_memberships m ON m.organization_id=p.organization_id AND m.project_id=p.project_id AND m.projection_version=p.projection_version JOIN runtime_events e ON e.id=m.event_id AND e.organization_id=p.organization_id AND e.project_id=p.project_id AND e.application_id=p.application_id AND e.cluster_id=p.cluster_id AND e.pod_uid=p.pod_uid AND e.container_name=p.container_name AND e.container_id=p.runtime_container_id AND e.observed_at BETWEEN p.window_started_at AND p.window_ended_at WHERE p.organization_id=$1 AND p.group_id=$2 ORDER BY e.observed_at,e.received_at,e.id LIMIT $3",
+        )
+        .bind(organization_id)
+        .bind(group_id)
+        .bind(RELATED_EVIDENCE_LIMIT)
+        .fetch_all(pool)
+        .await;
+    }
+    sqlx::query_as::<_, RelatedEvidence>(
+        "SELECT e.id,e.event_id,e.observed_at,e.received_at,e.event_kind,COALESCE(e.payload#>>'{data,source}','unknown') source,e.payload FROM runtime_event_correlations c JOIN runtime_events e ON e.id=CASE WHEN c.lifecycle_event_id=$2 THEN c.kernel_event_id ELSE c.lifecycle_event_id END WHERE c.organization_id=$1 AND (c.lifecycle_event_id=$2 OR c.kernel_event_id=$2) ORDER BY e.observed_at,e.received_at,e.id LIMIT $3",
+    )
+    .bind(organization_id)
+    .bind(event_id)
+    .bind(RELATED_EVIDENCE_LIMIT)
+    .fetch_all(pool)
+    .await
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn occurrence_contract_exposes_receive_order_and_bounded_related_evidence() {
+        assert_eq!(RELATED_EVIDENCE_LIMIT, 20);
+        let now = Utc::now();
+        let occurrence = EventOccurrence {
+            id: Uuid::from_u128(1),
+            event_id: Uuid::from_u128(2),
+            observed_at: now - chrono::Duration::seconds(5),
+            received_at: now,
+            node_name: "node".into(),
+            namespace: "default".into(),
+            pod_name: "pod".into(),
+            container_name: "worker".into(),
+            process_command: "worker".into(),
+            event_kind: "container.restart_loop".into(),
+            payload: serde_json::json!({
+                "type": "ContainerRestartLoop",
+                "data": {"evidence_source": "derived", "projection_version": 1}
+            }),
+            correlation: serde_json::json!({"status": "absent", "candidate_count": 0}),
+            related_evidence: Vec::new(),
+            release_id: None,
+            release_version: None,
+        };
+        let page = OccurrencePage {
+            items: vec![occurrence],
+            next_cursor: None,
+            ordering: "received_at_desc_observed_at_desc_id_desc",
+        };
+        let value = serde_json::to_value(page).unwrap();
+        assert!(value["items"][0]["received_at"].is_string());
+        assert_eq!(value["items"][0]["related_evidence"], serde_json::json!([]));
+        assert_eq!(value["items"][0]["payload"]["type"], "ContainerRestartLoop");
+        assert_eq!(
+            value["ordering"],
+            "received_at_desc_observed_at_desc_id_desc"
+        );
+    }
 }

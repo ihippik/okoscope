@@ -690,8 +690,8 @@ components:
   schemas:
     AttentionWindowKind: { type: string, enum: [24h, 7d], default: 24h }
     AttentionPriority: { type: string, enum: [urgent, high, normal] }
-    AttentionItemKind: { type: string, enum: [notification_delivery_failing, notification_delivery_backlogged, notification_destination_missing, release_runtime_changed, new_discovery, open_discovery] }
-    AttentionReasonCode: { type: string, enum: [terminal_deliveries_failed, notification_health_failing, notification_health_backlogged, notification_health_retrying, enabled_destination_missing, release_runtime_changed, discovery_first_seen_in_window, discovery_open] }
+    AttentionItemKind: { type: string, enum: [notification_delivery_failing, notification_delivery_backlogged, notification_destination_missing, release_runtime_changed, new_discovery, open_discovery, container_restart_loop] }
+    AttentionReasonCode: { type: string, enum: [terminal_deliveries_failed, notification_health_failing, notification_health_backlogged, notification_health_retrying, enabled_destination_missing, release_runtime_changed, discovery_first_seen_in_window, discovery_open, container_restart_loop_observed] }
     AttentionRecommendationKind: { type: string, enum: [review_failed_deliveries, configure_webhook_destination, review_notification_backlog, review_release_changes, review_new_discoveries] }
     AttentionWindow:
       type: object
@@ -723,6 +723,18 @@ components:
         disappeared_count: { type: integer, format: int64, minimum: 0 }
         failed_count: { type: integer, format: int64, minimum: 0 }
         occurrence_count: { type: integer, format: int64, minimum: 0 }
+        restart_loop: { $ref: '#/components/schemas/AttentionRestartLoopFacts' }
+    AttentionRestartLoopFacts:
+      type: object
+      additionalProperties: false
+      required: [projection_version, threshold, observed_restart_count, window_started_at, window_ended_at, container_name]
+      properties:
+        projection_version: { type: integer, format: int64, minimum: 1 }
+        threshold: { type: integer, format: int64, minimum: 1 }
+        observed_restart_count: { type: integer, format: int64, minimum: 1 }
+        window_started_at: { $ref: '#/components/schemas/Timestamp' }
+        window_ended_at: { $ref: '#/components/schemas/Timestamp' }
+        container_name: { type: string, minLength: 1, maxLength: 256 }
     AttentionResourceRef:
       oneOf:
         - { $ref: '#/components/schemas/AttentionProjectResourceRef' }
@@ -1002,6 +1014,7 @@ components:
           id,
           event_id,
           observed_at,
+          received_at,
           node_name,
           namespace,
           pod_name,
@@ -1010,6 +1023,7 @@ components:
           event_kind,
           payload,
           correlation,
+          related_evidence,
           release_id,
           release_version,
         ]
@@ -1017,6 +1031,7 @@ components:
         id: { $ref: '#/components/schemas/Uuid' }
         event_id: { $ref: '#/components/schemas/Uuid' }
         observed_at: { $ref: '#/components/schemas/Timestamp' }
+        received_at: { $ref: '#/components/schemas/Timestamp' }
         node_name: { type: string }
         namespace: { type: string }
         pod_name: { type: string }
@@ -1025,15 +1040,29 @@ components:
         event_kind: { type: string }
         payload: { $ref: '#/components/schemas/RuntimeEventPayload' }
         correlation: { $ref: '#/components/schemas/EventCorrelation' }
+        related_evidence: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RelatedEvidence' } }
         release_id: { $ref: '#/components/schemas/NullableUuid' }
         release_version: { type: [string, 'null'] }
     OccurrencePage:
       type: object
       additionalProperties: false
-      required: [items, next_cursor]
+      required: [items, next_cursor, ordering]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/EventOccurrence' } }
         next_cursor: { $ref: '#/components/schemas/NullableUuid' }
+        ordering: { type: string, const: received_at_desc_observed_at_desc_id_desc }
+    RelatedEvidence:
+      type: object
+      additionalProperties: false
+      required: [id, event_id, observed_at, received_at, event_kind, source, payload]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        event_id: { $ref: '#/components/schemas/Uuid' }
+        observed_at: { $ref: '#/components/schemas/Timestamp' }
+        received_at: { $ref: '#/components/schemas/Timestamp' }
+        event_kind: { type: string }
+        source: { type: string, enum: [kernel, kubernetes, derived, unknown] }
+        payload: { $ref: '#/components/schemas/RuntimeEventPayload' }
     RuntimeEventSemanticSummary:
       oneOf:
         - { $ref: '#/components/schemas/ProcessExecSemanticSummary' }
@@ -1231,6 +1260,14 @@ components:
         - { $ref: '#/components/schemas/ProcessExitPayload' }
         - { $ref: '#/components/schemas/ContainerTerminationPayload' }
         - { $ref: '#/components/schemas/ContainerRestartPayload' }
+        - { $ref: '#/components/schemas/ContainerRestartLoopPayload' }
+    ContainerRestartLoopPayload:
+      type: object
+      additionalProperties: false
+      required: [type, data]
+      properties:
+        type: { type: string, const: ContainerRestartLoop }
+        data: { $ref: '#/components/schemas/RestartLoopSemanticSummary' }
     ProcessExitPayload:
       type: object
       additionalProperties: false
