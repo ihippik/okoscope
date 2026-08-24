@@ -74,8 +74,6 @@ impl From<RuntimeEvent> for v1::RuntimeEvent {
             observed_at_unix_nanos: event.observed_at.timestamp_nanos_opt().unwrap_or_default(),
             schema_version: event.schema_version,
             attribution: Some(v1::KubernetesAttribution {
-                project_id: a.project_id.to_string(),
-                application_id: a.application_id.to_string(),
                 node_name: a.node_name,
                 namespace: a.namespace,
                 pod_uid: a.pod_uid,
@@ -434,8 +432,8 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
         require("container_id", &a.container_id)?;
         require("workload_uid", &a.workload_uid)?;
         let attribution = KubernetesAttribution {
-            project_id: parse_uuid("project_id", &a.project_id)?,
-            application_id: parse_uuid("application_id", &a.application_id)?,
+            project_id: Uuid::nil(),
+            application_id: Uuid::nil(),
             node_name: a.node_name,
             namespace: a.namespace,
             pod_uid: a.pod_uid,
@@ -902,8 +900,8 @@ mod tests {
             observed_at: Utc::now(),
             schema_version: EVENT_SCHEMA_VERSION,
             attribution: KubernetesAttribution {
-                project_id: Uuid::new_v4(),
-                application_id: Uuid::new_v4(),
+                project_id: Uuid::nil(),
+                application_id: Uuid::nil(),
                 node_name: "node-1".into(),
                 namespace: "production".into(),
                 pod_uid: "pod-uid".into(),

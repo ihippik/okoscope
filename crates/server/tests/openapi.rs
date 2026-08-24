@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 const LIVE_OPERATIONS: &[(&str, &str)] = &[
     ("/api/v1/build-info", "get"),
+    ("/api/v1/organizations", "post"),
+    ("/api/v1/organizations/{organization_id}/projects", "post"),
     ("/api/v1/attention-summary", "get"),
     (
         "/api/v1/projects/{project_id}/applications/{application_id}/attention-summary",
@@ -11,6 +13,7 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
     ("/api/v1/projects", "get"),
     ("/api/v1/projects/{project_id}", "get"),
     ("/api/v1/projects/{project_id}/applications", "get"),
+    ("/api/v1/projects/{project_id}/applications", "post"),
     (
         "/api/v1/projects/{project_id}/applications/{application_id}",
         "get",
@@ -18,6 +21,18 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
     (
         "/api/v1/projects/{project_id}/applications/{application_id}/workers",
         "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/credentials",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/credentials",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/credentials/{credential_id}",
+        "delete",
     ),
     (
         "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory",
@@ -156,6 +171,18 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         );
         if path == "/api/v1/build-info" {
             assert_eq!(operation["security"], serde_json::json!([]));
+        } else if matches!(
+            path,
+            "/api/v1/organizations"
+                | "/api/v1/organizations/{organization_id}/projects"
+                | "/api/v1/projects/{project_id}/applications/{application_id}/credentials"
+                | "/api/v1/projects/{project_id}/applications/{application_id}/credentials/{credential_id}"
+        ) || path == "/api/v1/projects/{project_id}/applications" && method == "post"
+        {
+            assert_eq!(
+                operation["security"],
+                serde_json::json!([{ "adminAuth": [] }])
+            );
         } else {
             assert!(
                 operation.get("security").is_none(),
@@ -167,7 +194,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     let documented = paths
         .values()
         .map(|item| {
-            ["get", "post", "patch"]
+            ["get", "post", "patch", "delete"]
                 .into_iter()
                 .filter(|method| item.get(method).is_some())
                 .count()
@@ -195,6 +222,18 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     assert_notification_health_contract(&document);
     assert_delivery_contract(&document);
     assert_recovery_contract(&document);
+    assert_eq!(
+        document["components"]["schemas"]["IssuedApplicationCredential"]["properties"]["token"]["writeOnly"],
+        true
+    );
+    for schema in ["ApplicationCredential", "ApplicationCredentialPage"] {
+        assert!(
+            document["components"]["schemas"][schema]["properties"]
+                .get("token")
+                .is_none(),
+            "safe schema {schema} exposes plaintext token"
+        );
+    }
     assert_query_parameters(
         &document,
         "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
@@ -552,10 +591,14 @@ fn assert_success_response_is_typed(
     let responses = operation["responses"]
         .as_object()
         .expect("responses object");
-    let (_, response) = responses
+    let (status, response) = responses
         .iter()
         .find(|(status, _)| status.starts_with('2'))
         .unwrap_or_else(|| panic!("missing success response for {method} {path}"));
+    if status.as_str() == "204" {
+        assert!(response.get("content").is_none());
+        return;
+    }
     let response = resolve_component(document, response, "responses");
     let schema = &response["content"]["application/json"]["schema"];
     assert!(

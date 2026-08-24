@@ -1,5 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use thiserror::Error;
 use uuid::Uuid;
@@ -26,7 +30,6 @@ pub struct AgentConfig {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ServerConfig {
     pub endpoint: String,
-    pub credential_file: String,
     #[serde(default)]
     pub development_plaintext: bool,
     pub ca_file: Option<String>,
@@ -48,8 +51,9 @@ pub struct ScopeConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct WorkloadSelector {
-    pub project_id: Uuid,
-    pub application_id: Uuid,
+    pub application_credential_file: String,
+    #[serde(skip)]
+    pub route_id: Uuid,
     pub namespace: String,
     pub kind: String,
     pub name: String,
@@ -223,6 +227,7 @@ pub struct SafetyLimits {
     pub queue_capacity: usize,
     pub batch_size: usize,
     pub max_events_per_second: u32,
+    pub max_application_streams: usize,
 }
 
 impl Default for SafetyLimits {
@@ -231,6 +236,7 @@ impl Default for SafetyLimits {
             queue_capacity: 4096,
             batch_size: 256,
             max_events_per_second: 10_000,
+            max_application_streams: 32,
         }
     }
 }
@@ -263,10 +269,17 @@ impl AgentConfig {
                 *release = release.trim().to_owned();
             }
         }
+        let mut routes = BTreeMap::<String, Uuid>::new();
+        for selector in &mut config.scope.workloads {
+            selector.route_id = *routes
+                .entry(selector.application_credential_file.clone())
+                .or_insert_with(Uuid::new_v4);
+        }
         config.validate(architecture)?;
         Ok(config)
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn validate(&self, architecture: Architecture) -> Result<(), ConfigError> {
         if self.api_version != API_VERSION {
             return Err(ConfigError::ApiVersion(self.api_version.clone()));
@@ -300,6 +313,7 @@ impl AgentConfig {
         if self.safety.queue_capacity == 0
             || self.safety.batch_size == 0
             || self.safety.batch_size > self.safety.queue_capacity
+            || self.safety.max_application_streams == 0
         {
             return Err(ConfigError::InvalidSelector(
                 "safety limits must be non-zero and batchSize must not exceed queueCapacity".into(),
@@ -356,12 +370,87 @@ impl AgentConfig {
                     "release must be trimmed and contain 1..=200 bytes".into(),
                 ));
             }
+            let credential_path = Path::new(&selector.application_credential_file);
+            if !credential_path.is_absolute() || selector.application_credential_file.contains('\0')
+            {
+                return Err(ConfigError::InvalidSelector(
+                    "applicationCredentialFile must be an absolute NUL-free path".into(),
+                ));
+            }
+        }
+        let distinct_streams = self
+            .scope
+            .workloads
+            .iter()
+            .map(|selector| selector.route_id)
+            .collect::<BTreeSet<_>>()
+            .len();
+        if distinct_streams > self.safety.max_application_streams {
+            return Err(ConfigError::InvalidSelector(format!(
+                "configured Application stream count exceeds maxApplicationStreams ({})",
+                self.safety.max_application_streams
+            )));
         }
         for name in &self.observation.syscalls {
             syscall::resolve(name, architecture)?;
         }
         Ok(())
     }
+}
+
+#[derive(Clone)]
+pub struct LoadedApplicationCredential {
+    pub route_id: Uuid,
+    pub canonical_path: String,
+    pub token: String,
+}
+
+impl std::fmt::Debug for LoadedApplicationCredential {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LoadedApplicationCredential")
+            .field("route_id", &self.route_id)
+            .field("canonical_path", &self.canonical_path)
+            .field("token", &"[REDACTED]")
+            .finish()
+    }
+}
+
+pub async fn load_application_credentials(
+    config: &AgentConfig,
+) -> Result<Vec<LoadedApplicationCredential>, ConfigError> {
+    let mut paths = BTreeMap::<Uuid, &str>::new();
+    for selector in &config.scope.workloads {
+        paths
+            .entry(selector.route_id)
+            .or_insert(&selector.application_credential_file);
+    }
+    let mut loaded = Vec::with_capacity(paths.len());
+    for (route_id, path) in paths {
+        let canonical = tokio::fs::canonicalize(path).await.map_err(|_| {
+            ConfigError::InvalidSelector(format!("cannot read credential file {path}"))
+        })?;
+        let canonical_path = canonical.to_string_lossy().into_owned();
+        let token = tokio::fs::read_to_string(&canonical).await.map_err(|_| {
+            ConfigError::InvalidSelector(format!("cannot read credential file {path}"))
+        })?;
+        let token = token.trim().to_owned();
+        validate_application_token(&token).map_err(|()| {
+            ConfigError::InvalidSelector(format!("credential file {path} has an invalid token"))
+        })?;
+        loaded.push(LoadedApplicationCredential {
+            route_id,
+            canonical_path,
+            token,
+        });
+    }
+    Ok(loaded)
+}
+
+fn validate_application_token(token: &str) -> Result<(), ()> {
+    let encoded = token.strip_prefix("oko_app_v1_").ok_or(())?;
+    let decoded = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| ())?;
+    (decoded.len() == 32).then_some(()).ok_or(())
 }
 
 #[cfg(test)]
@@ -373,15 +462,13 @@ apiVersion: okoscope.io/v1alpha1
 kind: AgentConfiguration
 server:
   endpoint: http://server:4317
-  credentialFile: /secrets/credential
   developmentPlaintext: true
 identity:
   nodeName: node-1
   clusterName: local
 scope:
   workloads:
-    - projectId: 018f4f9c-3f9a-7de1-8000-000000000001
-      applicationId: 018f4f9c-3f9a-7de1-8000-000000000002
+    - applicationCredentialFile: /secrets/payment-api
       namespace: production
       kind: Deployment
       name: payment-api
@@ -397,6 +484,49 @@ observation:
         let config = AgentConfig::from_yaml(VALID, Architecture::X86_64).unwrap();
         assert_eq!(config.scope.workloads.len(), 1);
         assert!(!config.observation.network.connect);
+    }
+
+    #[test]
+    fn deduplicates_stream_routes_and_enforces_stream_limit() {
+        let duplicate = VALID.replace(
+            "observation:\n",
+            "    - applicationCredentialFile: /secrets/payment-api\n      namespace: staging\n      kind: Deployment\n      name: payment-api\nobservation:\n",
+        );
+        let config = AgentConfig::from_yaml(&duplicate, Architecture::X86_64).unwrap();
+        assert_eq!(config.scope.workloads.len(), 2);
+        assert_eq!(
+            config.scope.workloads[0].route_id,
+            config.scope.workloads[1].route_id
+        );
+
+        let distinct = duplicate.replace(
+            "/secrets/payment-api\n      namespace: staging",
+            "/secrets/order-api\n      namespace: staging",
+        );
+        let limited = distinct.replace(
+            "observation:\n",
+            "safety:\n  maxApplicationStreams: 1\nobservation:\n",
+        );
+        assert!(AgentConfig::from_yaml(&limited, Architecture::X86_64).is_err());
+    }
+
+    #[tokio::test]
+    async fn loads_valid_token_from_canonical_file_without_debug_exposure() {
+        let directory = std::env::temp_dir().join(format!("okoscope-config-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory).await.unwrap();
+        let credential_path = directory.join("application-token");
+        let encoded = URL_SAFE_NO_PAD.encode([7_u8; 32]);
+        let token = format!("oko_app_v1_{encoded}");
+        tokio::fs::write(&credential_path, format!("{token}\n"))
+            .await
+            .unwrap();
+        let yaml = VALID.replace("/secrets/payment-api", credential_path.to_str().unwrap());
+        let config = AgentConfig::from_yaml(&yaml, Architecture::X86_64).unwrap();
+        let loaded = load_application_credentials(&config).await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].token, token);
+        assert!(!format!("{:?}", loaded[0]).contains(&token));
+        tokio::fs::remove_dir_all(directory).await.unwrap();
     }
 
     #[test]

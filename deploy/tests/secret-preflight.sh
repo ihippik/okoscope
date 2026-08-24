@@ -17,7 +17,7 @@ key=${key%\}}
 case "$key" in
   database-url) value=${TEST_DATABASE_URL-} ;;
   postgres-password) value=${TEST_POSTGRES_PASSWORD-} ;;
-  cluster-credential) value=${TEST_CLUSTER_CREDENTIAL-} ;;
+  admin-credential) value=${TEST_ADMIN_CREDENTIAL-} ;;
   api-credential) value=${TEST_API_CREDENTIAL-} ;;
   webhook-encryption-key) value=${TEST_WEBHOOK_KEY-} ;;
   *) value= ;;
@@ -31,7 +31,7 @@ chmod +x "$work/kubectl"
 export PATH="$work:$PATH"
 export TEST_DATABASE_URL='postgres://user:password@postgres:5432/okoscope'
 export TEST_POSTGRES_PASSWORD='password'
-export TEST_CLUSTER_CREDENTIAL='cluster-token'
+export TEST_ADMIN_CREDENTIAL='admin-credential-with-at-least-32-bytes'
 export TEST_API_CREDENTIAL='api-token'
 export TEST_WEBHOOK_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 

@@ -145,7 +145,7 @@ cat >"$output_dir/PROVENANCE.txt" <<EOF
 server_image=ghcr.io/ihippik/okoscope-server:$server_tag
 agent_image=ghcr.io/ihippik/okoscope-agent:$agent_tag
 web_image=$web_image
-required_migration=13
+required_migration=14
 routing=$routing
 notification_delivery_enabled=$notification_enabled
 notification_poll_ms=$notification_poll_ms

@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use protocol::v1::agent_service_server::AgentServiceServer;
 use server::{
+    admin_auth::AdminAuthenticator,
     backfill::{BackfillOptions, run as run_backfill},
-    bootstrap::{BootstrapConfig, bootstrap},
     database::{migrate, verify_schema},
     health,
     inventory_operations::{
@@ -151,56 +151,14 @@ struct Args {
     tls_certificate: Option<PathBuf>,
     #[arg(long, env = "OKOSCOPE_TLS_PRIVATE_KEY")]
     tls_private_key: Option<PathBuf>,
-    #[arg(long, env = "OKOSCOPE_ORGANIZATION_SLUG", default_value = "local")]
-    organization_slug: String,
-    #[arg(long, env = "OKOSCOPE_ORGANIZATION_NAME", default_value = "Local")]
-    organization_name: String,
-    #[arg(long, env = "OKOSCOPE_PROJECT_SLUG", default_value = "demo")]
-    project_slug: String,
-    #[arg(long, env = "OKOSCOPE_PROJECT_NAME", default_value = "Demo")]
-    project_name: String,
-    #[arg(long, env = "OKOSCOPE_CLUSTER_EXTERNAL_ID", default_value = "local")]
-    cluster_external_id: String,
-    #[arg(long, env = "OKOSCOPE_CLUSTER_NAME", default_value = "Local")]
-    cluster_name: String,
-    #[arg(long, env = "OKOSCOPE_APPLICATION_SLUG", default_value = "payment-api")]
-    application_slug: String,
-    #[arg(long, env = "OKOSCOPE_APPLICATION_NAME", default_value = "Payment API")]
-    application_name: String,
-    #[arg(long, env = "OKOSCOPE_CLUSTER_CREDENTIAL")]
-    cluster_credential: Option<String>,
-    #[arg(long, env = "OKOSCOPE_API_CREDENTIAL")]
-    api_credential: Option<String>,
+    #[arg(long, env = "OKOSCOPE_ADMIN_CREDENTIAL")]
+    admin_credential: Option<String>,
     #[command(flatten)]
     notification: NotificationArgs,
     #[arg(long, env = "OKOSCOPE_CORS_ORIGINS", value_delimiter = ',')]
     cors_origins: Vec<String>,
     #[command(subcommand)]
     command: Option<Command>,
-    #[arg(
-        long,
-        env = "OKOSCOPE_ORGANIZATION_ID",
-        default_value = "018f4f9c-3f9a-7de1-8000-000000000000"
-    )]
-    organization_id: Uuid,
-    #[arg(
-        long,
-        env = "OKOSCOPE_PROJECT_ID",
-        default_value = "018f4f9c-3f9a-7de1-8000-000000000001"
-    )]
-    project_id: Uuid,
-    #[arg(
-        long,
-        env = "OKOSCOPE_CLUSTER_ID",
-        default_value = "018f4f9c-3f9a-7de1-8000-000000000003"
-    )]
-    cluster_id: Uuid,
-    #[arg(
-        long,
-        env = "OKOSCOPE_APPLICATION_ID",
-        default_value = "018f4f9c-3f9a-7de1-8000-000000000002"
-    )]
-    application_id: Uuid,
 }
 
 #[derive(Debug, Subcommand)]
@@ -384,7 +342,7 @@ async fn main() -> Result<()> {
         .build(args.development_plaintext)
         .map_err(anyhow::Error::msg)
         .context("notification delivery configuration")?;
-    let web_api_config = WebApiConfig::new(args.cors_origins.clone())
+    let mut web_api_config = WebApiConfig::new(args.cors_origins.clone())
         .map_err(anyhow::Error::msg)
         .context("web API configuration")?;
     let pool = PgPoolOptions::new()
@@ -423,37 +381,14 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let notifications = NotificationService::new(pool.clone(), notification_config);
-    let ids = bootstrap(
-        &pool,
-        &BootstrapConfig {
-            organization_id: args.organization_id,
-            project_id: args.project_id,
-            cluster_id: args.cluster_id,
-            application_id: args.application_id,
-            organization_slug: args.organization_slug,
-            organization_name: args.organization_name,
-            project_slug: args.project_slug,
-            project_name: args.project_name,
-            cluster_external_id: args.cluster_external_id,
-            cluster_name: args.cluster_name,
-            application_slug: args.application_slug,
-            application_name: args.application_name,
-            cluster_credential: args
-                .cluster_credential
-                .context("--cluster-credential is required when serving")?,
-            api_credential: args
-                .api_credential
-                .context("--api-credential is required when serving")?,
-        },
-    )
-    .await
-    .context("bootstrap tenant identities")?;
-    tracing::info!(
-        organization_id = %ids.organization_id,
-        project_id = %ids.project_id,
-        cluster_id = %ids.cluster_id,
-        application_id = %ids.application_id,
-        "bootstrap identities ready"
+    web_api_config = web_api_config.with_admin_authenticator(
+        AdminAuthenticator::new(
+            args.admin_credential
+                .as_deref()
+                .context("--admin-credential is required when serving")?,
+        )
+        .map_err(anyhow::Error::msg)
+        .context("admin credential configuration")?,
     );
 
     serve(

@@ -45,7 +45,11 @@ pub fn router(
         .merge(crate::attention::router((*pool).clone(), delivery_enabled))
         .merge(crate::inventory_api::router((*pool).clone()))
         .merge(crate::releases::router((*pool).clone()))
-        .merge(crate::navigation::router((*pool).clone()));
+        .merge(crate::navigation::router((*pool).clone()))
+        .merge(crate::provisioning::router(
+            (*pool).clone(),
+            web_api_config.admin_authenticator.clone(),
+        ));
     let api_router = if let Some(notifications) = notifications {
         api_router.merge(crate::notification::api::router(
             (*pool).clone(),

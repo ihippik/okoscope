@@ -11,6 +11,10 @@ rules:
   - apiGroups: [""]
     resources: [pods]
     verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    resourceNames: [kube-system]
+    verbs: [get]
   - apiGroups: [apps]
     resources: [replicasets, deployments]
     verbs: [get, list, watch]
@@ -27,4 +31,3 @@ subjects:
   - kind: ServiceAccount
     name: okoscope-agent
     namespace: okoscope
-

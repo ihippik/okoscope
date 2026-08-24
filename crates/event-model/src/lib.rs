@@ -16,7 +16,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FILE_PATH_BYTES: usize = 1024;
 pub const FILE_MODIFY_AGGREGATION_WINDOW: Duration = Duration::from_secs(5);
 

@@ -13,15 +13,15 @@ mod linux {
 
     use agent::{
         attribution::{AttributionCache, resolve_and_count, run_watches},
-        cgroup,
-        config::AgentConfig,
+        cgroup, cluster_identity,
+        config::{AgentConfig, load_application_credentials},
         counters::Counters,
-        delivery::{EventBuffer, EventRateLimiter, PendingBatch},
+        delivery::EventRateLimiter,
         dns_runtime::DnsProcessor,
         file_runtime::{FileModifyAggregator, translate_rename_scope},
+        multi_stream::ApplicationStreams,
         observer::Observer,
         process_runtime::ProcessGenerationStore,
-        session::{connect_with_backoff, handle_control},
         syscall::{self, Architecture},
     };
     use agent_ebpf_common::KernelEvent;
@@ -32,9 +32,7 @@ mod linux {
         EVENT_SCHEMA_VERSION, EventPayload, GenerationCorrelation, ProcessExec, ProcessExit,
         ProcessIdentity, RuntimeEvent, SyscallEvent, UnresolvedGenerationReason,
     };
-    use protocol::v1::{
-        AgentHello, AgentMessage, EventBatch, Heartbeat, agent_message, server_message,
-    };
+    use protocol::v1::AgentHello;
     use tracing_subscriber::EnvFilter;
     use uuid::Uuid;
 
@@ -68,7 +66,11 @@ mod linux {
             .init();
         let args = Args::parse();
         let architecture = Architecture::current().context("unsupported CPU architecture")?;
-        let (config, credential) = load_config(&args, architecture).await?;
+        let config = load_config(&args, architecture).await?;
+        let credentials = load_application_credentials(&config).await?;
+        let cluster_uid = cluster_identity::discover(kube::Client::try_default().await?)
+            .await
+            .context("discover Kubernetes cluster identity")?;
         let counters = Arc::new(Counters::default());
         let (cache, mut lifecycle_receiver, mut lifecycle_readiness) =
             start_attribution_cache(counters.clone()).await?;
@@ -87,7 +89,6 @@ mod linux {
         };
         let mut cgroup_resolver =
             cgroup::CgroupResolver::new("/sys/fs/cgroup").context("index host cgroup hierarchy")?;
-        let mut buffer = EventBuffer::new(config.safety.queue_capacity, config.safety.batch_size);
         let mut rate_limiter = EventRateLimiter::new(config.safety.max_events_per_second);
         let mut dns_rate_limiter =
             EventRateLimiter::new(config.observation.network.dns.max_events_per_second);
@@ -96,181 +97,165 @@ mod linux {
         let mut dns_processor = DnsProcessor::new(&config.observation.network.dns);
         let mut file_aggregator = FileModifyAggregator::default();
         let mut process_generations = ProcessGenerationStore::new(8192);
+        let hello = hello(
+            &config,
+            &counters.snapshot(),
+            process_exit_ready,
+            *lifecycle_readiness.borrow(),
+            cluster_uid,
+        );
+        let streams = ApplicationStreams::start(
+            &config.server,
+            credentials,
+            &hello,
+            &config.safety,
+            counters.clone(),
+        );
+        tracing::info!(
+            application_streams = streams.route_count(),
+            "Application stream runtimes started"
+        );
+        let mut poll = tokio::time::interval(Duration::from_millis(10));
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
         loop {
-            let hello = hello(
-                &config,
-                &counters.snapshot(),
-                process_exit_ready,
-                *lifecycle_readiness.borrow(),
-            );
-            let mut session =
-                connect_with_backoff(&config.server, credential.trim(), hello).await?;
-            for batch in buffer.replay_pending(&counters) {
-                send_batch(&session.sender, batch).await?;
-            }
-            let mut poll = tokio::time::interval(Duration::from_millis(10));
-            let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
-            loop {
-                tokio::select! {
-                    _ = poll.tick() => {
-                        while let Ok(observation) = lifecycle_receiver.try_recv() {
-                            let Some(attribution) = resolve_and_count(
-                                &cache, &counters, Some(&observation.container_id),
-                                &config.identity.node_name, &config.scope.workloads,
-                            ) else {
-                                counters.lifecycle_attribution_failed.fetch_add(1, Ordering::Relaxed);
-                                continue;
-                            };
-                            let command = attribution.container_name.clone();
-                            let event = RuntimeEvent {
-                                id: Uuid::new_v4(), observed_at: Utc::now(),
-                                schema_version: EVENT_SCHEMA_VERSION, attribution,
-                                process: ProcessIdentity { cgroup_id: 0, pid: 0, tgid: 0, command },
-                                payload: observation.payload,
-                            };
-                            if rate_limiter.allow() { buffer.push(event, &counters); }
-                            else { counters.capacity_dropped.fetch_add(1, Ordering::Relaxed); }
+            tokio::select! {
+                _ = poll.tick() => {
+                    while let Ok(observation) = lifecycle_receiver.try_recv() {
+                        let Some(attribution) = resolve_and_count(
+                            &cache, &counters, Some(&observation.container_id),
+                            &config.identity.node_name, &config.scope.workloads,
+                        ) else {
+                            counters.lifecycle_attribution_failed.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        };
+                        let command = attribution.container_name.clone();
+                        let event = RuntimeEvent {
+                            id: Uuid::new_v4(), observed_at: Utc::now(),
+                            schema_version: EVENT_SCHEMA_VERSION, attribution,
+                            process: ProcessIdentity { cgroup_id: 0, pid: 0, tgid: 0, command },
+                            payload: observation.payload,
+                        };
+                        if rate_limiter.allow() { streams.route(event); }
+                        else { counters.capacity_dropped.fetch_add(1, Ordering::Relaxed); }
+                    }
+                    while let Some(decoded) = observer.next_file_event() {
+                        let Ok(decoded) = decoded else {
+                            counters.decode_failed.fetch_add(1, Ordering::Relaxed);
+                            counters.file_decode_failed.fetch_add(1, Ordering::Relaxed);
+                            counters.file_path_invalid.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        };
+                        let fd = decoded.kernel.fd;
+                        let generation = decoded.kernel.descriptor_generation;
+                        let Some(event) = runtime_file_event(
+                            decoded, &mut cgroup_resolver, &cache, &counters, &config,
+                        ) else { continue };
+                        let (ready, dropped) = file_aggregator.observe(event, fd, generation, Instant::now());
+                        if dropped {
+                            counters.file_aggregation_capacity.fetch_add(1, Ordering::Relaxed);
                         }
-                        while let Some(decoded) = observer.next_file_event() {
-                            let Ok(decoded) = decoded else {
-                                counters.decode_failed.fetch_add(1, Ordering::Relaxed);
-                                counters.file_decode_failed.fetch_add(1, Ordering::Relaxed);
-                                counters.file_path_invalid.fetch_add(1, Ordering::Relaxed);
-                                continue;
-                            };
-                            let fd = decoded.kernel.fd;
-                            let generation = decoded.kernel.descriptor_generation;
-                            let Some(event) = runtime_file_event(
-                                decoded, &mut cgroup_resolver, &cache, &counters, &config,
-                            ) else { continue };
-                            let (ready, dropped) = file_aggregator.observe(event, fd, generation, Instant::now());
-                            if dropped {
-                                counters.file_aggregation_capacity.fetch_add(1, Ordering::Relaxed);
-                            }
-                            for event in ready {
-                                if rate_limiter.allow() { buffer.push(event, &counters); }
-                                else {
-                                    counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
-                                    counters.file_rate_limited.fetch_add(1, Ordering::Relaxed);
-                                }
-                            }
-                        }
-                        for event in file_aggregator.drain_expired(Instant::now()) {
-                            if rate_limiter.allow() { buffer.push(event, &counters); }
+                        for event in ready {
+                            if rate_limiter.allow() { streams.route(event); }
                             else {
                                 counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
                                 counters.file_rate_limited.fetch_add(1, Ordering::Relaxed);
                             }
                         }
-                        while let Some(packet) = observer.next_dns_packet()? {
-                            let Some((process, payload)) = dns_processor.process(&packet, &counters) else { continue };
-                            let container = cgroup_resolver.resolve(process.pid, process.cgroup_id).ok();
-                            let Some(attribution) = resolve_and_count(
-                                &cache, &counters, container.as_deref(), &config.identity.node_name,
-                                &config.scope.workloads,
-                            ) else { continue };
-                            let event = RuntimeEvent {
-                                id: Uuid::new_v4(), observed_at: Utc::now(),
-                                schema_version: EVENT_SCHEMA_VERSION, attribution, process, payload,
-                            };
-                            if dns_rate_limiter.allow() && rate_limiter.allow() {
-                                buffer.push(event, &counters);
-                            } else {
-                                counters.dns_rate_limited.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        while let Some(kernel) = observer.next_inbound_event()? {
-                            let is_accept = kernel.event_kind == agent_ebpf_common::EVENT_KIND_NETWORK_ACCEPT;
-                            let Some(event) = runtime_inbound_event(
-                                &kernel, &mut cgroup_resolver, &cache, &counters, &config,
-                            ) else { continue };
-                            if (!is_accept || inbound_rate_limiter.allow()) && rate_limiter.allow() {
-                                buffer.push(event, &counters);
-                            } else {
-                                counters.inbound_rate_limited.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        while let Some(kernel) = observer.next_event()? {
-                            let Some(event) = runtime_event(&kernel, architecture, &mut cgroup_resolver, &cache, &counters, &config, &mut dns_processor) else { continue };
-                            if let EventPayload::ProcessExec(exec) = &event.payload {
-                                process_generations.observe_exec(
-                                    kernel.pid_tgid, kernel.cgroup_id, kernel.timestamp_ns,
-                                    event.id, exec.executable.clone(),
-                                );
-                            }
-                            if rate_limiter.allow() {
-                                buffer.push(event, &counters);
-                            } else {
-                                counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        while let Some(decoded) = observer.next_exit_event() {
-                            let Ok(decoded) = decoded else {
-                                counters.decode_failed.fetch_add(1, Ordering::Relaxed);
-                                counters.exit_decode_failed.fetch_add(1, Ordering::Relaxed);
-                                continue;
-                            };
-                            let Some(event) = runtime_exit_event(
-                                decoded, &mut process_generations, &mut cgroup_resolver,
-                                &cache, &counters, &config,
-                            ) else { continue };
-                            if rate_limiter.allow() {
-                                buffer.push(event, &counters);
-                            } else {
-                                counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
-                                counters.exit_rate_limited.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        if let Some(batch) = buffer.next_batch(&counters) { send_batch(&session.sender, batch).await?; }
                     }
-                    _ = heartbeat.tick() => {
-                        counters.update_network_kernel(observer.network_counters()?);
-                        counters.update_inbound_kernel(observer.inbound_kernel_counters()?);
-                        counters.update_dns_kernel(observer.dns_kernel_counters()?);
-                        counters.update_file_kernel(observer.file_kernel_counters()?);
-                        counters.update_exit_kernel(observer.exit_kernel_counters()?);
-                        let snapshot = counters.snapshot();
-                        tracing::info!(?snapshot, "agent status");
-                        session.sender.send(AgentMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(agent_message::Message::Heartbeat(Heartbeat { sent_at_unix_nanos: Utc::now().timestamp_nanos_opt().unwrap_or_default(), drop_counters: Some(snapshot.into()) })) }).await?;
+                    for event in file_aggregator.drain_expired(Instant::now()) {
+                        if rate_limiter.allow() { streams.route(event); }
+                        else {
+                            counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
+                            counters.file_rate_limited.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
-                    message = session.incoming.message() => {
-                        if let Ok(Some(message)) = message {
-                            match message.message {
-                                Some(server_message::Message::BatchAcknowledgement(ack)) => { buffer.acknowledge(ack.sequence, &counters); }
-                                Some(server_message::Message::Control(control)) => {
-                                    let result = handle_control(control);
-                                    session.sender.send(AgentMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(agent_message::Message::ControlResult(result)) }).await?;
-                                }
-                                Some(server_message::Message::SessionAccepted(accepted)) => tracing::info!(agent_id=%accepted.agent_id, "agent session accepted"),
-                                None => tracing::warn!("unsupported server message"),
-                            }
+                    while let Some(packet) = observer.next_dns_packet()? {
+                        let Some((process, payload)) = dns_processor.process(&packet, &counters) else { continue };
+                        let container = cgroup_resolver.resolve(process.pid, process.cgroup_id).ok();
+                        let Some(attribution) = resolve_and_count(
+                            &cache, &counters, container.as_deref(), &config.identity.node_name,
+                            &config.scope.workloads,
+                        ) else { continue };
+                        let event = RuntimeEvent {
+                            id: Uuid::new_v4(), observed_at: Utc::now(),
+                            schema_version: EVENT_SCHEMA_VERSION, attribution, process, payload,
+                        };
+                        if dns_rate_limiter.allow() && rate_limiter.allow() {
+                            streams.route(event);
                         } else {
-                            tracing::warn!("agent session disconnected; reconnecting");
-                            break;
+                            counters.dns_rate_limited.fetch_add(1, Ordering::Relaxed);
                         }
                     }
-                    readiness = lifecycle_readiness.changed() => {
-                        if readiness.is_err() {
-                            tracing::warn!("Kubernetes lifecycle readiness channel closed");
+                    while let Some(kernel) = observer.next_inbound_event()? {
+                        let is_accept = kernel.event_kind == agent_ebpf_common::EVENT_KIND_NETWORK_ACCEPT;
+                        let Some(event) = runtime_inbound_event(
+                            &kernel, &mut cgroup_resolver, &cache, &counters, &config,
+                        ) else { continue };
+                        if (!is_accept || inbound_rate_limiter.allow()) && rate_limiter.allow() {
+                            streams.route(event);
                         } else {
-                            tracing::info!(ready = *lifecycle_readiness.borrow(), "Kubernetes lifecycle readiness changed; reconnecting session");
+                            counters.inbound_rate_limited.fetch_add(1, Ordering::Relaxed);
                         }
-                        break;
                     }
-                    _ = tokio::signal::ctrl_c() => {
-                        for event in file_aggregator.drain_all() {
-                            if rate_limiter.allow() { buffer.push(event, &counters); }
-                            else {
-                                counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
-                                counters.file_rate_limited.fetch_add(1, Ordering::Relaxed);
-                            }
+                    while let Some(kernel) = observer.next_event()? {
+                        let Some(event) = runtime_event(&kernel, architecture, &mut cgroup_resolver, &cache, &counters, &config, &mut dns_processor) else { continue };
+                        if let EventPayload::ProcessExec(exec) = &event.payload {
+                            process_generations.observe_exec(
+                                kernel.pid_tgid, kernel.cgroup_id, kernel.timestamp_ns,
+                                event.id, exec.executable.clone(),
+                            );
                         }
-                        while let Some(batch) = buffer.next_batch(&counters) {
-                            send_batch(&session.sender, batch).await?;
+                        if rate_limiter.allow() {
+                            streams.route(event);
+                        } else {
+                            counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
                         }
-                        return Ok(());
-                    },
+                    }
+                    while let Some(decoded) = observer.next_exit_event() {
+                        let Ok(decoded) = decoded else {
+                            counters.decode_failed.fetch_add(1, Ordering::Relaxed);
+                            counters.exit_decode_failed.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        };
+                        let Some(event) = runtime_exit_event(
+                            decoded, &mut process_generations, &mut cgroup_resolver,
+                            &cache, &counters, &config,
+                        ) else { continue };
+                        if rate_limiter.allow() {
+                            streams.route(event);
+                        } else {
+                            counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
+                            counters.exit_rate_limited.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
                 }
+                _ = heartbeat.tick() => {
+                    counters.update_network_kernel(observer.network_counters()?);
+                    counters.update_inbound_kernel(observer.inbound_kernel_counters()?);
+                    counters.update_dns_kernel(observer.dns_kernel_counters()?);
+                    counters.update_file_kernel(observer.file_kernel_counters()?);
+                    counters.update_exit_kernel(observer.exit_kernel_counters()?);
+                    let snapshot = counters.snapshot();
+                    tracing::info!(?snapshot, "agent status");
+                }
+                readiness = lifecycle_readiness.changed() => {
+                    if readiness.is_err() {
+                        tracing::warn!("Kubernetes lifecycle readiness channel closed");
+                    } else {
+                        tracing::info!(ready = *lifecycle_readiness.borrow(), "Kubernetes lifecycle readiness changed");
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    for event in file_aggregator.drain_all() {
+                        if rate_limiter.allow() { streams.route(event); }
+                        else {
+                            counters.capacity_dropped.fetch_add(1, Ordering::Relaxed);
+                            counters.file_rate_limited.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    streams.shutdown().await;
+                    return Ok(());
+                },
             }
         }
     }
@@ -322,7 +307,7 @@ mod linux {
         )
     }
 
-    async fn load_config(args: &Args, architecture: Architecture) -> Result<(AgentConfig, String)> {
+    async fn load_config(args: &Args, architecture: Architecture) -> Result<AgentConfig> {
         let yaml = tokio::fs::read_to_string(&args.config)
             .await
             .context("read agent configuration")?;
@@ -330,10 +315,7 @@ mod linux {
         if let Ok(node_name) = std::env::var("OKOSCOPE_NODE_NAME") {
             config.identity.node_name = node_name;
         }
-        let credential = tokio::fs::read_to_string(&config.server.credential_file)
-            .await
-            .context("read cluster credential")?;
-        Ok((config, credential))
+        Ok(config)
     }
 
     fn runtime_event(
@@ -585,6 +567,7 @@ mod linux {
         snapshot: &agent::counters::CounterSnapshot,
         process_exit_ready: bool,
         container_lifecycle_ready: bool,
+        cluster_uid: String,
     ) -> AgentHello {
         let mut capabilities = config.observation.capabilities();
         if process_exit_ready {
@@ -600,6 +583,7 @@ mod linux {
             kernel_release: kernel_release(),
             capabilities,
             drop_counters: Some((*snapshot).into()),
+            cluster_uid,
         }
     }
 
@@ -615,21 +599,6 @@ mod linux {
                 .unwrap_or(bytes.len())],
         )
         .into_owned()
-    }
-    async fn send_batch(
-        sender: &tokio::sync::mpsc::Sender<AgentMessage>,
-        batch: PendingBatch,
-    ) -> Result<()> {
-        sender
-            .send(AgentMessage {
-                protocol_version: event_model::PROTOCOL_VERSION,
-                message: Some(agent_message::Message::EventBatch(EventBatch {
-                    sequence: batch.sequence,
-                    events: batch.events.into_iter().map(Into::into).collect(),
-                })),
-            })
-            .await?;
-        Ok(())
     }
 }
 

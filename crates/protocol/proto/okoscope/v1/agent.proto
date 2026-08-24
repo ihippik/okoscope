@@ -32,6 +32,7 @@ message AgentHello {
   string kernel_release = 4;
   repeated string capabilities = 5;
   DropCounters drop_counters = 6;
+  string cluster_uid = 7;
 }
 
 message SessionAccepted {
@@ -39,6 +40,8 @@ message SessionAccepted {
   string cluster_id = 2;
   string agent_id = 3;
   uint32 negotiated_protocol_version = 4;
+  string project_id = 5;
+  string application_id = 6;
 }
 
 message Heartbeat {
@@ -81,8 +84,8 @@ message RuntimeEvent {
 }
 
 message KubernetesAttribution {
-  string project_id = 1;
-  string application_id = 2;
+  reserved 1, 2;
+  reserved "project_id", "application_id";
   string node_name = 3;
   string namespace = 4;
   string pod_uid = 5;

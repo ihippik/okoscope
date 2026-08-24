@@ -4,6 +4,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::application_credentials::{ApplicationCredentialScope, remains_active};
 use crate::auth::SessionScope;
 use crate::grouping::{GroupingSource, TrustedGroupingScope, assign_event};
 use crate::inventory::project_event;
@@ -20,6 +21,8 @@ pub enum IngestionError {
     UnsupportedSchema(u32),
     #[error("event project/application is outside the authenticated tenant")]
     InvalidOwnership,
+    #[error("application credential is revoked")]
+    RevokedCredential,
     #[error("event cgroup ID exceeds PostgreSQL signed integer range")]
     CgroupOverflow,
     #[error("database error: {0}")]
@@ -30,6 +33,31 @@ pub enum IngestionError {
     InvalidDns,
     #[error("termination or lifecycle evidence violates bounded invariants")]
     InvalidTermination,
+}
+
+pub async fn persist_application_batch(
+    pool: &PgPool,
+    scope: SessionScope,
+    credential: ApplicationCredentialScope,
+    agent_id: Uuid,
+    events: &mut [RuntimeEvent],
+) -> Result<u32, IngestionError> {
+    if credential.organization_id != scope.organization_id {
+        return Err(IngestionError::InvalidOwnership);
+    }
+    let mut tx = pool.begin().await?;
+    if !remains_active(&mut tx, credential).await? {
+        return Err(IngestionError::RevokedCredential);
+    }
+    let context = IngestionContext { scope, agent_id };
+    let mut accepted = 0_u32;
+    for event in events {
+        event.attribution.project_id = credential.project_id;
+        event.attribution.application_id = credential.application_id;
+        accepted = accepted.saturating_add(persist_event(&mut tx, context, event).await?);
+    }
+    tx.commit().await?;
+    Ok(accepted)
 }
 
 pub async fn persist_batch(

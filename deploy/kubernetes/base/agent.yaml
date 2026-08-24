@@ -46,9 +46,12 @@ spec:
       volumes:
         - {name: config, configMap: {name: okoscope-agent}}
         - name: secrets
-          secret:
-            secretName: okoscope-secrets
-            items: [{key: cluster-credential, path: cluster-credential}]
+          projected:
+            defaultMode: 0400
+            sources:
+              - secret:
+                  name: okoscope-application-credentials
+                  items: [{key: payment-api, path: applications/payment-api}]
         - {name: proc, hostPath: {path: /proc, type: Directory}}
         - {name: cgroup, hostPath: {path: /sys/fs/cgroup, type: Directory}}
         - {name: tracing, hostPath: {path: /sys/kernel/tracing, type: Directory}}

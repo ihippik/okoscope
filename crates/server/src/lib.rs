@@ -1,4 +1,6 @@
+pub mod admin_auth;
 pub mod api;
+pub mod application_credentials;
 pub mod attention;
 pub mod auth;
 pub mod backfill;
@@ -14,6 +16,7 @@ pub mod metrics;
 pub mod navigation;
 pub mod notification;
 pub mod notification_config;
+pub mod provisioning;
 pub mod releases;
 pub mod repository;
 pub mod session;

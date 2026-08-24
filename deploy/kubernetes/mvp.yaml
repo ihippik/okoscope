@@ -13,7 +13,8 @@ type: Opaque
 stringData:
   database-url: postgres://okoscope:okoscope@postgres:5432/okoscope
   postgres-password: okoscope
-  cluster-credential: replace-this-development-credential
+  admin-credential: replace-this-development-admin-credential
+  application-payment-api: oko_app_v1_BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc
   api-credential: replace-this-development-api-credential
   webhook-encryption-key: 0000000000000000000000000000000000000000000000000000000000000000
 ---
@@ -75,8 +76,8 @@ spec:
           env:
             - name: OKOSCOPE_DATABASE_URL
               valueFrom: {secretKeyRef: {name: okoscope-secrets, key: database-url}}
-            - name: OKOSCOPE_CLUSTER_CREDENTIAL
-              valueFrom: {secretKeyRef: {name: okoscope-secrets, key: cluster-credential}}
+            - name: OKOSCOPE_ADMIN_CREDENTIAL
+              valueFrom: {secretKeyRef: {name: okoscope-secrets, key: admin-credential}}
             - name: OKOSCOPE_API_CREDENTIAL
               valueFrom: {secretKeyRef: {name: okoscope-secrets, key: api-credential}}
             - name: OKOSCOPE_WEBHOOK_ENCRYPTION_KEY
@@ -113,6 +114,10 @@ rules:
   - apiGroups: [""]
     resources: [pods]
     verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    resourceNames: [kube-system]
+    verbs: [get]
   - apiGroups: [apps]
     resources: [replicasets, deployments]
     verbs: [get, list, watch]
@@ -132,15 +137,13 @@ data:
     kind: AgentConfiguration
     server:
       endpoint: http://okoscope-server.okoscope.svc:4317
-      credentialFile: /var/run/secrets/okoscope/cluster-credential
       developmentPlaintext: true
     identity:
       nodeName: overridden-by-downward-api
       clusterName: local
     scope:
       workloads:
-        - projectId: 018f4f9c-3f9a-7de1-8000-000000000001
-          applicationId: 018f4f9c-3f9a-7de1-8000-000000000002
+        - applicationCredentialFile: /var/run/secrets/okoscope/applications/payment-api
           namespace: okoscope-demo
           kind: Deployment
           name: payment-api
@@ -184,7 +187,7 @@ spec:
             - {name: tracing, mountPath: /sys/kernel/tracing}
       volumes:
         - {name: config, configMap: {name: okoscope-agent}}
-        - {name: secrets, secret: {secretName: okoscope-secrets, items: [{key: cluster-credential, path: cluster-credential}]}}
+        - {name: secrets, secret: {secretName: okoscope-secrets, items: [{key: application-payment-api, path: applications/payment-api}]}}
         - {name: proc, hostPath: {path: /proc}}
         - {name: cgroup, hostPath: {path: /sys/fs/cgroup}}
         - {name: tracing, hostPath: {path: /sys/kernel/tracing}}

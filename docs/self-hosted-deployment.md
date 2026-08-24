@@ -21,7 +21,7 @@ CI publishes an `okoscope-kubernetes-<commit>` bundle containing:
 
 The bundled PostgreSQL profile requests 100m CPU/256 MiB and limits 1 CPU/1 GiB. Server defaults are 100m/128 MiB requests and 1 CPU/512 MiB limits; agent defaults are 100m/96 MiB and 1 CPU/512 MiB. Tune these in a site overlay after measuring usage.
 
-The agent is the only host-aware workload. `hostPID` is required to map kernel PIDs to containers; read-only `/proc` and cgroup v2 mounts provide attribution; tracefs is writable for probe attachment. The container drops every capability except `BPF`, `PERFMON`, `SYS_RESOURCE`, and `SYS_ADMIN`; the latter is required by the reference cluster kernel for tracepoint `perf_event_open`. RBAC is read-only for Pods, ReplicaSets, and Deployments. It has no host network, host root mount, Secret read API, workload mutation, or broad `privileged` mode.
+The agent is the only host-aware workload. `hostPID` is required to map kernel PIDs to containers; read-only `/proc` and cgroup v2 mounts provide attribution; tracefs is writable for probe attachment. The container drops every capability except `BPF`, `PERFMON`, `SYS_RESOURCE`, and `SYS_ADMIN`; the latter is required by the reference cluster kernel for tracepoint `perf_event_open`. RBAC is read-only for Pods, ReplicaSets, Deployments, and the single `kube-system` Namespace used to discover its stable UID. It has no host network, host root mount, Secret read API, workload mutation, or broad `privileged` mode.
 
 ## Provision the Secret
 
@@ -36,7 +36,7 @@ printf '\n'
 kubectl create secret generic okoscope-secrets -n okoscope \
   --from-literal=database-url="$OKOSCOPE_DATABASE_URL" \
   --from-literal=postgres-password="$OKOSCOPE_POSTGRES_PASSWORD" \
-  --from-literal=cluster-credential="$(openssl rand -hex 32)" \
+  --from-literal=admin-credential="$(openssl rand -hex 32)" \
   --from-literal=api-credential="$(openssl rand -hex 32)" \
   --from-literal=webhook-encryption-key="$(openssl rand -hex 32)"
 unset OKOSCOPE_DATABASE_URL OKOSCOPE_POSTGRES_PASSWORD
@@ -51,6 +51,14 @@ kubectl patch secret okoscope-secrets -n okoscope --type merge \
 ```
 
 Rotation invalidates clients using the old value. Coordinate agent and UI credential changes before restarting workloads. Never put values in shell history, tickets, CI artifacts, or repository files. The preflight reports key names and validation reasons only.
+
+## Provision tenants and Application ingestion
+
+The system admin credential creates Organizations, Projects, and Applications. Application creation returns a versioned `oko_app_v1_...` token exactly once; the database stores only its digest. Save that response directly into a secret-management workflow and never place the token in a ConfigMap, committed manifest, ticket, or log.
+
+Create `okoscope-application-credentials` from the one-time response, with one key per Application, and project those keys as read-only files into the agent DaemonSet. Each workload selector references `applicationCredentialFile`; one agent process opens an independently bounded stream per distinct token. The agent reads the UID of `kube-system`, and the server automatically creates or reuses that Cluster inside the token-derived Organization.
+
+Rotation is overlap-first: issue an additional credential, update the Kubernetes Secret and roll the DaemonSet, verify its `last_used_at`, then revoke the old credential through the admin API. Revocation stops the affected stream at its next batch without stopping other Applications. Adding or rotating credentials requires a DaemonSet rollout in this release; hot reload is not supported.
 
 ## New bundled installation
 

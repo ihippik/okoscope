@@ -21,6 +21,7 @@ use kube::{
 use thiserror::Error;
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
+use uuid::Uuid;
 
 use crate::config::{WorkloadMetadata, WorkloadSelector};
 use crate::counters::Counters;
@@ -214,8 +215,8 @@ impl AttributionCache {
             .find(|selector| selector.matches(&metadata))
             .ok_or(AttributionError::NotSelected)?;
         Ok(KubernetesAttribution {
-            project_id: selector.project_id,
-            application_id: selector.application_id,
+            project_id: Uuid::nil(),
+            application_id: selector.route_id,
             node_name: node_name.into(),
             namespace: container.namespace.clone(),
             pod_uid: container.pod_uid.clone(),
@@ -480,8 +481,8 @@ mod tests {
         cache.apply_replica_set(&replica_set);
         cache.apply_pod(&pod);
         let selector = WorkloadSelector {
-            project_id: Uuid::new_v4(),
-            application_id: Uuid::new_v4(),
+            application_credential_file: "/secrets/payment-api".into(),
+            route_id: Uuid::new_v4(),
             namespace: "production".into(),
             kind: "Deployment".into(),
             name: "payment-api".into(),

@@ -9,15 +9,13 @@ data:
     kind: AgentConfiguration
     server:
       endpoint: https://okoscope-server.okoscope.svc:4317
-      credentialFile: /var/run/secrets/okoscope/credential
       caFile: /var/run/secrets/okoscope/ca.crt
     identity:
       nodeName: ${NODE_NAME}
       clusterName: local
     scope:
       workloads:
-        - projectId: 018f4f9c-3f9a-7de1-8000-000000000001
-          applicationId: 018f4f9c-3f9a-7de1-8000-000000000002
+        - applicationCredentialFile: /var/run/secrets/okoscope/applications/payment-api
           namespace: production
           kind: Deployment
           name: payment-api

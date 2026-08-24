@@ -42,9 +42,9 @@ spec:
             - name: OKOSCOPE_DATABASE_URL
               valueFrom:
                 secretKeyRef: {name: okoscope-secrets, key: database-url}
-            - name: OKOSCOPE_CLUSTER_CREDENTIAL
+            - name: OKOSCOPE_ADMIN_CREDENTIAL
               valueFrom:
-                secretKeyRef: {name: okoscope-secrets, key: cluster-credential}
+                secretKeyRef: {name: okoscope-secrets, key: admin-credential}
             - name: OKOSCOPE_API_CREDENTIAL
               valueFrom:
                 secretKeyRef: {name: okoscope-secrets, key: api-credential}

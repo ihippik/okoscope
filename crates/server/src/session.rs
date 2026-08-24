@@ -15,23 +15,20 @@ use tonic::{Request, Response, Status, Streaming, metadata::MetadataMap};
 use uuid::Uuid;
 
 use crate::{
-    auth::{CredentialAuthenticator, SessionScope},
-    ingestion::{IngestionContext, persist_batch},
+    application_credentials::{ApplicationCredentialScope, authenticate},
+    auth::SessionScope,
+    ingestion::persist_application_batch,
 };
 
 #[derive(Clone, Debug)]
 pub struct AgentSessionService {
     pool: PgPool,
-    authenticator: CredentialAuthenticator,
 }
 
 impl AgentSessionService {
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
-        Self {
-            authenticator: CredentialAuthenticator::new(pool.clone()),
-            pool,
-        }
+        Self { pool }
     }
 }
 
@@ -46,12 +43,7 @@ impl AgentService for AgentSessionService {
         request: Request<Streaming<AgentMessage>>,
     ) -> Result<Response<Self::OpenSessionStream>, Status> {
         let credential = bearer(request.metadata())?;
-        let scope = self
-            .authenticator
-            .authenticate(&credential)
-            .await
-            .map_err(internal)?
-            .ok_or_else(|| Status::unauthenticated("invalid or revoked cluster credential"))?;
+        let application_scope = authenticate_application(&self.pool, &credential).await?;
         let mut incoming = request.into_inner();
         let first = incoming
             .message()
@@ -63,6 +55,7 @@ impl AgentService for AgentSessionService {
             Some(agent_message::Message::Hello(hello)) => hello,
             _ => return Err(Status::invalid_argument("first message must be hello")),
         };
+        let scope = resolve_session_scope(&self.pool, application_scope, &hello).await?;
         let (agent_id, _session_id) = register(&self.pool, scope, &hello)
             .await
             .map_err(internal)?;
@@ -79,6 +72,8 @@ impl AgentService for AgentSessionService {
                     cluster_id: scope.cluster_id.to_string(),
                     agent_id: agent_id.to_string(),
                     negotiated_protocol_version: event_model::PROTOCOL_VERSION,
+                    project_id: application_scope.project_id.to_string(),
+                    application_id: application_scope.application_id.to_string(),
                 })),
             }))
             .await
@@ -91,7 +86,7 @@ impl AgentService for AgentSessionService {
                     validate_protocol(message.protocol_version).map_err(|error| Status::failed_precondition(error.to_string()))?;
                     match message.message {
                         Some(agent_message::Message::EventBatch(batch)) => {
-                            let events = batch.events.into_iter().map(event_model::RuntimeEvent::try_from).collect::<Result<Vec<_>, _>>().map_err(|error| Status::invalid_argument(error.to_string()))?;
+                            let mut events = batch.events.into_iter().map(event_model::RuntimeEvent::try_from).collect::<Result<Vec<_>, _>>().map_err(|error| Status::invalid_argument(error.to_string()))?;
                             if !file_activity_capable && events.iter().any(|event| matches!(event.payload,
                                 event_model::EventPayload::FileCreate(_)
                                 | event_model::EventPayload::FileModify(_)
@@ -99,7 +94,10 @@ impl AgentService for AgentSessionService {
                                 | event_model::EventPayload::FileRename(_))) {
                                 return Err(Status::failed_precondition("file activity event requires file.activity.syscall-path/v1 capability"));
                             }
-                            let accepted = persist_batch(&pool, IngestionContext { scope, agent_id }, &events).await.map_err(internal)?;
+                            let accepted = persist_application_batch(&pool, scope, application_scope, agent_id, &mut events).await.map_err(|error| match error {
+                                crate::ingestion::IngestionError::RevokedCredential => Status::unauthenticated("application credential was revoked"),
+                                other => internal(other),
+                            })?;
                             sender.send(Ok(ServerMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(server_message::Message::BatchAcknowledgement(BatchAcknowledgement { sequence: batch.sequence, accepted_events: accepted })) })).await.map_err(|_| Status::unavailable("session response channel closed"))?;
                         }
                         Some(agent_message::Message::Heartbeat(_)) => { touch_agent(&pool, agent_id).await.map_err(internal)?; }
@@ -117,6 +115,49 @@ impl AgentService for AgentSessionService {
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
+}
+
+async fn authenticate_application(
+    pool: &PgPool,
+    credential: &str,
+) -> Result<ApplicationCredentialScope, Status> {
+    authenticate(pool, credential)
+        .await
+        .map_err(|error| match error {
+            crate::application_credentials::ApplicationCredentialError::InvalidToken(_) => {
+                Status::unauthenticated("invalid or revoked application credential")
+            }
+            crate::application_credentials::ApplicationCredentialError::Database(error) => {
+                internal(error)
+            }
+        })?
+        .ok_or_else(|| Status::unauthenticated("invalid or revoked application credential"))
+}
+
+async fn resolve_session_scope(
+    pool: &PgPool,
+    application: ApplicationCredentialScope,
+    hello: &AgentHello,
+) -> Result<SessionScope, Status> {
+    let cluster_uid = Uuid::parse_str(&hello.cluster_uid)
+        .map_err(|_| Status::invalid_argument("cluster_uid must be a UUID"))?;
+    let canonical_uid = cluster_uid.to_string();
+    if canonical_uid != hello.cluster_uid {
+        return Err(Status::invalid_argument("cluster_uid must be canonical"));
+    }
+    let resolved_cluster_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO clusters(id,organization_id,external_id,name) VALUES($1,$2,$3,$3) ON CONFLICT(organization_id,external_id) DO UPDATE SET external_id=EXCLUDED.external_id RETURNING id",
+    )
+    .bind(Uuid::new_v4())
+    .bind(application.organization_id)
+    .bind(canonical_uid)
+    .fetch_one(pool)
+    .await
+    .map_err(internal)?;
+    Ok(SessionScope {
+        organization_id: application.organization_id,
+        cluster_id: resolved_cluster_id,
+    })
 }
 
 fn bearer(metadata: &MetadataMap) -> Result<String, Status> {
@@ -171,7 +212,10 @@ fn internal(error: impl std::fmt::Display) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bootstrap::{BootstrapConfig, bootstrap};
+    use crate::{
+        application_credentials::issue,
+        bootstrap::{BootstrapConfig, bootstrap},
+    };
 
     fn config(name: &str) -> BootstrapConfig {
         BootstrapConfig {
@@ -200,6 +244,7 @@ mod tests {
             kernel_release: kernel_release.into(),
             capabilities: vec!["process.exec/v1".into()],
             drop_counters: None,
+            cluster_uid: Uuid::new_v4().to_string(),
         }
     }
 
@@ -243,5 +288,72 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(refreshed, (None, Some("6.9.2".into())));
+    }
+
+    #[sqlx::test(migrator = "crate::database::MIGRATOR")]
+    #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+    async fn application_scope_discovers_and_reuses_tenant_cluster(pool: PgPool) {
+        let first = bootstrap(&pool, &config("session-scope-first"))
+            .await
+            .unwrap();
+        let second = bootstrap(&pool, &config("session-scope-second"))
+            .await
+            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let issued = issue(
+            &mut tx,
+            first.organization_id,
+            first.project_id,
+            first.application_id,
+            "session",
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let application = authenticate_application(&pool, issued.token())
+            .await
+            .unwrap();
+        let cluster_uid = Uuid::new_v4().to_string();
+        let first_hello = AgentHello {
+            cluster_uid: cluster_uid.clone(),
+            ..hello("node-a", "x86_64", "6.8.1")
+        };
+        let (first_scope, repeated_scope) = tokio::join!(
+            resolve_session_scope(&pool, application, &first_hello),
+            resolve_session_scope(&pool, application, &first_hello)
+        );
+        let first_scope = first_scope.unwrap();
+        let repeated_scope = repeated_scope.unwrap();
+        assert_eq!(first_scope, repeated_scope);
+
+        let (first_registration, same_registration) = tokio::join!(
+            register(&pool, first_scope, &first_hello),
+            register(&pool, first_scope, &first_hello)
+        );
+        assert_eq!(first_registration.unwrap().0, same_registration.unwrap().0);
+
+        let second_application = ApplicationCredentialScope {
+            credential_id: Uuid::new_v4(),
+            organization_id: second.organization_id,
+            project_id: second.project_id,
+            application_id: second.application_id,
+        };
+        let second_scope = resolve_session_scope(&pool, second_application, &first_hello)
+            .await
+            .unwrap();
+        assert_ne!(first_scope.cluster_id, second_scope.cluster_id);
+        assert_ne!(first_scope.organization_id, second_scope.organization_id);
+
+        let malformed = AgentHello {
+            cluster_uid: cluster_uid.to_ascii_uppercase(),
+            ..first_hello
+        };
+        assert_eq!(
+            resolve_session_scope(&pool, application, &malformed)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
     }
 }

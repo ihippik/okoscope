@@ -1,5 +1,6 @@
 pub mod attribution;
 pub mod cgroup;
+pub mod cluster_identity;
 pub mod config;
 pub mod counters;
 pub mod delivery;
@@ -10,6 +11,7 @@ pub mod dns_tcp;
 pub mod file_runtime;
 pub mod kernel_event;
 pub mod lifecycle;
+pub mod multi_stream;
 #[cfg(target_os = "linux")]
 pub mod observer;
 pub mod process_runtime;

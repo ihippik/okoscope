@@ -9,15 +9,13 @@ data:
     kind: AgentConfiguration
     server:
       endpoint: http://okoscope-server.okoscope.svc:4317
-      credentialFile: /var/run/secrets/okoscope/cluster-credential
       developmentPlaintext: true
     identity:
       nodeName: overridden-by-downward-api
       clusterName: local
     scope:
       workloads:
-        - projectId: 018f4f9c-3f9a-7de1-8000-000000000001
-          applicationId: 018f4f9c-3f9a-7de1-8000-000000000002
+        - applicationCredentialFile: /var/run/secrets/okoscope/applications/payment-api
           namespace: okoscope-network-acceptance
           kind: Job
           name: selected-network-fixture

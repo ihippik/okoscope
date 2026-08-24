@@ -12,14 +12,15 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
 use uuid::Uuid;
 
-use crate::database::REQUIRED_MIGRATION;
+use crate::{admin_auth::AdminAuthenticator, database::REQUIRED_MIGRATION};
 
 pub const API_VERSION: &str = "v1";
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct WebApiConfig {
     pub cors_origins: Vec<String>,
+    pub admin_authenticator: Option<AdminAuthenticator>,
 }
 
 impl WebApiConfig {
@@ -50,7 +51,14 @@ impl WebApiConfig {
         }
         Ok(Self {
             cors_origins: validated,
+            admin_authenticator: None,
         })
+    }
+
+    #[must_use]
+    pub fn with_admin_authenticator(mut self, authenticator: AdminAuthenticator) -> Self {
+        self.admin_authenticator = Some(authenticator);
+        self
     }
 }
 
@@ -188,7 +196,13 @@ pub fn router(api: Router, config: &WebApiConfig) -> Router {
         .collect::<Vec<_>>();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers([
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
@@ -251,7 +265,7 @@ mod tests {
             service_version: "1",
             git_commit: "unknown",
             api_version: "v1",
-            required_database_migration: 13,
+            required_database_migration: 14,
         };
         let value = serde_json::to_value(info).unwrap();
         assert_eq!(value["git_commit"], "unknown");
@@ -359,10 +373,9 @@ mod tests {
                 .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
                 .is_none()
         );
-        for (method, request_headers, forbidden) in [
-            ("DELETE", None, "DELETE"),
-            ("GET", Some("cookie"), "cookie"),
-        ] {
+        for (method, request_headers, forbidden) in
+            [("PUT", None, "PUT"), ("GET", Some("cookie"), "cookie")]
+        {
             let mut request = Request::builder()
                 .method(Method::OPTIONS)
                 .uri("/api/v1/test")

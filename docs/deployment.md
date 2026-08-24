@@ -56,14 +56,14 @@ docker run --rm --privileged --platform linux/amd64 \
   -e KUBECONFIG=/root/.kube/config \
   -v "$HOME/.kube/config:/root/.kube/config:ro" \
   -v "$PWD/deploy/examples/agent.yaml:/etc/okoscope/agent.yaml:ro" \
-  -v /dev/null:/var/run/secrets/okoscope/cluster-credential:ro \
+  -v /path/to/application-token:/var/run/secrets/okoscope/applications/payment-api:ro \
   --entrypoint /bin/sh okoscope/agent:dev \
   -c 'mount -t tracefs tracefs /sys/kernel/tracing && exec /usr/local/bin/okoscope-agent'
 ```
 
 If attachment succeeds, the agent proceeds to server connection attempts. An `attach okoscope_exec` or `attach okoscope_sys_enter` error instead means the kernel-side smoke test failed. This smoke test validates probe loading and attachment only; Kubernetes attribution and PostgreSQL persistence are covered by the acceptance checks below.
 
-For a non-development installation, remove `developmentPlaintext`, issue a server certificate whose SAN contains the service hostname, mount its certificate/key into the server and the CA certificate into agents, and configure `OKOSCOPE_TLS_CERTIFICATE`, `OKOSCOPE_TLS_PRIVATE_KEY`, and `server.caFile`. Rotate the cluster credential stored in the Secret and do not commit its value.
+For a non-development installation, remove `developmentPlaintext`, issue a server certificate whose SAN contains the service hostname, mount its certificate/key into the server and the CA certificate into agents, and configure `OKOSCOPE_TLS_CERTIFICATE`, `OKOSCOPE_TLS_PRIVATE_KEY`, and `server.caFile`. Store every one-time Application credential in a Kubernetes Secret and never commit its value.
 
 ## Web UI API
 
@@ -110,11 +110,11 @@ Apply additive migrations before or together with a compatible server, then roll
 
 Rollback removes or restores the DaemonSet first, then restores the server image. Do not delete the StatefulSet PVC or run reverse/destructive migrations. Database removal is a separate operator-approved action.
 
-Known limits: one tested Linux profile, Deployment owner chains only, in-memory agent delivery buffer, no raw-event retention policy or UI, a shared per-cluster agent credential, and no enforcement or risk scoring.
+Known limits: one tested Linux profile, Deployment owner chains only, bounded in-memory per-Application delivery buffers, DaemonSet rollout required for credential changes, no raw-event retention policy or UI, and no enforcement or risk scoring.
 
 ## Runtime event grouping upgrade
 
-Migration `0003_runtime_event_groups.sql` is additive and required by server readiness. Before upgrading, back up PostgreSQL and replace both example credentials in `okoscope-secrets`. `cluster-credential` authenticates agents; `api-credential` authenticates the read API and is stored only as a SHA-256 digest in PostgreSQL.
+Migration `0003_runtime_event_groups.sql` is additive and required by server readiness. The current coordinated agent protocol uses an Application credential for each stream; the server derives Organization, Project, and Application from its SHA-256 digest and discovers Cluster identity from the agent's Kubernetes UID. `api-credential` continues to authenticate the existing read API until user authorization replaces it.
 
 List groups using the Organization-bound credential. Project and Application are explicit filters, while Organization is always derived from the credential:
 
@@ -202,8 +202,7 @@ Then set the optional value on the matching workload selector and restart the ag
 ```yaml
 scope:
   workloads:
-    - projectId: <project-uuid>
-      applicationId: <application-uuid>
+    - applicationCredentialFile: /var/run/secrets/okoscope/applications/payment-api
       namespace: production
       kind: Deployment
       name: payment-api

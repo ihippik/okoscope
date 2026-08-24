@@ -25,7 +25,7 @@ if [[ ${1-} == get && ${2-} == secret && "$*" == *jsonpath* ]]; then
   case "$query" in
     *database-url*) value='postgres://user:password@postgres:5432/okoscope' ;;
     *postgres-password*) value='password' ;;
-    *cluster-credential*) value='cluster-token' ;;
+    *admin-credential*) value='admin-credential-with-at-least-32-bytes' ;;
     *api-credential*) value='api-token' ;;
     *webhook-encryption-key*) value='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' ;;
   esac

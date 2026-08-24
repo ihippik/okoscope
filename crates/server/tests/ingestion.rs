@@ -6,10 +6,11 @@ use event_model::{
     NetworkDnsResponse, ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
 };
 use server::{
+    application_credentials::{issue, revoke},
     auth::SessionScope,
     backfill::{BackfillOptions, run as run_backfill},
     bootstrap::{BootstrapConfig, bootstrap},
-    ingestion::{IngestionContext, IngestionError, persist_batch},
+    ingestion::{IngestionContext, IngestionError, persist_application_batch, persist_batch},
     inventory_operations::{
         InventoryBackfillOptions, InventoryBackfillStats, backfill as backfill_inventory,
         reconcile as reconcile_inventory,
@@ -34,6 +35,86 @@ fn config(organization: &str) -> BootstrapConfig {
         cluster_credential: format!("credential-{organization}"),
         api_credential: format!("api-credential-{organization}"),
     }
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn application_stream_scope_overrides_wire_destination_and_honors_revocation(
+    pool: sqlx::PgPool,
+) {
+    let owned = bootstrap(&pool, &config("scoped-ingestion-owned"))
+        .await
+        .unwrap();
+    let foreign = bootstrap(&pool, &config("scoped-ingestion-foreign"))
+        .await
+        .unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,'scoped-node','test')")
+        .bind(agent_id).bind(owned.organization_id).bind(owned.cluster_id).execute(&pool).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let issued = issue(
+        &mut tx,
+        owned.organization_id,
+        owned.project_id,
+        owned.application_id,
+        "stream",
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let credential = server::application_credentials::authenticate(&pool, issued.token())
+        .await
+        .unwrap()
+        .unwrap();
+    let scope = SessionScope {
+        organization_id: owned.organization_id,
+        cluster_id: owned.cluster_id,
+    };
+
+    let mut events = vec![event(foreign.project_id, foreign.application_id)];
+    let event_id = events[0].id;
+    assert_eq!(
+        persist_application_batch(&pool, scope, credential, agent_id, &mut events)
+            .await
+            .unwrap(),
+        1
+    );
+    let stored: (Uuid, Uuid, Uuid) = sqlx::query_as(
+        "SELECT organization_id,project_id,application_id FROM runtime_events WHERE event_id=$1",
+    )
+    .bind(event_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        (
+            owned.organization_id,
+            owned.project_id,
+            owned.application_id
+        )
+    );
+    assert_eq!(
+        persist_application_batch(&pool, scope, credential, agent_id, &mut events)
+            .await
+            .unwrap(),
+        0
+    );
+
+    revoke(
+        &pool,
+        owned.organization_id,
+        owned.project_id,
+        owned.application_id,
+        issued.summary.id,
+    )
+    .await
+    .unwrap();
+    let mut after_revocation = vec![event(Uuid::nil(), Uuid::nil())];
+    assert!(matches!(
+        persist_application_batch(&pool, scope, credential, agent_id, &mut after_revocation).await,
+        Err(IngestionError::RevokedCredential)
+    ));
 }
 
 fn event(project_id: Uuid, application_id: Uuid) -> RuntimeEvent {

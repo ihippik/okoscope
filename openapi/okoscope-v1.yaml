@@ -13,6 +13,32 @@ paths:
       operationId: getBuildInfo
       security: []
       responses: { '200': { $ref: '#/components/responses/BuildInfoResponse' } }
+  /api/v1/organizations:
+    post:
+      operationId: createOrganization
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
+      responses:
+        '201': { description: Organization created, content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/v1/organizations/{organization_id}/projects:
+    parameters: [{ $ref: '#/components/parameters/OrganizationId' }]
+    post:
+      operationId: createProject
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
+      responses:
+        '201': { description: Project created, content: { application/json: { schema: { $ref: '#/components/schemas/ProvisionedProject' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /api/v1/attention-summary:
     get:
       operationId: getOrganizationAttentionSummary
@@ -82,6 +108,18 @@ paths:
           '200': { $ref: '#/components/responses/ApplicationPage' },
           '404': { $ref: '#/components/responses/Error' },
         }
+    post:
+      operationId: createApplication
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
+      responses:
+        '201': { description: Application and one-time initial credential created, content: { application/json: { schema: { $ref: '#/components/schemas/CreatedApplication' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/applications/{application_id}:
     parameters:
       [
@@ -115,6 +153,38 @@ paths:
           '401': { $ref: '#/components/responses/Error' },
           '404': { $ref: '#/components/responses/Error' },
         }
+  /api/v1/projects/{project_id}/applications/{application_id}/credentials:
+    parameters:
+      [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
+    get:
+      operationId: listApplicationCredentials
+      security: [{ adminAuth: [] }]
+      responses:
+        '200': { description: Secret-safe credential metadata, content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationCredentialPage' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: issueApplicationCredential
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/IssueCredentialRequest' } } }
+      responses:
+        '201': { description: One-time Application credential, content: { application/json: { schema: { $ref: '#/components/schemas/IssuedApplicationCredential' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{project_id}/applications/{application_id}/credentials/{credential_id}:
+    parameters:
+      [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/CredentialId' }]
+    delete:
+      operationId: revokeApplicationCredential
+      security: [{ adminAuth: [] }]
+      responses:
+        '204': { description: Credential revoked; repeated revocation is successful }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory:
     parameters:
       [
@@ -645,6 +715,7 @@ paths:
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
+    adminAuth: { type: http, scheme: bearer, description: System administrator credential }
   parameters:
     Cursor:
       {
@@ -664,8 +735,12 @@ components:
       { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
     ProjectId:
       { name: project_id, in: path, required: true, schema: { type: string, format: uuid } }
+    OrganizationId:
+      { name: organization_id, in: path, required: true, schema: { type: string, format: uuid } }
     ApplicationId:
       { name: application_id, in: path, required: true, schema: { type: string, format: uuid } }
+    CredentialId:
+      { name: credential_id, in: path, required: true, schema: { type: string, format: uuid } }
     InventoryItemId:
       { name: item_id, in: path, required: true, schema: { type: string, format: uuid } }
     GroupId: { name: group_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -871,7 +946,7 @@ components:
         service_version: { type: string, example: 0.1.0 }
         git_commit: { type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a }
         api_version: { type: string, const: v1 }
-        required_database_migration: { type: integer, format: int64, example: 13 }
+        required_database_migration: { type: integer, format: int64, example: 14 }
     Organization:
       type: object
       additionalProperties: false
@@ -881,6 +956,74 @@ components:
         slug: { type: string }
         name: { type: string }
         created_at: { $ref: '#/components/schemas/Timestamp' }
+    CreateNamedResource:
+      type: object
+      additionalProperties: false
+      required: [slug, name]
+      properties:
+        slug: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+        name: { type: string, minLength: 1, maxLength: 120 }
+    ProvisionedProject:
+      type: object
+      additionalProperties: false
+      required: [id, organization_id, slug, name, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        organization_id: { $ref: '#/components/schemas/Uuid' }
+        slug: { type: string }
+        name: { type: string }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+    ProvisionedApplication:
+      type: object
+      additionalProperties: false
+      required: [id, organization_id, project_id, slug, name, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        organization_id: { $ref: '#/components/schemas/Uuid' }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        slug: { type: string }
+        name: { type: string }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+    ApplicationCredential:
+      type: object
+      additionalProperties: false
+      required: [id, name, token_hint, created_at, last_used_at, revoked_at]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        token_hint: { type: string, minLength: 4, maxLength: 12 }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        last_used_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        revoked_at: { $ref: '#/components/schemas/NullableTimestamp' }
+    ApplicationCredentialPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ApplicationCredential' } }
+    IssueCredentialRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties: { name: { type: string, minLength: 1, maxLength: 64 } }
+    IssuedApplicationCredential:
+      type: object
+      additionalProperties: false
+      required: [id, name, token, token_hint, created_at, shown_once]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string }
+        token: { type: string, writeOnly: true, pattern: '^oko_app_v1_[A-Za-z0-9_-]+$' }
+        token_hint: { type: string }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        shown_once: { type: boolean, const: true }
+    CreatedApplication:
+      type: object
+      additionalProperties: false
+      required: [application, credential]
+      properties:
+        application: { $ref: '#/components/schemas/ProvisionedApplication' }
+        credential: { $ref: '#/components/schemas/IssuedApplicationCredential' }
     Project:
       type: object
       additionalProperties: false
