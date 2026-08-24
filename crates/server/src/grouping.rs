@@ -402,7 +402,7 @@ pub fn fingerprint_v1(
             json!({
                 "identity": identity,
                 "termination": value.termination,
-                "source": value.source,
+                "evidence_source": value.source,
                 "correlation": value.correlation
             })
         }
@@ -899,6 +899,21 @@ mod tests {
             fingerprint_v1(&scope(&first), &first).unwrap().digest,
             fingerprint_v1(&scope(&repeated), &repeated).unwrap().digest
         );
+        let successful = event(EventPayload::ProcessExit(ProcessExit::new(
+            0,
+            ProcessTermination::exited(0),
+            GenerationCorrelation::Unresolved {
+                reason: UnresolvedGenerationReason::BeforeObservation,
+            },
+        )));
+        let summary = fingerprint_v1(&scope(&successful), &successful)
+            .unwrap()
+            .summary
+            .semantic;
+        assert_eq!(summary["evidence_source"], "kernel");
+        assert!(summary.get("source").is_none());
+        assert_eq!(summary["termination"]["type"], "exited");
+        assert_eq!(summary["termination"]["status"], 0);
 
         let killed = event(EventPayload::ProcessExit(ProcessExit::new(
             9,
