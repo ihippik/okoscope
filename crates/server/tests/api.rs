@@ -205,6 +205,44 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
         "not_configured"
     );
 
+    sqlx::query(
+        "DELETE FROM outbox_messages WHERE aggregate_id=$1 AND topic='runtime_group.first_seen'",
+    )
+    .bind(group_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let missing_outbox = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/runtime-groups/{group_id}"))
+                .header(
+                    AUTHORIZATION,
+                    format!("Bearer {}", first_config.api_credential),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_outbox.status(), StatusCode::OK);
+    let missing_outbox_body: serde_json::Value = serde_json::from_slice(
+        &to_bytes(missing_outbox.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        missing_outbox_body["notification"],
+        serde_json::json!({
+            "state": "not_configured",
+            "delivery_count": 0,
+            "succeeded_count": 0,
+            "failed_count": 0,
+        })
+    );
+
     let occurrences = app
         .clone()
         .oneshot(

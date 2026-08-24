@@ -150,10 +150,10 @@ async fn termination_correlation_and_restart_projection_are_durable_and_replay_s
     );
     assert_eq!(second_result.unwrap() + third_result.unwrap(), 2);
     assert_eq!(persist_batch(&pool, context, &restarts).await.unwrap(), 0);
-    let projected: (i64, i64, i32) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM runtime_restart_projection_memberships),(SELECT count(*) FROM runtime_event_groups WHERE event_kind='container.restart_loop'),(SELECT observed_restart_count FROM runtime_restart_loop_projections)",
+    let projected: (i64, i64, i32, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM runtime_restart_projection_memberships),(SELECT count(*) FROM runtime_event_groups WHERE event_kind='container.restart_loop'),(SELECT observed_restart_count FROM runtime_restart_loop_projections),(SELECT count(*) FROM outbox_messages o JOIN runtime_event_groups g ON g.id=o.aggregate_id WHERE g.event_kind='container.restart_loop' AND o.topic='runtime_group.first_seen')",
     ).fetch_one(&pool).await.unwrap();
-    assert_eq!(projected, (3, 1, 3));
+    assert_eq!(projected, (3, 1, 3, 1));
     let first_raw_id: Uuid = sqlx::query_scalar("SELECT id FROM runtime_events WHERE event_id=$1")
         .bind(restarts[0].id)
         .fetch_one(&pool)

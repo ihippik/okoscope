@@ -455,13 +455,19 @@ async fn notification_summary(
     organization_id: Uuid,
     group_id: Uuid,
 ) -> Result<NotificationSummary, sqlx::Error> {
-    sqlx::query_as::<_, NotificationSummary>(
+    let summary = sqlx::query_as::<_, NotificationSummary>(
         "SELECT CASE WHEN o.source='backfill' THEN 'backfill_suppressed' WHEN count(d.id)=0 AND o.processed_at IS NOT NULL THEN 'not_configured' WHEN count(d.id) FILTER (WHERE d.status IN ('pending','in_flight'))>0 THEN CASE WHEN count(d.id) FILTER (WHERE d.status='in_flight')>0 THEN 'delivering' ELSE 'pending' END WHEN count(d.id) FILTER (WHERE d.status='succeeded')>0 THEN 'delivered' WHEN count(d.id) FILTER (WHERE d.status IN ('failed','cancelled','suppressed'))>0 THEN 'terminally_failed' ELSE 'pending' END state,count(d.id)::bigint delivery_count,count(d.id) FILTER (WHERE d.status='succeeded')::bigint succeeded_count,count(d.id) FILTER (WHERE d.status IN ('failed','cancelled','suppressed'))::bigint failed_count FROM outbox_messages o LEFT JOIN notification_deliveries d ON d.outbox_message_id=o.id WHERE o.organization_id=$1 AND o.aggregate_id=$2 AND o.topic='runtime_group.first_seen' GROUP BY o.id,o.source,o.processed_at",
     )
     .bind(organization_id)
     .bind(group_id)
-    .fetch_one(pool)
-    .await
+    .fetch_optional(pool)
+    .await?;
+    Ok(summary.unwrap_or_else(|| NotificationSummary {
+        state: "not_configured".into(),
+        delivery_count: 0,
+        succeeded_count: 0,
+        failed_count: 0,
+    }))
 }
 
 async fn event_by_id(

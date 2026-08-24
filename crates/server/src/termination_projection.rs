@@ -175,7 +175,23 @@ async fn upsert_restart_loop_group(
         .bind(candidate).bind(organization_id).bind(event.attribution.project_id).bind(cluster_id)
         .bind(event.attribution.application_id).bind(&event.attribution.namespace).bind(&event.attribution.workload_kind)
         .bind(&event.attribution.workload_name).bind(DERIVED_GROUP_FINGERPRINT_VERSION).bind(digest.as_slice())
-        .bind(summary).bind(event.observed_at).bind(raw_event_id).fetch_one(&mut **tx).await?;
+        .bind(&summary).bind(event.observed_at).bind(raw_event_id).fetch_one(&mut **tx).await?;
+    if group_id == candidate {
+        sqlx::query("INSERT INTO outbox_messages (id,organization_id,project_id,topic,aggregate_id,schema_version,source,payload) VALUES ($1,$2,$3,'runtime_group.first_seen',$4,1,'live',$5) ON CONFLICT (topic,aggregate_id,schema_version) DO NOTHING")
+            .bind(Uuid::new_v4())
+            .bind(organization_id)
+            .bind(event.attribution.project_id)
+            .bind(group_id)
+            .bind(json!({
+                "group_id": group_id,
+                "application_id": event.attribution.application_id,
+                "event_kind": "container.restart_loop",
+                "semantic": summary,
+                "fingerprint_version": DERIVED_GROUP_FINGERPRINT_VERSION,
+            }))
+            .execute(&mut **tx)
+            .await?;
+    }
     let membership = sqlx::query("INSERT INTO runtime_event_group_memberships (organization_id,project_id,application_id,event_id,group_id,fingerprint_version) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING")
         .bind(organization_id).bind(event.attribution.project_id).bind(event.attribution.application_id)
         .bind(raw_event_id).bind(group_id).bind(DERIVED_GROUP_FINGERPRINT_VERSION).execute(&mut **tx).await?;
