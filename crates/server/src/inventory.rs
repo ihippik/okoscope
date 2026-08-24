@@ -41,9 +41,7 @@ pub enum InventoryKind {
     Syscall,
     InboundEndpoint,
     FileActivity,
-    ProcessExit,
-    ContainerTermination,
-    ContainerRestart,
+    Lifecycle,
 }
 
 impl InventoryKind {
@@ -55,9 +53,7 @@ impl InventoryKind {
             Self::Syscall => "syscall",
             Self::InboundEndpoint => "inbound_endpoint",
             Self::FileActivity => "file_activity",
-            Self::ProcessExit => "process_exit",
-            Self::ContainerTermination => "container_termination",
-            Self::ContainerRestart => "container_restart",
+            Self::Lifecycle => "lifecycle",
         }
     }
 }
@@ -419,7 +415,8 @@ fn fingerprint_with_version(
                     required("process_command", &event.process.command)?
                 }
             };
-            encoder.field(InventoryKind::ProcessExit.as_str().as_bytes());
+            encoder.field(InventoryKind::Lifecycle.as_str().as_bytes());
+            encoder.field(b"process.exit");
             encoder.field(identity.as_bytes());
             let termination = match &value.termination {
                 ProcessTermination::Exited { status } => {
@@ -438,29 +435,31 @@ fn fingerprint_with_version(
                 }
             };
             (
-                InventoryKind::ProcessExit,
-                json!({"identity":identity,"termination":termination,"source":value.source}),
+                InventoryKind::Lifecycle,
+                json!({"event_kind":"process.exit","identity":identity,"termination":termination,"evidence_source":value.source}),
             )
         }
         EventPayload::ContainerTermination(value) => {
             let container = required("container_name", &event.attribution.container_name)?;
             let reason = required("termination_reason", &value.reason)?;
-            encoder.field(InventoryKind::ContainerTermination.as_str().as_bytes());
+            encoder.field(InventoryKind::Lifecycle.as_str().as_bytes());
+            encoder.field(b"container.terminated");
             encoder.field(container.as_bytes());
             encoder.field(reason.as_bytes());
             encoder.field(&value.exit_code.to_be_bytes());
             (
-                InventoryKind::ContainerTermination,
-                json!({"container_name":container,"reason":reason,"exit_code":value.exit_code,"source":value.source}),
+                InventoryKind::Lifecycle,
+                json!({"event_kind":"container.terminated","container_name":container,"reason":reason,"exit_code":value.exit_code,"evidence_source":value.source}),
             )
         }
         EventPayload::ContainerRestart(value) => {
             let container = required("container_name", &event.attribution.container_name)?;
-            encoder.field(InventoryKind::ContainerRestart.as_str().as_bytes());
+            encoder.field(InventoryKind::Lifecycle.as_str().as_bytes());
+            encoder.field(b"container.restart");
             encoder.field(container.as_bytes());
             (
-                InventoryKind::ContainerRestart,
-                json!({"container_name":container,"source":value.source,"restart_count":value.restart_count,"restart_delta":value.restart_delta,"observation_gap":value.observation_gap}),
+                InventoryKind::Lifecycle,
+                json!({"event_kind":"container.restart","container_name":container,"evidence_source":value.source,"restart_count":value.restart_count,"restart_delta":value.restart_delta,"observation_gap":value.observation_gap}),
             )
         }
     };
@@ -576,11 +575,12 @@ impl CanonicalEncoder {
 mod tests {
     use chrono::Utc;
     use event_model::{
-        DnsAddressAnswer, DnsDirection, DnsName, DnsQueryType, DnsResponseCode, DnsTransport,
-        EventPayload, FileActivityPath, FileModify, FileRename, KubernetesAttribution,
-        NetworkAccept, NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome,
-        NetworkDnsQuery, NetworkDnsResponse, NetworkListen, ProcessExec, ProcessIdentity,
-        RuntimeEvent, SyscallEvent,
+        ContainerRestart, ContainerTermination, DnsAddressAnswer, DnsDirection, DnsName,
+        DnsQueryType, DnsResponseCode, DnsTransport, EventPayload, FileActivityPath, FileModify,
+        FileRename, GenerationCorrelation, KubernetesAttribution, NetworkAccept,
+        NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery,
+        NetworkDnsResponse, NetworkListen, ProcessExec, ProcessExit, ProcessIdentity,
+        ProcessTermination, RuntimeEvent, SyscallEvent, UnresolvedGenerationReason,
     };
 
     use super::*;
@@ -812,5 +812,43 @@ mod tests {
         assert_eq!(renamed_item.semantic_summary["replaced"], false);
         assert!(renamed_item.semantic_summary.get("inode").is_none());
         assert!(renamed_item.semantic_summary.get("mount_id").is_none());
+    }
+
+    #[test]
+    fn lifecycle_events_share_inventory_kind_but_keep_distinct_event_identity() {
+        let events = [
+            event(EventPayload::ProcessExit(ProcessExit::new(
+                0,
+                ProcessTermination::exited(0),
+                GenerationCorrelation::Unresolved {
+                    reason: UnresolvedGenerationReason::BeforeObservation,
+                },
+            ))),
+            event(EventPayload::ContainerTermination(
+                ContainerTermination::new("container-a", "Completed", 0, None, None).unwrap(),
+            )),
+            event(EventPayload::ContainerRestart(
+                ContainerRestart::new("container-a", 3, 1, None, None).unwrap(),
+            )),
+        ];
+        let fingerprints = events
+            .iter()
+            .map(|event| fingerprint(scope(event), event).unwrap())
+            .collect::<Vec<_>>();
+
+        assert!(
+            fingerprints
+                .iter()
+                .all(|fingerprint| fingerprint.kind == InventoryKind::Lifecycle)
+        );
+        assert_eq!(
+            fingerprints
+                .iter()
+                .map(|fingerprint| fingerprint.semantic_summary["event_kind"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["process.exit", "container.terminated", "container.restart"]
+        );
+        assert_ne!(fingerprints[0].digest, fingerprints[1].digest);
+        assert_ne!(fingerprints[1].digest, fingerprints[2].digest);
     }
 }

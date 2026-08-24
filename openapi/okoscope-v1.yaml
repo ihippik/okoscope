@@ -2019,7 +2019,7 @@ components:
     InventoryKind:
       {
         type: string,
-        enum: [process, destination, domain, syscall, inbound_endpoint, file_activity],
+        enum: [process, destination, domain, syscall, inbound_endpoint, file_activity, lifecycle],
       }
     InventoryReleasePresence:
       {
@@ -2035,6 +2035,16 @@ components:
         - { $ref: '#/components/schemas/InventorySyscallIdentity' }
         - { $ref: '#/components/schemas/InventoryInboundEndpointIdentity' }
         - { $ref: '#/components/schemas/FileActivitySemanticSummary' }
+        - { $ref: '#/components/schemas/InventoryLifecycleSemanticSummary' }
+    InventoryLifecycleSemanticSummary:
+      type: object
+      additionalProperties: true
+      required: [event_kind, evidence_source]
+      properties:
+        event_kind:
+          type: string
+          enum: [process.exit, container.terminated, container.restart, container.restart_loop]
+        evidence_source: { type: string, enum: [kernel, kubernetes, derived] }
     InventoryProcessIdentity:
       type: object
       additionalProperties: false
@@ -2141,7 +2151,7 @@ components:
         first_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
         last_seen_at: { $ref: '#/components/schemas/NullableTimestamp' }
         kinds:
-          { type: array, maxItems: 6, items: { $ref: '#/components/schemas/InventoryKindCount' } }
+          { type: array, maxItems: 7, items: { $ref: '#/components/schemas/InventoryKindCount' } }
     InventoryDistributionEntry:
       type: object
       additionalProperties: false

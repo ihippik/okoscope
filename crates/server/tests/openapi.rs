@@ -347,7 +347,17 @@ fn assert_inventory_contract(document: &serde_json::Value) {
             "domain",
             "syscall",
             "inbound_endpoint",
-            "file_activity"
+            "file_activity",
+            "lifecycle"
+        ])
+    );
+    assert_eq!(
+        schemas["InventoryLifecycleSemanticSummary"]["properties"]["event_kind"]["enum"],
+        serde_json::json!([
+            "process.exit",
+            "container.terminated",
+            "container.restart",
+            "container.restart_loop"
         ])
     );
     assert_eq!(

@@ -8,6 +8,8 @@ use sha2::{Digest, Sha256};
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
+use crate::inventory::CURRENT_INVENTORY_IDENTITY_VERSION;
+
 pub const CORRELATION_TOLERANCE: Duration = Duration::seconds(30);
 pub const RESTART_WINDOW: Duration = Duration::minutes(10);
 pub const RESTART_THRESHOLD_V1: u32 = 3;
@@ -185,6 +187,15 @@ async fn upsert_restart_loop_group(
         .execute(&mut **tx)
         .await?;
     }
+    sqlx::query("INSERT INTO runtime_inventory_group_links (organization_id,project_id,application_id,item_id,group_id) SELECT $1,$2,$3,m.item_id,$4 FROM runtime_inventory_event_memberships m WHERE m.organization_id=$1 AND m.project_id=$2 AND m.application_id=$3 AND m.event_id=$5 AND m.identity_version=$6 ON CONFLICT (item_id,group_id) DO NOTHING")
+        .bind(organization_id)
+        .bind(event.attribution.project_id)
+        .bind(event.attribution.application_id)
+        .bind(group_id)
+        .bind(raw_event_id)
+        .bind(CURRENT_INVENTORY_IDENTITY_VERSION.get())
+        .execute(&mut **tx)
+        .await?;
     sqlx::query("UPDATE runtime_restart_loop_projections SET group_id=$1 WHERE organization_id=$2 AND project_id=$3 AND application_id=$4 AND cluster_id=$5 AND pod_uid=$6 AND container_name=$7 AND runtime_container_id=$8 AND projection_version=$9")
         .bind(group_id).bind(organization_id).bind(event.attribution.project_id).bind(event.attribution.application_id)
         .bind(cluster_id).bind(&event.attribution.pod_uid).bind(&event.attribution.container_name)

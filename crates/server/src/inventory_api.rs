@@ -607,13 +607,19 @@ fn validate_kind(kind: Option<&str>) -> Result<(), InventoryApiError> {
     if kind.is_none_or(|value| {
         matches!(
             value,
-            "process" | "destination" | "domain" | "syscall" | "inbound_endpoint" | "file_activity"
+            "process"
+                | "destination"
+                | "domain"
+                | "syscall"
+                | "inbound_endpoint"
+                | "file_activity"
+                | "lifecycle"
         )
     }) {
         Ok(())
     } else {
         Err(InventoryApiError::Invalid(
-            "kind must be process, destination, domain, syscall, inbound_endpoint, or file_activity".into(),
+            "kind must be process, destination, domain, syscall, inbound_endpoint, file_activity, or lifecycle".into(),
         ))
     }
 }
@@ -758,12 +764,13 @@ async fn summary(
             .bind(principal.organization_id).bind(project_id).bind(application_id).bind(version)
             .bind(scope.release_id).bind(scope.cluster_id).bind(scope.namespace.as_deref()).bind(scope.workload_kind.as_deref()).bind(scope.workload_name.as_deref()).bind(scope.container_name.as_deref()).bind(scope.observed_from).bind(scope.observed_to).bind(scope.operation.as_deref()).bind(search.as_deref())
             .fetch_one(&state.pool).await?;
-    let mut kinds = Vec::with_capacity(5);
+    let mut kinds = Vec::with_capacity(7);
     for kind in [
         "destination",
         "domain",
         "inbound_endpoint",
         "file_activity",
+        "lifecycle",
         "process",
         "syscall",
     ] {
