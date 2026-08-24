@@ -3,6 +3,16 @@ use std::collections::HashSet;
 const LIVE_OPERATIONS: &[(&str, &str)] = &[
     ("/api/v1/build-info", "get"),
     ("/api/v1/organizations", "post"),
+    ("/api/v1/admin/organizations", "get"),
+    (
+        "/api/v1/admin/organizations/{organization_id}/projects",
+        "get",
+    ),
+    ("/api/v1/admin/projects/{project_id}/applications", "get"),
+    (
+        "/api/v1/admin/projects/{project_id}/applications/{application_id}",
+        "get",
+    ),
     ("/api/v1/organizations/{organization_id}/projects", "post"),
     ("/api/v1/attention-summary", "get"),
     (
@@ -177,7 +187,8 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
                 | "/api/v1/organizations/{organization_id}/projects"
                 | "/api/v1/projects/{project_id}/applications/{application_id}/credentials"
                 | "/api/v1/projects/{project_id}/applications/{application_id}/credentials/{credential_id}"
-        ) || path == "/api/v1/projects/{project_id}/applications" && method == "post"
+        ) || path.starts_with("/api/v1/admin/")
+            || path == "/api/v1/projects/{project_id}/applications" && method == "post"
         {
             assert_eq!(
                 operation["security"],

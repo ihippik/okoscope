@@ -32,6 +32,20 @@ fn request(method: &str, uri: &str, credential: Option<&str>, body: &str) -> Req
     builder.body(Body::from(body.to_owned())).unwrap()
 }
 
+fn idempotent_request(
+    method: &str,
+    uri: &str,
+    credential: Option<&str>,
+    key: Uuid,
+    body: &str,
+) -> Request<Body> {
+    let mut request = request(method, uri, credential, body);
+    request
+        .headers_mut()
+        .insert("idempotency-key", key.to_string().parse().unwrap());
+    request
+}
+
 async fn json(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
 }
@@ -209,4 +223,102 @@ async fn failed_application_creation_is_atomic(pool: sqlx::PgPool) {
             .await
             .unwrap();
     assert_eq!((application_count, credential_count), (0, 0));
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn admin_reads_hierarchy_and_idempotency_never_replays_secrets(pool: sqlx::PgPool) {
+    let app = app(pool);
+    let organization_key = Uuid::new_v4();
+    let create_organization = || {
+        idempotent_request(
+            "POST",
+            "/api/v1/organizations",
+            Some(ADMIN),
+            organization_key,
+            r#"{"slug":"acme","name":"Acme"}"#,
+        )
+    };
+    let first = app.clone().oneshot(create_organization()).await.unwrap();
+    assert_eq!(first.status(), StatusCode::CREATED);
+    let first = json(first).await;
+    let organization_id = first["id"].as_str().unwrap();
+    let replay = app.clone().oneshot(create_organization()).await.unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(json(replay).await["id"], first["id"]);
+
+    let organizations = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            "/api/v1/admin/organizations",
+            Some(ADMIN),
+            "",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        json(organizations).await["items"].as_array().unwrap().len(),
+        1
+    );
+
+    let project = app
+        .clone()
+        .oneshot(idempotent_request(
+            "POST",
+            &format!("/api/v1/organizations/{organization_id}/projects"),
+            Some(ADMIN),
+            Uuid::new_v4(),
+            r#"{"slug":"payments","name":"Payments"}"#,
+        ))
+        .await
+        .unwrap();
+    let project = json(project).await;
+    let project_id = project["id"].as_str().unwrap();
+    let application_key = Uuid::new_v4();
+    let application_uri = format!("/api/v1/projects/{project_id}/applications");
+    let application_body = r#"{"slug":"api","name":"API"}"#;
+    let application = app
+        .clone()
+        .oneshot(idempotent_request(
+            "POST",
+            &application_uri,
+            Some(ADMIN),
+            application_key,
+            application_body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(application.status(), StatusCode::CREATED);
+    let application = json(application).await;
+    assert!(application["credential"]["token"].as_str().is_some());
+    let replay = app
+        .clone()
+        .oneshot(idempotent_request(
+            "POST",
+            &application_uri,
+            Some(ADMIN),
+            application_key,
+            application_body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::CONFLICT);
+    let replay = json(replay).await;
+    assert_eq!(replay["error"], "operation_already_completed");
+    assert!(!replay.to_string().contains("oko_app_v1_"));
+
+    let applications = app
+        .oneshot(request(
+            "GET",
+            &format!("/api/v1/admin/projects/{project_id}/applications"),
+            Some(ADMIN),
+            "",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        json(applications).await["items"].as_array().unwrap().len(),
+        1
+    );
 }

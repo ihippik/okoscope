@@ -17,28 +17,72 @@ paths:
     post:
       operationId: createOrganization
       security: [{ adminAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
       responses:
         '201': { description: Organization created, content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
+        '200': { description: Original Organization returned for an idempotent replay, content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/admin/organizations:
+    get:
+      operationId: listAdminOrganizations
+      security: [{ adminAuth: [] }]
+      responses:
+        '200': { description: Organizations ordered by creation time and id, content: { application/json: { schema: { $ref: '#/components/schemas/AdminOrganizationPage' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/admin/organizations/{organization_id}/projects:
+    parameters: [{ $ref: '#/components/parameters/OrganizationId' }]
+    get:
+      operationId: listAdminProjects
+      security: [{ adminAuth: [] }]
+      responses:
+        '200': { description: Projects ordered by creation time and id, content: { application/json: { schema: { $ref: '#/components/schemas/AdminProjectPage' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/admin/projects/{project_id}/applications:
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+    get:
+      operationId: listAdminApplications
+      security: [{ adminAuth: [] }]
+      responses:
+        '200': { description: Applications ordered by creation time and id, content: { application/json: { schema: { $ref: '#/components/schemas/AdminApplicationPage' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/admin/projects/{project_id}/applications/{application_id}:
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
+    get:
+      operationId: getAdminApplication
+      security: [{ adminAuth: [] }]
+      responses:
+        '200': { description: Application metadata without credentials, content: { application/json: { schema: { $ref: '#/components/schemas/ProvisionedApplication' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/organizations/{organization_id}/projects:
     parameters: [{ $ref: '#/components/parameters/OrganizationId' }]
     post:
       operationId: createProject
       security: [{ adminAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
       responses:
         '201': { description: Project created, content: { application/json: { schema: { $ref: '#/components/schemas/ProvisionedProject' } } } }
+        '200': { description: Original Project returned for an idempotent replay, content: { application/json: { schema: { $ref: '#/components/schemas/ProvisionedProject' } } } }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/attention-summary:
     get:
       operationId: getOrganizationAttentionSummary
@@ -111,6 +155,7 @@ paths:
     post:
       operationId: createApplication
       security: [{ adminAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
@@ -120,6 +165,7 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/applications/{application_id}:
     parameters:
       [
@@ -166,6 +212,7 @@ paths:
     post:
       operationId: issueApplicationCredential
       security: [{ adminAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/IssueCredentialRequest' } } }
@@ -175,6 +222,7 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/applications/{application_id}/credentials/{credential_id}:
     parameters:
       [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/CredentialId' }]
@@ -185,6 +233,7 @@ paths:
         '204': { description: Credential revoked; repeated revocation is successful }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory:
     parameters:
       [
@@ -760,6 +809,14 @@ components:
         required: true,
         schema: { type: string, minLength: 8, maxLength: 200, pattern: '^[!-~]+$' },
       }
+    ProvisioningIdempotencyKey:
+      {
+        name: Idempotency-Key,
+        in: header,
+        required: false,
+        description: Canonical UUID. Reusing it with a different request returns idempotency_key_reused. Application and credential replays never return plaintext token material.,
+        schema: { type: string, format: uuid },
+      }
   headers:
     RequestId: { schema: { type: string }, description: Correlation identifier for the request. }
   schemas:
@@ -938,6 +995,10 @@ components:
         error: { type: string, example: not_found }
         message: { type: string, example: resource not found }
         request_id: { type: string, example: 0ec02ed2-8483-4981-893e-bffc535897d7 }
+        fields:
+          type: object
+          additionalProperties: { type: string }
+          description: Present for field-level validation failures.
     BuildInfo:
       type: object
       additionalProperties: false
@@ -946,7 +1007,7 @@ components:
         service_version: { type: string, example: 0.1.0 }
         git_commit: { type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a }
         api_version: { type: string, const: v1 }
-        required_database_migration: { type: integer, format: int64, example: 14 }
+        required_database_migration: { type: integer, format: int64, example: 15 }
     Organization:
       type: object
       additionalProperties: false
@@ -956,6 +1017,12 @@ components:
         slug: { type: string }
         name: { type: string }
         created_at: { $ref: '#/components/schemas/Timestamp' }
+    AdminOrganizationPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/Organization' } }
     CreateNamedResource:
       type: object
       additionalProperties: false
@@ -973,6 +1040,12 @@ components:
         slug: { type: string }
         name: { type: string }
         created_at: { $ref: '#/components/schemas/Timestamp' }
+    AdminProjectPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ProvisionedProject' } }
     ProvisionedApplication:
       type: object
       additionalProperties: false
@@ -984,16 +1057,24 @@ components:
         slug: { type: string }
         name: { type: string }
         created_at: { $ref: '#/components/schemas/Timestamp' }
+    AdminApplicationPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ProvisionedApplication' } }
     ApplicationCredential:
       type: object
       additionalProperties: false
       required: [id, name, token_hint, created_at, last_used_at, revoked_at]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
-        name: { type: string, minLength: 1, maxLength: 64 }
+        name: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }
         token_hint: { type: string, minLength: 4, maxLength: 12 }
         created_at: { $ref: '#/components/schemas/Timestamp' }
-        last_used_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        last_used_at:
+          allOf: [{ $ref: '#/components/schemas/NullableTimestamp' }]
+          description: Time of the most recent successful agent authentication; failed attempts do not update it.
         revoked_at: { $ref: '#/components/schemas/NullableTimestamp' }
     ApplicationCredentialPage:
       type: object
@@ -1005,7 +1086,7 @@ components:
       type: object
       additionalProperties: false
       required: [name]
-      properties: { name: { type: string, minLength: 1, maxLength: 64 } }
+      properties: { name: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' } }
     IssuedApplicationCredential:
       type: object
       additionalProperties: false

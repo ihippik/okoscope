@@ -207,6 +207,7 @@ pub fn router(api: Router, config: &WebApiConfig) -> Router {
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
             HeaderName::from_static(REQUEST_ID_HEADER),
+            HeaderName::from_static("idempotency-key"),
         ])
         .expose_headers([HeaderName::from_static(REQUEST_ID_HEADER)]);
     Router::new()
@@ -265,7 +266,7 @@ mod tests {
             service_version: "1",
             git_commit: "unknown",
             api_version: "v1",
-            required_database_migration: 14,
+            required_database_migration: 15,
         };
         let value = serde_json::to_value(info).unwrap();
         assert_eq!(value["git_commit"], "unknown");
@@ -356,7 +357,7 @@ mod tests {
                     .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
                     .header(
                         header::ACCESS_CONTROL_REQUEST_HEADERS,
-                        "authorization,x-request-id",
+                        "authorization,x-request-id,idempotency-key",
                     )
                     .body(Body::empty())
                     .unwrap(),

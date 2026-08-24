@@ -3,11 +3,12 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, header::AUTHORIZATION},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sha2::{Digest, Sha256};
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -15,7 +16,7 @@ use crate::{
     application_credentials::{
         ApplicationCredentialSummary, issue, list as list_credentials, revoke,
     },
-    web_api::{RequestId, error_response},
+    web_api::RequestId,
 };
 
 #[derive(Clone, Debug)]
@@ -27,6 +28,19 @@ struct ProvisioningState {
 pub fn router(pool: PgPool, admin: Option<AdminAuthenticator>) -> Router {
     Router::new()
         .route("/api/v1/organizations", post(create_organization))
+        .route("/api/v1/admin/organizations", get(list_organizations))
+        .route(
+            "/api/v1/admin/organizations/{organization_id}/projects",
+            get(list_projects),
+        )
+        .route(
+            "/api/v1/admin/projects/{project_id}/applications",
+            get(list_applications),
+        )
+        .route(
+            "/api/v1/admin/projects/{project_id}/applications/{application_id}",
+            get(get_application),
+        )
         .route(
             "/api/v1/organizations/{organization_id}/projects",
             post(create_project),
@@ -52,51 +66,57 @@ struct ProvisioningError {
     code: &'static str,
     message: String,
     request_id: RequestId,
+    fields: Option<std::collections::BTreeMap<&'static str, String>>,
 }
 
 impl ProvisioningError {
     fn unauthorized(request_id: &RequestId) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
-            code: "unauthorized",
+            code: "invalid_admin_credential",
             message: "invalid or missing admin bearer credential".into(),
             request_id: request_id.clone(),
+            fields: None,
         }
     }
 
-    fn invalid(message: impl Into<String>, request_id: &RequestId) -> Self {
+    fn invalid(field: &'static str, detail: impl Into<String>, request_id: &RequestId) -> Self {
+        let detail = detail.into();
         Self {
             status: StatusCode::BAD_REQUEST,
-            code: "invalid_request",
-            message: message.into(),
+            code: "validation_failed",
+            message: "the request contains invalid fields".into(),
             request_id: request_id.clone(),
+            fields: Some(std::collections::BTreeMap::from([(field, detail)])),
         }
     }
 
-    fn not_found(request_id: &RequestId) -> Self {
+    fn not_found(code: &'static str, request_id: &RequestId) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
-            code: "not_found",
+            code,
             message: "resource not found".into(),
             request_id: request_id.clone(),
+            fields: None,
         }
     }
 
-    fn conflict(request_id: &RequestId) -> Self {
+    fn conflict(code: &'static str, request_id: &RequestId) -> Self {
         Self {
             status: StatusCode::CONFLICT,
-            code: "conflict",
+            code,
             message: "resource already exists".into(),
             request_id: request_id.clone(),
+            fields: None,
         }
     }
 
-    fn database(error: &sqlx::Error, request_id: &RequestId) -> Self {
+    fn database(error: &sqlx::Error, conflict_code: &'static str, request_id: &RequestId) -> Self {
         if error
             .as_database_error()
             .is_some_and(sqlx::error::DatabaseError::is_unique_violation)
         {
-            return Self::conflict(request_id);
+            return Self::conflict(conflict_code, request_id);
         }
         tracing::error!(error=%error, request_id=%request_id.0, "provisioning database error");
         Self {
@@ -104,13 +124,39 @@ impl ProvisioningError {
             code: "internal_error",
             message: "internal server error".into(),
             request_id: request_id.clone(),
+            fields: None,
         }
+    }
+
+    fn completed(request_id: &RequestId) -> Self {
+        Self::conflict("operation_already_completed", request_id)
+    }
+
+    fn idempotency_reused(request_id: &RequestId) -> Self {
+        Self::conflict("idempotency_key_reused", request_id)
     }
 }
 
 impl IntoResponse for ProvisioningError {
     fn into_response(self) -> Response {
-        error_response(self.status, self.code, self.message, &self.request_id)
+        #[derive(Serialize)]
+        struct Body {
+            error: &'static str,
+            message: String,
+            request_id: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            fields: Option<std::collections::BTreeMap<&'static str, String>>,
+        }
+        (
+            self.status,
+            Json(Body {
+                error: self.code,
+                message: self.message,
+                request_id: self.request_id.0,
+                fields: self.fields,
+            }),
+        )
+            .into_response()
     }
 }
 
@@ -175,6 +221,21 @@ struct CredentialPage {
     items: Vec<ApplicationCredentialSummary>,
 }
 
+#[derive(Debug, Serialize)]
+struct OrganizationPage {
+    items: Vec<OrganizationResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectPage {
+    items: Vec<ProjectResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct ApplicationPage {
+    items: Vec<ApplicationResponse>,
+}
+
 fn authorize(
     state: &ProvisioningState,
     headers: &HeaderMap,
@@ -208,6 +269,7 @@ fn validate_slug(value: &str, request_id: &RequestId) -> Result<(), Provisioning
         Ok(())
     } else {
         Err(ProvisioningError::invalid(
+            "slug",
             "slug must contain 1-63 lowercase letters, digits, or single hyphens",
             request_id,
         ))
@@ -219,6 +281,7 @@ fn validate_name(value: &str, request_id: &RequestId) -> Result<(), Provisioning
         Ok(())
     } else {
         Err(ProvisioningError::invalid(
+            "name",
             "name must contain 1-120 characters without surrounding whitespace",
             request_id,
         ))
@@ -226,14 +289,205 @@ fn validate_name(value: &str, request_id: &RequestId) -> Result<(), Provisioning
 }
 
 fn validate_credential_name(value: &str, request_id: &RequestId) -> Result<(), ProvisioningError> {
-    if value.trim() == value && (1..=64).contains(&value.chars().count()) {
+    let valid = (1..=64).contains(&value.len())
+        && value.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'.' | b'_' | b'-'))
+        });
+    if valid {
         Ok(())
     } else {
         Err(ProvisioningError::invalid(
-            "credential name must contain 1-64 characters without surrounding whitespace",
+            "name",
+            "credential name must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
             request_id,
         ))
     }
+}
+
+enum Idempotency {
+    Disabled,
+    Fresh(Uuid),
+    Replay(Uuid),
+}
+
+async fn reserve_idempotency(
+    tx: &mut Transaction<'_, Postgres>,
+    headers: &HeaderMap,
+    operation: &'static str,
+    fingerprint_parts: &[&str],
+    request_id: &RequestId,
+) -> Result<Idempotency, ProvisioningError> {
+    let Some(raw_key) = headers.get("idempotency-key") else {
+        return Ok(Idempotency::Disabled);
+    };
+    let key = raw_key.to_str().ok().and_then(|value| {
+        Uuid::parse_str(value)
+            .ok()
+            .filter(|parsed| parsed.to_string() == value)
+    });
+    let Some(key) = key else {
+        return Err(ProvisioningError::invalid(
+            "idempotency_key",
+            "Idempotency-Key must be a canonical UUID",
+            request_id,
+        ));
+    };
+    let key_hash = Sha256::digest(format!("okoscope.provisioning.v1\0{key}").as_bytes());
+    let mut fingerprint = Sha256::new();
+    fingerprint.update(operation.as_bytes());
+    for part in fingerprint_parts {
+        fingerprint.update([0]);
+        fingerprint.update(part.as_bytes());
+    }
+    let fingerprint = fingerprint.finalize();
+    let reservation_id = Uuid::new_v4();
+    let inserted = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO provisioning_idempotency_keys(id,operation,key_hash,request_fingerprint) VALUES($1,$2,$3,$4) ON CONFLICT(operation,key_hash) DO NOTHING RETURNING id",
+    )
+    .bind(reservation_id)
+    .bind(operation)
+    .bind(key_hash.as_slice())
+    .bind(fingerprint.as_slice())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| ProvisioningError::database(&error, "idempotency_key_reused", request_id))?;
+    if inserted.is_some() {
+        return Ok(Idempotency::Fresh(reservation_id));
+    }
+    let existing: (Vec<u8>, Option<Uuid>) = sqlx::query_as(
+        "SELECT request_fingerprint,resource_id FROM provisioning_idempotency_keys WHERE operation=$1 AND key_hash=$2",
+    )
+    .bind(operation)
+    .bind(key_hash.as_slice())
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|error| ProvisioningError::database(&error, "idempotency_key_reused", request_id))?;
+    if existing.0.as_slice() != fingerprint.as_slice() {
+        return Err(ProvisioningError::idempotency_reused(request_id));
+    }
+    existing
+        .1
+        .map(Idempotency::Replay)
+        .ok_or_else(|| ProvisioningError::idempotency_reused(request_id))
+}
+
+async fn complete_idempotency(
+    tx: &mut Transaction<'_, Postgres>,
+    state: &Idempotency,
+    resource_id: Uuid,
+    request_id: &RequestId,
+) -> Result<(), ProvisioningError> {
+    if let Idempotency::Fresh(reservation_id) = state {
+        sqlx::query("UPDATE provisioning_idempotency_keys SET resource_id=$1 WHERE id=$2")
+            .bind(resource_id)
+            .bind(reservation_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|error| {
+                ProvisioningError::database(&error, "idempotency_key_reused", request_id)
+            })?;
+    }
+    Ok(())
+}
+
+async fn list_organizations(
+    State(state): State<ProvisioningState>,
+    headers: HeaderMap,
+    Extension(request_id): Extension<RequestId>,
+) -> Result<Json<OrganizationPage>, ProvisioningError> {
+    authorize(&state, &headers, &request_id)?;
+    let items = sqlx::query_as(
+        "SELECT id,slug,name,created_at FROM organizations ORDER BY created_at,id LIMIT 200",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|error| {
+        ProvisioningError::database(&error, "organization_slug_conflict", &request_id)
+    })?;
+    Ok(Json(OrganizationPage { items }))
+}
+
+async fn list_projects(
+    State(state): State<ProvisioningState>,
+    Path(organization_id): Path<Uuid>,
+    headers: HeaderMap,
+    Extension(request_id): Extension<RequestId>,
+) -> Result<Json<ProjectPage>, ProvisioningError> {
+    authorize(&state, &headers, &request_id)?;
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1)")
+        .bind(organization_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|error| {
+            ProvisioningError::database(&error, "project_slug_conflict", &request_id)
+        })?;
+    if !exists {
+        return Err(ProvisioningError::not_found(
+            "organization_not_found",
+            &request_id,
+        ));
+    }
+    let items = sqlx::query_as(
+        "SELECT id,organization_id,slug,name,created_at FROM projects WHERE organization_id=$1 ORDER BY created_at,id LIMIT 200",
+    )
+    .bind(organization_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|error| ProvisioningError::database(&error, "project_slug_conflict", &request_id))?;
+    Ok(Json(ProjectPage { items }))
+}
+
+async fn list_applications(
+    State(state): State<ProvisioningState>,
+    Path(project_id): Path<Uuid>,
+    headers: HeaderMap,
+    Extension(request_id): Extension<RequestId>,
+) -> Result<Json<ApplicationPage>, ProvisioningError> {
+    authorize(&state, &headers, &request_id)?;
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1)")
+        .bind(project_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|error| {
+            ProvisioningError::database(&error, "application_slug_conflict", &request_id)
+        })?;
+    if !exists {
+        return Err(ProvisioningError::not_found(
+            "project_not_found",
+            &request_id,
+        ));
+    }
+    let items = sqlx::query_as(
+        "SELECT id,organization_id,project_id,slug,name,created_at FROM applications WHERE project_id=$1 ORDER BY created_at,id LIMIT 200",
+    )
+    .bind(project_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|error| {
+        ProvisioningError::database(&error, "application_slug_conflict", &request_id)
+    })?;
+    Ok(Json(ApplicationPage { items }))
+}
+
+async fn get_application(
+    State(state): State<ProvisioningState>,
+    Path((project_id, application_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Extension(request_id): Extension<RequestId>,
+) -> Result<Json<ApplicationResponse>, ProvisioningError> {
+    authorize(&state, &headers, &request_id)?;
+    let application = sqlx::query_as(
+        "SELECT id,organization_id,project_id,slug,name,created_at FROM applications WHERE project_id=$1 AND id=$2",
+    )
+    .bind(project_id)
+    .bind(application_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|error| {
+        ProvisioningError::database(&error, "application_slug_conflict", &request_id)
+    })?
+    .ok_or_else(|| ProvisioningError::not_found("application_not_found", &request_id))?;
+    Ok(Json(application))
 }
 
 async fn create_organization(
@@ -245,12 +499,29 @@ async fn create_organization(
     authorize(&state, &headers, &request_id)?;
     validate_slug(&input.slug, &request_id)?;
     validate_name(&input.name, &request_id)?;
-    let mut tx = state
-        .pool
-        .begin()
-        .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
-    let organization = sqlx::query_as(
+    let mut tx = state.pool.begin().await.map_err(|error| {
+        ProvisioningError::database(&error, "organization_slug_conflict", &request_id)
+    })?;
+    let idempotency = reserve_idempotency(
+        &mut tx,
+        &headers,
+        "create_organization",
+        &[&input.slug, &input.name],
+        &request_id,
+    )
+    .await?;
+    if let Idempotency::Replay(resource_id) = idempotency {
+        let organization =
+            sqlx::query_as("SELECT id,slug,name,created_at FROM organizations WHERE id=$1")
+                .bind(resource_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|error| {
+                    ProvisioningError::database(&error, "organization_slug_conflict", &request_id)
+                })?;
+        return Ok((StatusCode::OK, Json(organization)));
+    }
+    let organization: OrganizationResponse = sqlx::query_as(
         "INSERT INTO organizations(id,slug,name) VALUES($1,$2,$3) RETURNING id,slug,name,created_at",
     )
     .bind(Uuid::new_v4())
@@ -258,10 +529,11 @@ async fn create_organization(
     .bind(input.name)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|error| ProvisioningError::database(&error, &request_id))?;
-    tx.commit()
-        .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+    .map_err(|error| ProvisioningError::database(&error, "organization_slug_conflict", &request_id))?;
+    complete_idempotency(&mut tx, &idempotency, organization.id, &request_id).await?;
+    tx.commit().await.map_err(|error| {
+        ProvisioningError::database(&error, "organization_slug_conflict", &request_id)
+    })?;
     Ok((StatusCode::CREATED, Json(organization)))
 }
 
@@ -275,25 +547,49 @@ async fn create_project(
     authorize(&state, &headers, &request_id)?;
     validate_slug(&input.slug, &request_id)?;
     validate_name(&input.name, &request_id)?;
-    let mut tx = state
-        .pool
-        .begin()
+    let mut tx = state.pool.begin().await.map_err(|error| {
+        ProvisioningError::database(&error, "project_slug_conflict", &request_id)
+    })?;
+    let organization_id_text = organization_id.to_string();
+    let idempotency = reserve_idempotency(
+        &mut tx,
+        &headers,
+        "create_project",
+        &[&organization_id_text, &input.slug, &input.name],
+        &request_id,
+    )
+    .await?;
+    if let Idempotency::Replay(resource_id) = idempotency {
+        let project = sqlx::query_as(
+            "SELECT id,organization_id,slug,name,created_at FROM projects WHERE id=$1 AND organization_id=$2",
+        )
+        .bind(resource_id)
+        .bind(organization_id)
+        .fetch_one(&mut *tx)
         .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+        .map_err(|error| ProvisioningError::database(&error, "project_slug_conflict", &request_id))?;
+        return Ok((StatusCode::OK, Json(project)));
+    }
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1)")
         .bind(organization_id)
         .fetch_one(&mut *tx)
         .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+        .map_err(|error| {
+            ProvisioningError::database(&error, "project_slug_conflict", &request_id)
+        })?;
     if !exists {
-        return Err(ProvisioningError::not_found(&request_id));
+        return Err(ProvisioningError::not_found(
+            "organization_not_found",
+            &request_id,
+        ));
     }
-    let project = sqlx::query_as("INSERT INTO projects(id,organization_id,slug,name) VALUES($1,$2,$3,$4) RETURNING id,organization_id,slug,name,created_at")
+    let project: ProjectResponse = sqlx::query_as("INSERT INTO projects(id,organization_id,slug,name) VALUES($1,$2,$3,$4) RETURNING id,organization_id,slug,name,created_at")
         .bind(Uuid::new_v4()).bind(organization_id).bind(input.slug).bind(input.name)
-        .fetch_one(&mut *tx).await.map_err(|error| ProvisioningError::database(&error,&request_id))?;
-    tx.commit()
-        .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+        .fetch_one(&mut *tx).await.map_err(|error| ProvisioningError::database(&error,"project_slug_conflict",&request_id))?;
+    complete_idempotency(&mut tx, &idempotency, project.id, &request_id).await?;
+    tx.commit().await.map_err(|error| {
+        ProvisioningError::database(&error, "project_slug_conflict", &request_id)
+    })?;
     Ok((StatusCode::CREATED, Json(project)))
 }
 
@@ -307,21 +603,33 @@ async fn create_application(
     authorize(&state, &headers, &request_id)?;
     validate_slug(&input.slug, &request_id)?;
     validate_name(&input.name, &request_id)?;
-    let mut tx = state
-        .pool
-        .begin()
-        .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+    let mut tx = state.pool.begin().await.map_err(|error| {
+        ProvisioningError::database(&error, "application_slug_conflict", &request_id)
+    })?;
+    let project_id_text = project_id.to_string();
+    let idempotency = reserve_idempotency(
+        &mut tx,
+        &headers,
+        "create_application",
+        &[&project_id_text, &input.slug, &input.name],
+        &request_id,
+    )
+    .await?;
+    if matches!(idempotency, Idempotency::Replay(_)) {
+        return Err(ProvisioningError::completed(&request_id));
+    }
     let organization_id: Uuid =
         sqlx::query_scalar("SELECT organization_id FROM projects WHERE id=$1")
             .bind(project_id)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|error| ProvisioningError::database(&error, &request_id))?
-            .ok_or_else(|| ProvisioningError::not_found(&request_id))?;
+            .map_err(|error| {
+                ProvisioningError::database(&error, "application_slug_conflict", &request_id)
+            })?
+            .ok_or_else(|| ProvisioningError::not_found("project_not_found", &request_id))?;
     let application: ApplicationResponse = sqlx::query_as("INSERT INTO applications(id,organization_id,project_id,slug,name) VALUES($1,$2,$3,$4,$5) RETURNING id,organization_id,project_id,slug,name,created_at")
         .bind(Uuid::new_v4()).bind(organization_id).bind(project_id).bind(input.slug).bind(input.name)
-        .fetch_one(&mut *tx).await.map_err(|error| ProvisioningError::database(&error,&request_id))?;
+        .fetch_one(&mut *tx).await.map_err(|error| ProvisioningError::database(&error,"application_slug_conflict",&request_id))?;
     let credential = issue(
         &mut tx,
         organization_id,
@@ -330,14 +638,17 @@ async fn create_application(
         "default",
     )
     .await
-    .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+    .map_err(|error| {
+        ProvisioningError::database(&error, "credential_name_conflict", &request_id)
+    })?;
     let response = CreatedApplicationResponse {
         application,
         credential: issued_response(&credential),
     };
-    tx.commit()
-        .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+    complete_idempotency(&mut tx, &idempotency, response.application.id, &request_id).await?;
+    tx.commit().await.map_err(|error| {
+        ProvisioningError::database(&error, "application_slug_conflict", &request_id)
+    })?;
     Ok((StatusCode::CREATED, Json(response)))
 }
 
@@ -352,8 +663,10 @@ async fn owned_application(
         .bind(application_id)
         .fetch_optional(&state.pool)
         .await
-        .map_err(|error| ProvisioningError::database(&error, request_id))?
-        .ok_or_else(|| ProvisioningError::not_found(request_id))
+        .map_err(|error| {
+            ProvisioningError::database(&error, "application_slug_conflict", request_id)
+        })?
+        .ok_or_else(|| ProvisioningError::not_found("application_not_found", request_id))
 }
 
 async fn list_application_credentials(
@@ -367,7 +680,9 @@ async fn list_application_credentials(
         owned_application(&state, project_id, application_id, &request_id).await?;
     let items = list_credentials(&state.pool, organization_id, project_id, application_id)
         .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+        .map_err(|error| {
+            ProvisioningError::database(&error, "credential_name_conflict", &request_id)
+        })?;
     Ok(Json(CredentialPage { items }))
 }
 
@@ -382,11 +697,22 @@ async fn issue_application_credential(
     validate_credential_name(&input.name, &request_id)?;
     let organization_id =
         owned_application(&state, project_id, application_id, &request_id).await?;
-    let mut tx = state
-        .pool
-        .begin()
-        .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+    let mut tx = state.pool.begin().await.map_err(|error| {
+        ProvisioningError::database(&error, "credential_name_conflict", &request_id)
+    })?;
+    let project_id_text = project_id.to_string();
+    let application_id_text = application_id.to_string();
+    let idempotency = reserve_idempotency(
+        &mut tx,
+        &headers,
+        "issue_application_credential",
+        &[&project_id_text, &application_id_text, &input.name],
+        &request_id,
+    )
+    .await?;
+    if matches!(idempotency, Idempotency::Replay(_)) {
+        return Err(ProvisioningError::completed(&request_id));
+    }
     let credential = issue(
         &mut tx,
         organization_id,
@@ -395,11 +721,14 @@ async fn issue_application_credential(
         &input.name,
     )
     .await
-    .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+    .map_err(|error| {
+        ProvisioningError::database(&error, "credential_name_conflict", &request_id)
+    })?;
     let response = issued_response(&credential);
-    tx.commit()
-        .await
-        .map_err(|error| ProvisioningError::database(&error, &request_id))?;
+    complete_idempotency(&mut tx, &idempotency, response.id, &request_id).await?;
+    tx.commit().await.map_err(|error| {
+        ProvisioningError::database(&error, "credential_name_conflict", &request_id)
+    })?;
     Ok((StatusCode::CREATED, Json(response)))
 }
 
@@ -420,8 +749,8 @@ async fn revoke_application_credential(
         credential_id,
     )
     .await
-    .map_err(|error| ProvisioningError::database(&error, &request_id))?
-    .ok_or_else(|| ProvisioningError::not_found(&request_id))?;
+    .map_err(|error| ProvisioningError::database(&error, "credential_name_conflict", &request_id))?
+    .ok_or_else(|| ProvisioningError::not_found("credential_not_found", &request_id))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -435,5 +764,35 @@ fn issued_response(
         token_hint: credential.summary.token_hint.clone(),
         created_at: credential.summary.created_at,
         shown_once: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_id() -> RequestId {
+        RequestId("provisioning-unit-test".into())
+    }
+
+    #[test]
+    fn validation_codes_and_fields_are_stable() {
+        let slug = validate_slug("Invalid--slug", &request_id()).unwrap_err();
+        assert_eq!(slug.code, "validation_failed");
+        assert!(slug.fields.unwrap().contains_key("slug"));
+
+        let credential = validate_credential_name("rotation 1", &request_id()).unwrap_err();
+        assert_eq!(credential.code, "validation_failed");
+        assert!(credential.fields.unwrap().contains_key("name"));
+    }
+
+    #[test]
+    fn credential_names_use_a_bounded_ascii_operator_safe_format() {
+        for valid in ["default", "rotation-2026-08", "blue_green.v2"] {
+            validate_credential_name(valid, &request_id()).unwrap();
+        }
+        for invalid in ["", " leading", "two words", "юникод", "_leading"] {
+            assert!(validate_credential_name(invalid, &request_id()).is_err());
+        }
     }
 }
