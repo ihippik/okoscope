@@ -179,6 +179,17 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         "documented route inventory drift"
     );
     assert_navigation_and_group_contract(&document);
+    assert_required_fields(
+        &document,
+        "AttentionRuntimeGroupResourceRef",
+        &[
+            "event_kind",
+            "semantic_summary",
+            "namespace",
+            "workload_kind",
+            "workload_name",
+        ],
+    );
     assert_network_contract(&document);
     assert_inventory_contract(&document);
     assert_notification_health_contract(&document);

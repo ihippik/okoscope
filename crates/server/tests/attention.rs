@@ -233,6 +233,18 @@ async fn summaries_are_complete_ranked_and_tenant_isolated(pool: sqlx::PgPool) {
             .len(),
         1
     );
+    let runtime_group_resource = application["priority_items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| &item["resource"])
+        .find(|resource| resource["type"] == "runtime_group")
+        .expect("runtime-group priority resource");
+    assert_eq!(runtime_group_resource["event_kind"], "process.exec");
+    assert!(runtime_group_resource["semantic_summary"].is_object());
+    assert_eq!(runtime_group_resource["namespace"], "default");
+    assert_eq!(runtime_group_resource["workload_kind"], "Deployment");
+    assert_eq!(runtime_group_resource["workload_name"], "app");
     let custom = app
         .clone()
         .oneshot(request(

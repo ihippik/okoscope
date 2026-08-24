@@ -229,6 +229,11 @@ enum ResourceRef {
         project_id: Uuid,
         application_id: Uuid,
         runtime_group_id: Uuid,
+        event_kind: String,
+        semantic_summary: Value,
+        namespace: String,
+        workload_kind: String,
+        workload_name: String,
     },
     RuntimeDiff {
         project_id: Uuid,
@@ -267,6 +272,9 @@ struct DiscoveryRow {
     occurrence_count: i64,
     event_kind: String,
     semantic_summary: Value,
+    namespace: String,
+    workload_kind: String,
+    workload_name: String,
     is_new: bool,
 }
 
@@ -535,7 +543,7 @@ async fn load_discoveries(
     to: DateTime<Utc>,
     limit: i64,
 ) -> Result<Vec<DiscoveryRow>, sqlx::Error> {
-    sqlx::query_as("SELECT g.id group_id,g.project_id,p.name project_name,p.slug project_slug,g.application_id,a.name application_name,a.slug application_slug,g.first_seen_at,g.last_seen_at,g.occurrence_count,g.event_kind,g.semantic_summary,(g.first_seen_at BETWEEN $3 AND $4) is_new FROM runtime_event_groups g JOIN projects p ON p.organization_id=g.organization_id AND p.id=g.project_id JOIN applications a ON a.organization_id=g.organization_id AND a.project_id=g.project_id AND a.id=g.application_id WHERE g.organization_id=$1 AND ($2::uuid IS NULL OR g.application_id=$2) AND g.status='open' ORDER BY CASE WHEN g.event_kind='container.restart_loop' THEN 0 WHEN g.first_seen_at BETWEEN $3 AND $4 THEN 1 ELSE 2 END,g.occurrence_count DESC,CASE WHEN g.first_seen_at BETWEEN $3 AND $4 THEN g.first_seen_at ELSE g.last_seen_at END DESC,g.id LIMIT $5")
+    sqlx::query_as("SELECT g.id group_id,g.project_id,p.name project_name,p.slug project_slug,g.application_id,a.name application_name,a.slug application_slug,g.first_seen_at,g.last_seen_at,g.occurrence_count,g.event_kind,g.semantic_summary,g.namespace,g.workload_kind,g.workload_name,(g.first_seen_at BETWEEN $3 AND $4) is_new FROM runtime_event_groups g JOIN projects p ON p.organization_id=g.organization_id AND p.id=g.project_id JOIN applications a ON a.organization_id=g.organization_id AND a.project_id=g.project_id AND a.id=g.application_id WHERE g.organization_id=$1 AND ($2::uuid IS NULL OR g.application_id=$2) AND g.status='open' ORDER BY CASE WHEN g.event_kind='container.restart_loop' THEN 0 WHEN g.first_seen_at BETWEEN $3 AND $4 THEN 1 ELSE 2 END,g.occurrence_count DESC,CASE WHEN g.first_seen_at BETWEEN $3 AND $4 THEN g.first_seen_at ELSE g.last_seen_at END DESC,g.id LIMIT $5")
         .bind(organization_id).bind(application_id).bind(from).bind(to).bind(limit).fetch_all(&mut **tx).await
 }
 
@@ -858,6 +866,11 @@ fn discovery_item(r: DiscoveryRow) -> PriorityItem {
             project_id: r.project_id,
             application_id: r.application_id,
             runtime_group_id: r.group_id,
+            event_kind: r.event_kind,
+            semantic_summary: r.semantic_summary,
+            namespace: r.namespace,
+            workload_kind: r.workload_kind,
+            workload_name: r.workload_name,
         },
         stable_id: r.group_id,
     }
@@ -1295,11 +1308,24 @@ mod tests {
                 project_id: id,
                 application_id: id,
                 runtime_group_id: id,
+                event_kind: "process.exec".into(),
+                semantic_summary: serde_json::json!({"executable": "/app/worker"}),
+                namespace: "production".into(),
+                workload_kind: "Deployment".into(),
+                workload_name: "worker".into(),
             },
             stable_id: id,
         };
         let value = serde_json::to_value(item).unwrap();
         assert_eq!(value["resource"]["type"], "runtime_group");
+        assert_eq!(value["resource"]["event_kind"], "process.exec");
+        assert_eq!(
+            value["resource"]["semantic_summary"]["executable"],
+            "/app/worker"
+        );
+        assert_eq!(value["resource"]["namespace"], "production");
+        assert_eq!(value["resource"]["workload_kind"], "Deployment");
+        assert_eq!(value["resource"]["workload_name"], "worker");
         let text = value.to_string();
         for forbidden in [
             "webhook",
@@ -1335,6 +1361,9 @@ mod tests {
                 "window_ended_at": now,
                 "container_name": "worker"
             }),
+            namespace: "production".into(),
+            workload_kind: "Deployment".into(),
+            workload_name: "worker".into(),
             is_new: true,
         });
         let value = serde_json::to_value(item).unwrap();

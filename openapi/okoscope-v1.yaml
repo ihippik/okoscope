@@ -754,8 +754,17 @@ components:
     AttentionRuntimeGroupResourceRef:
       type: object
       additionalProperties: false
-      required: [type, project_id, application_id, runtime_group_id]
-      properties: { type: { type: string, const: runtime_group }, project_id: { $ref: '#/components/schemas/Uuid' }, application_id: { $ref: '#/components/schemas/Uuid' }, runtime_group_id: { $ref: '#/components/schemas/Uuid' } }
+      required: [type, project_id, application_id, runtime_group_id, event_kind, semantic_summary, namespace, workload_kind, workload_name]
+      properties:
+        type: { type: string, const: runtime_group }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        application_id: { $ref: '#/components/schemas/Uuid' }
+        runtime_group_id: { $ref: '#/components/schemas/Uuid' }
+        event_kind: { $ref: '#/components/schemas/RuntimeEventKind' }
+        semantic_summary: { $ref: '#/components/schemas/RuntimeEventSemanticSummary' }
+        namespace: { type: string, minLength: 1, maxLength: 253 }
+        workload_kind: { type: string, minLength: 1, maxLength: 253 }
+        workload_name: { type: string, minLength: 1, maxLength: 253 }
     AttentionRuntimeDiffResourceRef:
       type: object
       additionalProperties: false
