@@ -16,6 +16,7 @@ use crate::{
     application_credentials::{
         ApplicationCredentialSummary, issue, list as list_credentials, revoke,
     },
+    auth::{ApiCredentialAuthenticator, ApiPrincipal},
     web_api::RequestId,
 };
 
@@ -23,6 +24,7 @@ use crate::{
 struct ProvisioningState {
     pool: PgPool,
     admin: Option<AdminAuthenticator>,
+    tenant: ApiCredentialAuthenticator,
 }
 
 pub fn router(pool: PgPool, admin: Option<AdminAuthenticator>) -> Router {
@@ -57,7 +59,17 @@ pub fn router(pool: PgPool, admin: Option<AdminAuthenticator>) -> Router {
             "/api/v1/projects/{project_id}/applications/{application_id}/credentials/{credential_id}",
             axum::routing::delete(revoke_application_credential),
         )
-        .with_state(ProvisioningState { pool, admin })
+        .with_state(ProvisioningState {
+            tenant: ApiCredentialAuthenticator::new(pool.clone()),
+            pool,
+            admin,
+        })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProvisioningPrincipal {
+    SystemAdmin,
+    Tenant(ApiPrincipal),
 }
 
 #[derive(Debug)]
@@ -75,6 +87,16 @@ impl ProvisioningError {
             status: StatusCode::UNAUTHORIZED,
             code: "invalid_admin_credential",
             message: "invalid or missing admin bearer credential".into(),
+            request_id: request_id.clone(),
+            fields: None,
+        }
+    }
+
+    fn invalid_credential(request_id: &RequestId) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code: "invalid_credential",
+            message: "invalid or missing bearer credential".into(),
             request_id: request_id.clone(),
             fields: None,
         }
@@ -236,15 +258,19 @@ struct ApplicationPage {
     items: Vec<ApplicationResponse>,
 }
 
-fn authorize(
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+}
+
+fn authorize_system_admin(
     state: &ProvisioningState,
     headers: &HeaderMap,
     request_id: &RequestId,
 ) -> Result<(), ProvisioningError> {
-    let presented = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
+    let presented = bearer(headers);
     if state
         .admin
         .as_ref()
@@ -254,6 +280,47 @@ fn authorize(
         Ok(())
     } else {
         Err(ProvisioningError::unauthorized(request_id))
+    }
+}
+
+async fn resolve_principal(
+    state: &ProvisioningState,
+    headers: &HeaderMap,
+    request_id: &RequestId,
+) -> Result<ProvisioningPrincipal, ProvisioningError> {
+    let Some(presented) = bearer(headers) else {
+        return Err(ProvisioningError::invalid_credential(request_id));
+    };
+    if state
+        .admin
+        .as_ref()
+        .is_some_and(|admin| admin.authenticate(presented))
+    {
+        return Ok(ProvisioningPrincipal::SystemAdmin);
+    }
+    state
+        .tenant
+        .authenticate(presented)
+        .await
+        .map_err(|error| ProvisioningError::database(&error, "credential_conflict", request_id))?
+        .map(ProvisioningPrincipal::Tenant)
+        .ok_or_else(|| ProvisioningError::invalid_credential(request_id))
+}
+
+fn authorize_organization(
+    principal: ProvisioningPrincipal,
+    organization_id: Uuid,
+    not_found_code: &'static str,
+    request_id: &RequestId,
+) -> Result<(), ProvisioningError> {
+    match principal {
+        ProvisioningPrincipal::SystemAdmin => Ok(()),
+        ProvisioningPrincipal::Tenant(tenant) if tenant.organization_id == organization_id => {
+            Ok(())
+        }
+        ProvisioningPrincipal::Tenant(_) => {
+            Err(ProvisioningError::not_found(not_found_code, request_id))
+        }
     }
 }
 
@@ -395,7 +462,7 @@ async fn list_organizations(
     headers: HeaderMap,
     Extension(request_id): Extension<RequestId>,
 ) -> Result<Json<OrganizationPage>, ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    authorize_system_admin(&state, &headers, &request_id)?;
     let items = sqlx::query_as(
         "SELECT id,slug,name,created_at FROM organizations ORDER BY created_at,id LIMIT 200",
     )
@@ -413,7 +480,7 @@ async fn list_projects(
     headers: HeaderMap,
     Extension(request_id): Extension<RequestId>,
 ) -> Result<Json<ProjectPage>, ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    authorize_system_admin(&state, &headers, &request_id)?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1)")
         .bind(organization_id)
         .fetch_one(&state.pool)
@@ -443,7 +510,7 @@ async fn list_applications(
     headers: HeaderMap,
     Extension(request_id): Extension<RequestId>,
 ) -> Result<Json<ApplicationPage>, ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    authorize_system_admin(&state, &headers, &request_id)?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1)")
         .bind(project_id)
         .fetch_one(&state.pool)
@@ -475,7 +542,7 @@ async fn get_application(
     headers: HeaderMap,
     Extension(request_id): Extension<RequestId>,
 ) -> Result<Json<ApplicationResponse>, ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    authorize_system_admin(&state, &headers, &request_id)?;
     let application = sqlx::query_as(
         "SELECT id,organization_id,project_id,slug,name,created_at FROM applications WHERE project_id=$1 AND id=$2",
     )
@@ -496,7 +563,7 @@ async fn create_organization(
     Extension(request_id): Extension<RequestId>,
     Json(input): Json<CreateNamedResource>,
 ) -> Result<(StatusCode, Json<OrganizationResponse>), ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    authorize_system_admin(&state, &headers, &request_id)?;
     validate_slug(&input.slug, &request_id)?;
     validate_name(&input.name, &request_id)?;
     let mut tx = state.pool.begin().await.map_err(|error| {
@@ -544,7 +611,13 @@ async fn create_project(
     Extension(request_id): Extension<RequestId>,
     Json(input): Json<CreateNamedResource>,
 ) -> Result<(StatusCode, Json<ProjectResponse>), ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    let principal = resolve_principal(&state, &headers, &request_id).await?;
+    authorize_organization(
+        principal,
+        organization_id,
+        "organization_not_found",
+        &request_id,
+    )?;
     validate_slug(&input.slug, &request_id)?;
     validate_name(&input.name, &request_id)?;
     let mut tx = state.pool.begin().await.map_err(|error| {
@@ -600,12 +673,22 @@ async fn create_application(
     Extension(request_id): Extension<RequestId>,
     Json(input): Json<CreateNamedResource>,
 ) -> Result<(StatusCode, Json<CreatedApplicationResponse>), ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    let principal = resolve_principal(&state, &headers, &request_id).await?;
     validate_slug(&input.slug, &request_id)?;
     validate_name(&input.name, &request_id)?;
     let mut tx = state.pool.begin().await.map_err(|error| {
         ProvisioningError::database(&error, "application_slug_conflict", &request_id)
     })?;
+    let organization_id: Uuid =
+        sqlx::query_scalar("SELECT organization_id FROM projects WHERE id=$1")
+            .bind(project_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| {
+                ProvisioningError::database(&error, "application_slug_conflict", &request_id)
+            })?
+            .ok_or_else(|| ProvisioningError::not_found("project_not_found", &request_id))?;
+    authorize_organization(principal, organization_id, "project_not_found", &request_id)?;
     let project_id_text = project_id.to_string();
     let idempotency = reserve_idempotency(
         &mut tx,
@@ -618,15 +701,6 @@ async fn create_application(
     if matches!(idempotency, Idempotency::Replay(_)) {
         return Err(ProvisioningError::completed(&request_id));
     }
-    let organization_id: Uuid =
-        sqlx::query_scalar("SELECT organization_id FROM projects WHERE id=$1")
-            .bind(project_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|error| {
-                ProvisioningError::database(&error, "application_slug_conflict", &request_id)
-            })?
-            .ok_or_else(|| ProvisioningError::not_found("project_not_found", &request_id))?;
     let application: ApplicationResponse = sqlx::query_as("INSERT INTO applications(id,organization_id,project_id,slug,name) VALUES($1,$2,$3,$4,$5) RETURNING id,organization_id,project_id,slug,name,created_at")
         .bind(Uuid::new_v4()).bind(organization_id).bind(project_id).bind(input.slug).bind(input.name)
         .fetch_one(&mut *tx).await.map_err(|error| ProvisioningError::database(&error,"application_slug_conflict",&request_id))?;
@@ -675,9 +749,15 @@ async fn list_application_credentials(
     headers: HeaderMap,
     Extension(request_id): Extension<RequestId>,
 ) -> Result<Json<CredentialPage>, ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    let principal = resolve_principal(&state, &headers, &request_id).await?;
     let organization_id =
         owned_application(&state, project_id, application_id, &request_id).await?;
+    authorize_organization(
+        principal,
+        organization_id,
+        "application_not_found",
+        &request_id,
+    )?;
     let items = list_credentials(&state.pool, organization_id, project_id, application_id)
         .await
         .map_err(|error| {
@@ -693,10 +773,16 @@ async fn issue_application_credential(
     Extension(request_id): Extension<RequestId>,
     Json(input): Json<IssueCredentialRequest>,
 ) -> Result<(StatusCode, Json<IssuedCredentialResponse>), ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    let principal = resolve_principal(&state, &headers, &request_id).await?;
     validate_credential_name(&input.name, &request_id)?;
     let organization_id =
         owned_application(&state, project_id, application_id, &request_id).await?;
+    authorize_organization(
+        principal,
+        organization_id,
+        "application_not_found",
+        &request_id,
+    )?;
     let mut tx = state.pool.begin().await.map_err(|error| {
         ProvisioningError::database(&error, "credential_name_conflict", &request_id)
     })?;
@@ -738,9 +824,15 @@ async fn revoke_application_credential(
     headers: HeaderMap,
     Extension(request_id): Extension<RequestId>,
 ) -> Result<StatusCode, ProvisioningError> {
-    authorize(&state, &headers, &request_id)?;
+    let principal = resolve_principal(&state, &headers, &request_id).await?;
     let organization_id =
         owned_application(&state, project_id, application_id, &request_id).await?;
+    authorize_organization(
+        principal,
+        organization_id,
+        "application_not_found",
+        &request_id,
+    )?;
     revoke(
         &state.pool,
         organization_id,

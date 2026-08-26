@@ -3,6 +3,7 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use server::{admin_auth::AdminAuthenticator, health, web_api::WebApiConfig};
+use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -321,4 +322,183 @@ async fn admin_reads_hierarchy_and_idempotency_never_replays_secrets(pool: sqlx:
         json(applications).await["items"].as_array().unwrap().len(),
         1
     );
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn tenant_provisions_only_its_owned_hierarchy(pool: sqlx::PgPool) {
+    let app = app(pool.clone());
+    let mut organization_ids = Vec::new();
+    let mut project_ids = Vec::new();
+    for (slug, name) in [("owned", "Owned"), ("foreign", "Foreign")] {
+        let organization = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/v1/organizations",
+                Some(ADMIN),
+                &format!(r#"{{"slug":"{slug}","name":"{name}"}}"#),
+            ))
+            .await
+            .unwrap();
+        let organization_id = json(organization).await["id"].as_str().unwrap().to_owned();
+        let project = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                &format!("/api/v1/organizations/{organization_id}/projects"),
+                Some(ADMIN),
+                &format!(r#"{{"slug":"{slug}","name":"{name}"}}"#),
+            ))
+            .await
+            .unwrap();
+        project_ids.push(json(project).await["id"].as_str().unwrap().to_owned());
+        organization_ids.push(organization_id);
+    }
+
+    let tenant_token = "owned-tenant-api-credential";
+    sqlx::query("INSERT INTO api_credentials(id,organization_id,credential_hash) VALUES($1,$2,$3)")
+        .bind(Uuid::new_v4())
+        .bind(Uuid::parse_str(&organization_ids[0]).unwrap())
+        .bind(Sha256::digest(tenant_token.as_bytes()).to_vec())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let tenant_cannot_create_organization = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/v1/organizations",
+            Some(tenant_token),
+            r#"{"slug":"forbidden","name":"Forbidden"}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        tenant_cannot_create_organization.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        json(tenant_cannot_create_organization).await["error"],
+        "invalid_admin_credential"
+    );
+
+    let owned_project = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/v1/organizations/{}/projects", organization_ids[0]),
+            Some(tenant_token),
+            r#"{"slug":"tenant-project","name":"Tenant Project"}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(owned_project.status(), StatusCode::CREATED);
+
+    let cross_tenant_project = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/v1/organizations/{}/projects", organization_ids[1]),
+            Some(tenant_token),
+            r#"{"slug":"intruder","name":"Intruder"}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(cross_tenant_project.status(), StatusCode::NOT_FOUND);
+
+    let application = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/v1/projects/{}/applications", project_ids[0]),
+            Some(tenant_token),
+            r#"{"slug":"tenant-app","name":"Tenant App"}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(application.status(), StatusCode::CREATED);
+    let application = json(application).await;
+    let application_id = application["application"]["id"].as_str().unwrap();
+    let credential_id = application["credential"]["id"].as_str().unwrap();
+
+    for method in ["GET", "POST"] {
+        let body = if method == "POST" {
+            r#"{"name":"tenant-rotation"}"#
+        } else {
+            ""
+        };
+        let response = app
+            .clone()
+            .oneshot(request(
+                method,
+                &format!(
+                    "/api/v1/projects/{}/applications/{application_id}/credentials",
+                    project_ids[0]
+                ),
+                Some(tenant_token),
+                body,
+            ))
+            .await
+            .unwrap();
+        assert!(matches!(
+            response.status(),
+            StatusCode::OK | StatusCode::CREATED
+        ));
+    }
+    let revoked = app
+        .clone()
+        .oneshot(request(
+            "DELETE",
+            &format!(
+                "/api/v1/projects/{}/applications/{application_id}/credentials/{credential_id}",
+                project_ids[0]
+            ),
+            Some(tenant_token),
+            "",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+
+    let foreign_application = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/v1/projects/{}/applications", project_ids[1]),
+            Some(ADMIN),
+            r#"{"slug":"foreign-app","name":"Foreign App"}"#,
+        ))
+        .await
+        .unwrap();
+    let foreign_application_id = json(foreign_application).await["application"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let cross_tenant_credentials = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            &format!(
+                "/api/v1/projects/{}/applications/{foreign_application_id}/credentials",
+                project_ids[1]
+            ),
+            Some(tenant_token),
+            "",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(cross_tenant_credentials.status(), StatusCode::NOT_FOUND);
+
+    let cross_tenant_application = app
+        .oneshot(request(
+            "POST",
+            &format!("/api/v1/projects/{}/applications", project_ids[1]),
+            Some(tenant_token),
+            r#"{"slug":"intruder","name":"Intruder"}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(cross_tenant_application.status(), StatusCode::NOT_FOUND);
 }

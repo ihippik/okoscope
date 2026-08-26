@@ -70,7 +70,7 @@ paths:
     parameters: [{ $ref: '#/components/parameters/OrganizationId' }]
     post:
       operationId: createProject
-      security: [{ adminAuth: [] }]
+      security: [{ bearerAuth: [] }, { adminAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
@@ -154,7 +154,7 @@ paths:
         }
     post:
       operationId: createApplication
-      security: [{ adminAuth: [] }]
+      security: [{ bearerAuth: [] }, { adminAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
@@ -204,14 +204,14 @@ paths:
       [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
     get:
       operationId: listApplicationCredentials
-      security: [{ adminAuth: [] }]
+      security: [{ bearerAuth: [] }, { adminAuth: [] }]
       responses:
         '200': { description: Secret-safe credential metadata, content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationCredentialPage' } } } }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
     post:
       operationId: issueApplicationCredential
-      security: [{ adminAuth: [] }]
+      security: [{ bearerAuth: [] }, { adminAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
@@ -228,7 +228,7 @@ paths:
       [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/CredentialId' }]
     delete:
       operationId: revokeApplicationCredential
-      security: [{ adminAuth: [] }]
+      security: [{ bearerAuth: [] }, { adminAuth: [] }]
       responses:
         '204': { description: Credential revoked; repeated revocation is successful }
         '401': { $ref: '#/components/responses/Error' }

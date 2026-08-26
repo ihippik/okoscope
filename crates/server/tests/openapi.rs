@@ -181,15 +181,17 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         );
         if path == "/api/v1/build-info" {
             assert_eq!(operation["security"], serde_json::json!([]));
-        } else if matches!(
-            path,
-            "/api/v1/organizations"
-                | "/api/v1/organizations/{organization_id}/projects"
-                | "/api/v1/projects/{project_id}/applications/{application_id}/credentials"
-                | "/api/v1/projects/{project_id}/applications/{application_id}/credentials/{credential_id}"
-        ) || path.starts_with("/api/v1/admin/")
+        } else if path == "/api/v1/organizations/{organization_id}/projects"
             || path == "/api/v1/projects/{project_id}/applications" && method == "post"
+            || path.starts_with(
+                "/api/v1/projects/{project_id}/applications/{application_id}/credentials",
+            )
         {
+            assert_eq!(
+                operation["security"],
+                serde_json::json!([{ "bearerAuth": [] }, { "adminAuth": [] }])
+            );
+        } else if matches!(path, "/api/v1/organizations") || path.starts_with("/api/v1/admin/") {
             assert_eq!(
                 operation["security"],
                 serde_json::json!([{ "adminAuth": [] }])
