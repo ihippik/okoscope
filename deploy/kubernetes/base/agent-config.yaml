@@ -32,7 +32,7 @@ data:
         connect: true
         listen: true
         accept: true
-        maxAcceptedEventsPerSecond: 100
+        maxAcceptedEventsPerSecond: 25
         dns:
           enabled: false
           udp: true
@@ -43,9 +43,9 @@ data:
           maxAnswersPerResponse: 16
           maxNamesPerAddress: 8
           maxTtlSeconds: 86400
-          maxEventsPerSecond: 1000
+          maxEventsPerSecond: 250
     safety:
       queueCapacity: 4096
       batchSize: 256
-      maxEventsPerSecond: 10000
+      maxEventsPerSecond: 1000
       maxApplicationStreams: 32

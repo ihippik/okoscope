@@ -20,7 +20,7 @@ use kube::{
 };
 use thiserror::Error;
 use tokio::sync::{mpsc, watch};
-use tokio::time::Instant;
+use tokio::time::{Instant, sleep};
 use uuid::Uuid;
 
 use crate::config::{WorkloadMetadata, WorkloadSelector};
@@ -269,8 +269,8 @@ pub async fn run_watches(
     let replicas: Api<ReplicaSet> = Api::all(client.clone());
     let deployments: Api<Deployment> = Api::all(client);
     let initialized = Arc::new(AtomicU8::new(0));
-    let result = tokio::try_join!(
-        watch_pods(
+    tokio::join!(
+        supervise_pods(
             pods,
             cache.clone(),
             lifecycle_sender,
@@ -278,16 +278,119 @@ pub async fn run_watches(
             initialized.clone(),
             readiness.clone(),
         ),
-        watch_replica_sets(
+        supervise_replica_sets(
             replicas,
             cache.clone(),
             initialized.clone(),
             readiness.clone(),
         ),
-        watch_deployments(deployments, cache, initialized, readiness.clone()),
+        supervise_deployments(deployments, cache, initialized, readiness),
     );
+    Ok(())
+}
+
+const WATCH_RETRY_MIN: Duration = Duration::from_secs(1);
+const WATCH_RETRY_MAX: Duration = Duration::from_secs(30);
+
+fn source_unavailable(initialized: &AtomicU8, bit: u8, readiness: &watch::Sender<bool>) -> bool {
+    let was_initialized = initialized.fetch_and(!bit, Ordering::AcqRel) & bit != 0;
     readiness.send_replace(false);
-    result.map(|_| ())
+    was_initialized
+}
+
+fn next_retry(current: Duration) -> Duration {
+    current.saturating_mul(2).min(WATCH_RETRY_MAX)
+}
+
+async fn retry_watch(
+    source: &'static str,
+    result: anyhow::Result<()>,
+    was_initialized: bool,
+    retry: &mut Duration,
+) {
+    let delay = if was_initialized {
+        *retry = WATCH_RETRY_MIN;
+        WATCH_RETRY_MIN
+    } else {
+        let delay = *retry;
+        *retry = next_retry(*retry);
+        delay
+    };
+    match result {
+        Ok(()) => tracing::warn!(
+            source,
+            retry_seconds = delay.as_secs(),
+            "Kubernetes watch ended; retrying"
+        ),
+        Err(error) => {
+            tracing::warn!(source, %error, retry_seconds = delay.as_secs(), "Kubernetes watch failed; retrying");
+        }
+    }
+    sleep(delay).await;
+}
+
+async fn supervise_pods(
+    api: Api<Pod>,
+    cache: Arc<AttributionCache>,
+    lifecycle_sender: mpsc::Sender<crate::lifecycle::LifecycleObservation>,
+    counters: Arc<Counters>,
+    initialized: Arc<AtomicU8>,
+    readiness: watch::Sender<bool>,
+) {
+    let mut retry = WATCH_RETRY_MIN;
+    loop {
+        let result = watch_pods(
+            api.clone(),
+            cache.clone(),
+            lifecycle_sender.clone(),
+            counters.clone(),
+            initialized.clone(),
+            readiness.clone(),
+        )
+        .await;
+        let was_initialized = source_unavailable(&initialized, 0b001, &readiness);
+        retry_watch("pods", result, was_initialized, &mut retry).await;
+    }
+}
+
+async fn supervise_replica_sets(
+    api: Api<ReplicaSet>,
+    cache: Arc<AttributionCache>,
+    initialized: Arc<AtomicU8>,
+    readiness: watch::Sender<bool>,
+) {
+    let mut retry = WATCH_RETRY_MIN;
+    loop {
+        let result = watch_replica_sets(
+            api.clone(),
+            cache.clone(),
+            initialized.clone(),
+            readiness.clone(),
+        )
+        .await;
+        let was_initialized = source_unavailable(&initialized, 0b010, &readiness);
+        retry_watch("replicasets", result, was_initialized, &mut retry).await;
+    }
+}
+
+async fn supervise_deployments(
+    api: Api<Deployment>,
+    cache: Arc<AttributionCache>,
+    initialized: Arc<AtomicU8>,
+    readiness: watch::Sender<bool>,
+) {
+    let mut retry = WATCH_RETRY_MIN;
+    loop {
+        let result = watch_deployments(
+            api.clone(),
+            cache.clone(),
+            initialized.clone(),
+            readiness.clone(),
+        )
+        .await;
+        let was_initialized = source_unavailable(&initialized, 0b100, &readiness);
+        retry_watch("deployments", result, was_initialized, &mut retry).await;
+    }
 }
 
 fn source_initialized(initialized: &AtomicU8, bit: u8, readiness: &watch::Sender<bool>) {
@@ -333,7 +436,9 @@ async fn watch_pods(
                 );
             }
             Event::Delete(pod) => cache.delete_pod(&pod),
-            Event::Init => {}
+            Event::Init => {
+                source_unavailable(&initialized, 0b001, &readiness);
+            }
             Event::InitDone => source_initialized(&initialized, 0b001, &readiness),
         }
     }
@@ -353,7 +458,10 @@ async fn watch_replica_sets(
                 cache.apply_replica_set(&resource);
             }
             Event::InitDone => source_initialized(&initialized, 0b010, &readiness),
-            Event::Delete(_) | Event::Init => {}
+            Event::Init => {
+                source_unavailable(&initialized, 0b010, &readiness);
+            }
+            Event::Delete(_) => {}
         }
     }
     Ok(())
@@ -372,7 +480,10 @@ async fn watch_deployments(
                 cache.apply_deployment(&resource);
             }
             Event::InitDone => source_initialized(&initialized, 0b100, &readiness),
-            Event::Delete(_) | Event::Init => {}
+            Event::Init => {
+                source_unavailable(&initialized, 0b100, &readiness);
+            }
+            Event::Delete(_) => {}
         }
     }
     Ok(())
@@ -421,8 +532,19 @@ mod tests {
         assert!(!*receiver.borrow());
         source_initialized(&initialized, 0b010, &readiness);
         assert!(*receiver.borrow());
-        readiness.send_replace(false);
+        assert!(source_unavailable(&initialized, 0b001, &readiness));
         assert!(!*receiver.borrow());
+        assert_eq!(initialized.load(Ordering::Acquire), 0b110);
+        assert!(!source_unavailable(&initialized, 0b001, &readiness));
+    }
+
+    #[test]
+    fn watch_retry_is_exponential_and_bounded() {
+        let mut retry = WATCH_RETRY_MIN;
+        for expected in [2, 4, 8, 16, 30, 30] {
+            retry = next_retry(retry);
+            assert_eq!(retry, Duration::from_secs(expected));
+        }
     }
 
     fn owner(kind: &str, name: &str, uid: &str) -> OwnerReference {

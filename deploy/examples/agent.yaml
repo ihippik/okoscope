@@ -24,9 +24,9 @@ observation:
     connect: false
     listen: false
     accept: false
-    maxAcceptedEventsPerSecond: 1000
+    maxAcceptedEventsPerSecond: 25
 safety:
   queueCapacity: 4096
   batchSize: 256
-  maxEventsPerSecond: 10000
+  maxEventsPerSecond: 1000
   maxApplicationStreams: 32

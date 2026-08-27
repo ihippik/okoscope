@@ -117,6 +117,7 @@ mod linux {
         );
         let mut poll = tokio::time::interval(Duration::from_millis(10));
         let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
+        let mut lifecycle_readiness_open = true;
         loop {
             tokio::select! {
                 _ = poll.tick() => {
@@ -238,8 +239,9 @@ mod linux {
                     let snapshot = counters.snapshot();
                     tracing::info!(?snapshot, "agent status");
                 }
-                readiness = lifecycle_readiness.changed() => {
+                readiness = lifecycle_readiness.changed(), if lifecycle_readiness_open => {
                     if readiness.is_err() {
+                        lifecycle_readiness_open = false;
                         tracing::warn!("Kubernetes lifecycle readiness channel closed");
                     } else {
                         tracing::info!(ready = *lifecycle_readiness.borrow(), "Kubernetes lifecycle readiness changed");

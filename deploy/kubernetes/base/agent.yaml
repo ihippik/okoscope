@@ -36,7 +36,7 @@ spec:
             - {name: RUST_LOG, value: info}
           resources:
             requests: {cpu: 100m, memory: 96Mi}
-            limits: {cpu: "1", memory: 512Mi}
+            limits: {cpu: 500m, memory: 512Mi}
           volumeMounts:
             - {name: config, mountPath: /etc/okoscope, readOnly: true}
             - {name: secrets, mountPath: /var/run/secrets/okoscope, readOnly: true}
