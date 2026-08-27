@@ -4,7 +4,7 @@ use axum::{
     Router,
     body::{Body, Bytes, to_bytes},
     extract::State,
-    http::{HeaderMap, Request, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, Request, StatusCode, header::COOKIE},
     routing::post,
 };
 use chrono::Utc;
@@ -13,7 +13,7 @@ use event_model::{
     RuntimeEvent, SyscallEvent,
 };
 use server::{
-    auth::SessionScope,
+    auth::{SessionScope, SessionToken, hash_password},
     bootstrap::{BootstrapConfig, bootstrap},
     ingestion::{IngestionContext, persist_batch},
     notification::{
@@ -169,6 +169,35 @@ async fn tenant(
         agent_id,
     };
     (ids, context)
+}
+
+async fn user_session(pool: &sqlx::PgPool, organization_id: Uuid, email: &str) -> String {
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)")
+        .bind(user_id)
+        .bind(email)
+        .bind(hash_password("correct horse battery staple").unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner')",
+    )
+    .bind(organization_id)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let token = SessionToken::generate();
+    sqlx::query("INSERT INTO user_sessions(id,user_id,organization_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')")
+        .bind(Uuid::new_v4())
+        .bind(user_id)
+        .bind(organization_id)
+        .bind(token.digest().to_vec())
+        .execute(pool)
+        .await
+        .unwrap();
+    token.expose().to_owned()
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
@@ -696,6 +725,8 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
     let (url, _receiver, task) = spawn_receiver(vec![StatusCode::OK]).await;
     let (first, _) = tenant(&pool, "notify-api-first").await;
     let (second, _) = tenant(&pool, "notify-api-second").await;
+    let first_session = user_session(&pool, first.organization_id, "first@example.com").await;
+    let second_session = user_session(&pool, second.organization_id, "second@example.com").await;
     let service = service(pool.clone());
     let app = server::notification::api::router(pool, service);
     let create_uri = format!("/api/v1/projects/{}/webhook-destinations", first.project_id);
@@ -705,7 +736,7 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
             Request::builder()
                 .method("POST")
                 .uri(&create_uri)
-                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .header(COOKIE, format!("okoscope_session={first_session}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::json!({"name":"primary","url":url}).to_string(),
@@ -725,7 +756,7 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
         .oneshot(
             Request::builder()
                 .uri(&create_uri)
-                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .header(COOKIE, format!("okoscope_session={first_session}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -741,7 +772,7 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
         .oneshot(
             Request::builder()
                 .uri(&create_uri)
-                .header(AUTHORIZATION, "Bearer api-notify-api-second")
+                .header(COOKIE, format!("okoscope_session={second_session}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -756,7 +787,7 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
             Request::builder()
                 .method("PATCH")
                 .uri(&detail_uri)
-                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .header(COOKIE, format!("okoscope_session={first_session}"))
                 .header("content-type", "application/json")
                 .body(Body::from(r#"{"name":"changed","revision":99}"#))
                 .unwrap(),
@@ -771,7 +802,7 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
             Request::builder()
                 .method("POST")
                 .uri(format!("{detail_uri}/test"))
-                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .header(COOKIE, format!("okoscope_session={first_session}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -786,7 +817,7 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
                     "/api/v1/projects/{}/notification-deliveries?origin=test&limit=1",
                     first.project_id
                 ))
-                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .header(COOKIE, format!("okoscope_session={first_session}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -804,7 +835,7 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
         .oneshot(
             Request::builder()
                 .uri(&health_uri)
-                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .header(COOKIE, format!("okoscope_session={first_session}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -833,7 +864,7 @@ async fn destination_and_delivery_apis_are_secret_safe_and_tenant_scoped(pool: s
                     "/api/v1/projects/{}/notification-health",
                     second.project_id
                 ))
-                .header(AUTHORIZATION, "Bearer api-notify-api-first")
+                .header(COOKIE, format!("okoscope_session={first_session}"))
                 .body(Body::empty())
                 .unwrap(),
         )
