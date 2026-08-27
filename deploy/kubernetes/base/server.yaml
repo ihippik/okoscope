@@ -45,9 +45,10 @@ spec:
             - name: OKOSCOPE_ADMIN_CREDENTIAL
               valueFrom:
                 secretKeyRef: {name: okoscope-secrets, key: admin-credential}
-            - name: OKOSCOPE_API_CREDENTIAL
-              valueFrom:
-                secretKeyRef: {name: okoscope-secrets, key: api-credential}
+            - name: OKOSCOPE_REGISTRATION_ENABLED
+              value: "false"
+            - name: OKOSCOPE_SESSION_LIFETIME_SECONDS
+              value: "43200"
             - name: OKOSCOPE_WEBHOOK_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef: {name: okoscope-secrets, key: webhook-encryption-key}

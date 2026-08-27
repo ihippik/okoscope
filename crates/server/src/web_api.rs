@@ -17,10 +17,25 @@ use crate::{admin_auth::AdminAuthenticator, database::REQUIRED_MIGRATION};
 pub const API_VERSION: &str = "v1";
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct WebApiConfig {
     pub cors_origins: Vec<String>,
     pub admin_authenticator: Option<AdminAuthenticator>,
+    pub registration_enabled: bool,
+    pub secure_session_cookie: bool,
+    pub session_lifetime: std::time::Duration,
+}
+
+impl Default for WebApiConfig {
+    fn default() -> Self {
+        Self {
+            cors_origins: Vec::new(),
+            admin_authenticator: None,
+            registration_enabled: false,
+            secure_session_cookie: true,
+            session_lifetime: crate::auth::DEFAULT_SESSION_LIFETIME,
+        }
+    }
 }
 
 impl WebApiConfig {
@@ -52,12 +67,28 @@ impl WebApiConfig {
         Ok(Self {
             cors_origins: validated,
             admin_authenticator: None,
+            registration_enabled: false,
+            secure_session_cookie: true,
+            session_lifetime: crate::auth::DEFAULT_SESSION_LIFETIME,
         })
     }
 
     #[must_use]
     pub fn with_admin_authenticator(mut self, authenticator: AdminAuthenticator) -> Self {
         self.admin_authenticator = Some(authenticator);
+        self
+    }
+
+    #[must_use]
+    pub fn with_user_auth(
+        mut self,
+        registration_enabled: bool,
+        secure_session_cookie: bool,
+        session_lifetime: std::time::Duration,
+    ) -> Self {
+        self.registration_enabled = registration_enabled;
+        self.secure_session_cookie = secure_session_cookie;
+        self.session_lifetime = session_lifetime;
         self
     }
 }
@@ -134,7 +165,24 @@ async fn conventions(
         crate::metrics::record_cors_denial();
         tracing::warn!(request_id=%request_id, "cross-origin request denied");
     }
-    let mut response = next.run(request).await;
+    let session_authenticated_mutation =
+        !matches!(request.method(), &Method::GET | &Method::OPTIONS)
+            && crate::auth::session_token(request.headers()).is_some();
+    let trusted_origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|origin| origin_is_trusted(origin, request.headers(), &config));
+    let mut response = if session_authenticated_mutation && !trusted_origin {
+        error_response(
+            StatusCode::FORBIDDEN,
+            "untrusted_origin",
+            "state-changing session request requires a trusted Origin",
+            &RequestId(request_id.clone()),
+        )
+    } else {
+        next.run(request).await
+    };
     crate::metrics::record_web_api(
         response.status().as_u16(),
         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
@@ -148,6 +196,27 @@ async fn conventions(
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     correlate_error(response, &RequestId(request_id)).await
+}
+
+fn origin_is_trusted(origin: &str, headers: &axum::http::HeaderMap, config: &WebApiConfig) -> bool {
+    if config.cors_origins.iter().any(|allowed| allowed == origin) {
+        return true;
+    }
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    Url::parse(origin)
+        .ok()
+        .and_then(|url| {
+            url.host_str()
+                .map(|name| (name.to_owned(), url.port_or_known_default()))
+        })
+        .is_some_and(|(name, port)| {
+            host == name || port.is_some_and(|port| host == format!("{name}:{port}"))
+        })
 }
 
 async fn correlate_error(response: Response, request_id: &RequestId) -> Response {
@@ -210,6 +279,7 @@ pub fn router(api: Router, config: &WebApiConfig) -> Router {
             HeaderName::from_static("idempotency-key"),
         ])
         .expose_headers([HeaderName::from_static(REQUEST_ID_HEADER)]);
+    let cors = cors.allow_credentials(true);
     Router::new()
         .route("/api/v1/build-info", get(build_info))
         .merge(api)
@@ -220,7 +290,11 @@ pub fn router(api: Router, config: &WebApiConfig) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::to_bytes, http::Request, routing::get};
+    use axum::{
+        body::to_bytes,
+        http::Request,
+        routing::{get, post},
+    };
     use tower::ServiceExt;
 
     #[test]
@@ -266,7 +340,7 @@ mod tests {
             service_version: "1",
             git_commit: "unknown",
             api_version: "v1",
-            required_database_migration: 15,
+            required_database_migration: 16,
         };
         let value = serde_json::to_value(info).unwrap();
         assert_eq!(value["git_commit"], "unknown");
@@ -368,11 +442,9 @@ mod tests {
             allowed.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
             "https://ui.example.com"
         );
-        assert!(
-            allowed
-                .headers()
-                .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
-                .is_none()
+        assert_eq!(
+            allowed.headers()[header::ACCESS_CONTROL_ALLOW_CREDENTIALS],
+            "true"
         );
         for (method, request_headers, forbidden) in
             [("PUT", None, "PUT"), ("GET", Some("cookie"), "cookie")]
@@ -413,5 +485,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn session_mutations_require_a_trusted_origin() {
+        let config = WebApiConfig::new(vec!["https://ui.example.com".into()]).unwrap();
+        let app = router(
+            Router::new().route(
+                "/api/v1/test-mutation",
+                post(|| async { StatusCode::NO_CONTENT }),
+            ),
+            &config,
+        );
+        for origin in [None, Some("https://evil.example.com")] {
+            let mut request = Request::builder()
+                .method("POST")
+                .uri("/api/v1/test-mutation")
+                .header(header::COOKIE, "okoscope_session=opaque");
+            if let Some(origin) = origin {
+                request = request.header(header::ORIGIN, origin);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+        let trusted = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/test-mutation")
+                    .header(header::COOKIE, "okoscope_session=opaque")
+                    .header(header::ORIGIN, "https://ui.example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(trusted.status(), StatusCode::NO_CONTENT);
     }
 }

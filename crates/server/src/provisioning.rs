@@ -16,7 +16,7 @@ use crate::{
     application_credentials::{
         ApplicationCredentialSummary, issue, list as list_credentials, revoke,
     },
-    auth::{ApiCredentialAuthenticator, ApiPrincipal},
+    auth::{UserPrincipal, UserSessionAuthenticator, session_token},
     web_api::RequestId,
 };
 
@@ -24,7 +24,7 @@ use crate::{
 struct ProvisioningState {
     pool: PgPool,
     admin: Option<AdminAuthenticator>,
-    tenant: ApiCredentialAuthenticator,
+    tenant: UserSessionAuthenticator,
 }
 
 pub fn router(pool: PgPool, admin: Option<AdminAuthenticator>) -> Router {
@@ -60,7 +60,7 @@ pub fn router(pool: PgPool, admin: Option<AdminAuthenticator>) -> Router {
             axum::routing::delete(revoke_application_credential),
         )
         .with_state(ProvisioningState {
-            tenant: ApiCredentialAuthenticator::new(pool.clone()),
+            tenant: UserSessionAuthenticator::new(pool.clone()),
             pool,
             admin,
         })
@@ -69,7 +69,7 @@ pub fn router(pool: PgPool, admin: Option<AdminAuthenticator>) -> Router {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProvisioningPrincipal {
     SystemAdmin,
-    Tenant(ApiPrincipal),
+    Tenant(UserPrincipal),
 }
 
 #[derive(Debug)]
@@ -288,16 +288,16 @@ async fn resolve_principal(
     headers: &HeaderMap,
     request_id: &RequestId,
 ) -> Result<ProvisioningPrincipal, ProvisioningError> {
-    let Some(presented) = bearer(headers) else {
-        return Err(ProvisioningError::invalid_credential(request_id));
-    };
-    if state
-        .admin
-        .as_ref()
-        .is_some_and(|admin| admin.authenticate(presented))
+    if let Some(presented) = bearer(headers)
+        && state
+            .admin
+            .as_ref()
+            .is_some_and(|admin| admin.authenticate(presented))
     {
         return Ok(ProvisioningPrincipal::SystemAdmin);
     }
+    let presented =
+        session_token(headers).ok_or_else(|| ProvisioningError::invalid_credential(request_id))?;
     state
         .tenant
         .authenticate(presented)
@@ -315,8 +315,19 @@ fn authorize_organization(
 ) -> Result<(), ProvisioningError> {
     match principal {
         ProvisioningPrincipal::SystemAdmin => Ok(()),
-        ProvisioningPrincipal::Tenant(tenant) if tenant.organization_id == organization_id => {
+        ProvisioningPrincipal::Tenant(tenant)
+            if tenant.organization_id == organization_id && tenant.role.is_owner() =>
+        {
             Ok(())
+        }
+        ProvisioningPrincipal::Tenant(tenant) if tenant.organization_id == organization_id => {
+            Err(ProvisioningError {
+                status: StatusCode::FORBIDDEN,
+                code: "forbidden",
+                message: "owner role is required".into(),
+                request_id: request_id.clone(),
+                fields: None,
+            })
         }
         ProvisioningPrincipal::Tenant(_) => {
             Err(ProvisioningError::not_found(not_found_code, request_id))

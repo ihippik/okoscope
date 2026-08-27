@@ -2,6 +2,10 @@ use std::collections::HashSet;
 
 const LIVE_OPERATIONS: &[(&str, &str)] = &[
     ("/api/v1/build-info", "get"),
+    ("/api/v1/auth/register", "post"),
+    ("/api/v1/auth/login", "post"),
+    ("/api/v1/auth/me", "get"),
+    ("/api/v1/auth/logout", "post"),
     ("/api/v1/organizations", "post"),
     ("/api/v1/admin/organizations", "get"),
     (
@@ -164,7 +168,10 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     let source = include_str!("../../../openapi/okoscope-v1.yaml");
     let document: serde_json::Value = serde_yaml::from_str(source).expect("valid OpenAPI YAML");
     assert_eq!(document["openapi"], "3.1.0");
-    assert_eq!(document["security"][0]["bearerAuth"], serde_json::json!([]));
+    assert_eq!(
+        document["security"][0]["sessionAuth"],
+        serde_json::json!([])
+    );
 
     let paths = document["paths"].as_object().expect("paths object");
     let mut operation_ids = HashSet::new();
@@ -179,7 +186,10 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
             operation_ids.insert(operation_id),
             "duplicate operationId {operation_id}"
         );
-        if path == "/api/v1/build-info" {
+        if matches!(
+            path,
+            "/api/v1/build-info" | "/api/v1/auth/register" | "/api/v1/auth/login"
+        ) {
             assert_eq!(operation["security"], serde_json::json!([]));
         } else if path == "/api/v1/organizations/{organization_id}/projects"
             || path == "/api/v1/projects/{project_id}/applications" && method == "post"
@@ -189,7 +199,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         {
             assert_eq!(
                 operation["security"],
-                serde_json::json!([{ "bearerAuth": [] }, { "adminAuth": [] }])
+                serde_json::json!([{ "sessionAuth": [] }, { "adminAuth": [] }])
             );
         } else if matches!(path, "/api/v1/organizations") || path.starts_with("/api/v1/admin/") {
             assert_eq!(
@@ -199,7 +209,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         } else {
             assert!(
                 operation.get("security").is_none(),
-                "protected route overrides bearer security: {method} {path}"
+                "protected route overrides session security: {method} {path}"
             );
         }
         assert_success_response_is_typed(&document, operation, path, method);

@@ -157,6 +157,14 @@ struct Args {
     notification: NotificationArgs,
     #[arg(long, env = "OKOSCOPE_CORS_ORIGINS", value_delimiter = ',')]
     cors_origins: Vec<String>,
+    #[arg(long, env = "OKOSCOPE_REGISTRATION_ENABLED", default_value_t = false)]
+    registration_enabled: bool,
+    #[arg(
+        long,
+        env = "OKOSCOPE_SESSION_LIFETIME_SECONDS",
+        default_value_t = 43_200
+    )]
+    session_lifetime_seconds: u64,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -206,6 +214,19 @@ enum Command {
         application_id: Uuid,
         #[arg(long, default_value_t = 1)]
         identity_version: i16,
+    },
+    /// Establish the first owner of an existing Organization and exit.
+    BootstrapOwner {
+        #[arg(long)]
+        organization_id: Uuid,
+        #[arg(long, env = "OKOSCOPE_BOOTSTRAP_OWNER_EMAIL")]
+        email: String,
+        #[arg(
+            long,
+            env = "OKOSCOPE_BOOTSTRAP_OWNER_PASSWORD",
+            hide_env_values = true
+        )]
+        password: String,
     },
 }
 
@@ -319,6 +340,17 @@ async fn run_command(
             tracing::info!(?result, "runtime inventory reconciliation passed");
             Ok(true)
         }
+        Some(Command::BootstrapOwner {
+            organization_id,
+            email,
+            password,
+        }) => {
+            server::user_auth::bootstrap_owner(pool, organization_id, &email, &password)
+                .await
+                .context("bootstrap Organization owner")?;
+            tracing::info!("organization owner bootstrap complete");
+            Ok(true)
+        }
         Some(Command::Migrate | Command::NotificationCheck) | None => Ok(false),
     }
 }
@@ -342,9 +374,18 @@ async fn main() -> Result<()> {
         .build(args.development_plaintext)
         .map_err(anyhow::Error::msg)
         .context("notification delivery configuration")?;
+    anyhow::ensure!(
+        (300..=2_592_000).contains(&args.session_lifetime_seconds),
+        "session lifetime must be between 300 and 2592000 seconds"
+    );
     let mut web_api_config = WebApiConfig::new(args.cors_origins.clone())
         .map_err(anyhow::Error::msg)
-        .context("web API configuration")?;
+        .context("web API configuration")?
+        .with_user_auth(
+            args.registration_enabled,
+            !args.development_plaintext,
+            std::time::Duration::from_secs(args.session_lifetime_seconds),
+        );
     let pool = PgPoolOptions::new()
         .max_connections(20)
         .connect(&args.database_url)
@@ -380,6 +421,9 @@ async fn main() -> Result<()> {
     if run_command(args.command, &pool, &notification_config).await? {
         return Ok(());
     }
+    server::user_auth::verify_user_access(&pool, args.registration_enabled)
+        .await
+        .context("user access readiness")?;
     let notifications = NotificationService::new(pool.clone(), notification_config);
     web_api_config = web_api_config.with_admin_authenticator(
         AdminAuthenticator::new(

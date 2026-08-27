@@ -6,13 +6,52 @@ info:
 servers:
   - url: /
 security:
-  - bearerAuth: []
+  - sessionAuth: []
 paths:
   /api/v1/build-info:
     get:
       operationId: getBuildInfo
       security: []
       responses: { '200': { $ref: '#/components/responses/BuildInfoResponse' } }
+  /api/v1/auth/register:
+    post:
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RegisterRequest' } } }
+      responses:
+        '201': { $ref: '#/components/responses/AuthResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/login:
+    post:
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } }
+      responses:
+        '200': { $ref: '#/components/responses/AuthResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/me:
+    get:
+      operationId: getCurrentUser
+      responses:
+        '200': { $ref: '#/components/responses/AuthResponse' }
+        '401': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/logout:
+    post:
+      operationId: logoutUser
+      responses:
+        '204': { description: Session revoked and cookie expired }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/organizations:
     post:
       operationId: createOrganization
@@ -70,7 +109,7 @@ paths:
     parameters: [{ $ref: '#/components/parameters/OrganizationId' }]
     post:
       operationId: createProject
-      security: [{ bearerAuth: [] }, { adminAuth: [] }]
+      security: [{ sessionAuth: [] }, { adminAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
@@ -154,7 +193,7 @@ paths:
         }
     post:
       operationId: createApplication
-      security: [{ bearerAuth: [] }, { adminAuth: [] }]
+      security: [{ sessionAuth: [] }, { adminAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
@@ -204,14 +243,14 @@ paths:
       [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
     get:
       operationId: listApplicationCredentials
-      security: [{ bearerAuth: [] }, { adminAuth: [] }]
+      security: [{ sessionAuth: [] }, { adminAuth: [] }]
       responses:
         '200': { description: Secret-safe credential metadata, content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationCredentialPage' } } } }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
     post:
       operationId: issueApplicationCredential
-      security: [{ bearerAuth: [] }, { adminAuth: [] }]
+      security: [{ sessionAuth: [] }, { adminAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
@@ -228,7 +267,7 @@ paths:
       [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/CredentialId' }]
     delete:
       operationId: revokeApplicationCredential
-      security: [{ bearerAuth: [] }, { adminAuth: [] }]
+      security: [{ sessionAuth: [] }, { adminAuth: [] }]
       responses:
         '204': { description: Credential revoked; repeated revocation is successful }
         '401': { $ref: '#/components/responses/Error' }
@@ -763,7 +802,11 @@ paths:
       responses: { '200': { $ref: '#/components/responses/RecoveryOperationDetail' } }
 components:
   securitySchemes:
-    bearerAuth: { type: http, scheme: bearer }
+    sessionAuth:
+      type: apiKey
+      in: cookie
+      name: okoscope_session
+      description: Opaque HttpOnly browser session; clients send requests with credentials enabled.
     adminAuth: { type: http, scheme: bearer, description: System administrator credential }
   parameters:
     Cursor:
@@ -820,6 +863,46 @@ components:
   headers:
     RequestId: { schema: { type: string }, description: Correlation identifier for the request. }
   schemas:
+    OrganizationRole: { type: string, enum: [owner, member] }
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, organization_slug, organization_name]
+      properties:
+        email: { type: string, format: email, minLength: 3, maxLength: 254 }
+        password: { type: string, format: password, minLength: 12, maxLength: 256, writeOnly: true }
+        organization_slug: { type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 63 }
+        organization_name: { type: string, minLength: 1, maxLength: 120 }
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, minLength: 3, maxLength: 254 }
+        password: { type: string, format: password, minLength: 1, maxLength: 256, writeOnly: true }
+    AuthenticatedUser:
+      type: object
+      additionalProperties: false
+      required: [id, email]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        email: { type: string, format: email }
+    AuthenticatedOrganization:
+      type: object
+      additionalProperties: false
+      required: [id, slug, name]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        slug: { type: string }
+        name: { type: string }
+    AuthContext:
+      type: object
+      additionalProperties: false
+      required: [user, organization, role]
+      properties:
+        user: { $ref: '#/components/schemas/AuthenticatedUser' }
+        organization: { $ref: '#/components/schemas/AuthenticatedOrganization' }
+        role: { $ref: '#/components/schemas/OrganizationRole' }
     AttentionWindowKind: { type: string, enum: [24h, 7d], default: 24h }
     AttentionPriority: { type: string, enum: [urgent, high, normal] }
     AttentionItemKind: { type: string, enum: [notification_delivery_failing, notification_delivery_backlogged, notification_destination_missing, release_runtime_changed, new_discovery, open_discovery, container_restart_loop] }
@@ -2655,6 +2738,15 @@ components:
       required: true
       content: { application/json: { schema: { $ref: '#/components/schemas/BulkRetryFilter' } } }
   responses:
+    AuthResponse:
+      description: Safe authenticated user, Organization, and role context; the opaque session is set only as an HttpOnly cookie.
+      headers:
+        X-Request-Id: { schema: { type: string } }
+        Set-Cookie: { schema: { type: string, writeOnly: true } }
+        Cache-Control: { schema: { type: string, const: no-store } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AuthContext' }
     OrganizationAttentionSummary:
       description: Complete organization attention snapshot with bounded lists
       headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } }

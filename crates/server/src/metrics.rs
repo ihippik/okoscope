@@ -55,6 +55,9 @@ static API_CLIENT_ERRORS: AtomicU64 = AtomicU64::new(0);
 static API_SERVER_ERRORS: AtomicU64 = AtomicU64::new(0);
 static CORS_DENIALS: AtomicU64 = AtomicU64::new(0);
 static WEB_API_DURATION_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
+static AUTH_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static AUTH_SUCCESSES: AtomicU64 = AtomicU64::new(0);
+static AUTH_FAILURES: AtomicU64 = AtomicU64::new(0);
 static INVENTORY_PROJECTION_EVENTS: AtomicU64 = AtomicU64::new(0);
 static INVENTORY_PROJECTION_SKIPS: AtomicU64 = AtomicU64::new(0);
 static INVENTORY_ITEMS_CREATED: AtomicU64 = AtomicU64::new(0);
@@ -114,6 +117,15 @@ pub fn record_file_event(group_created: bool) {
 
 pub fn record_api_request() {
     API_REQUESTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_authentication(success: bool) {
+    AUTH_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+    if success {
+        AUTH_SUCCESSES.fetch_add(1, Ordering::Relaxed);
+    } else {
+        AUTH_FAILURES.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 pub fn record_backfill(scanned: u64, grouped: u64) {
@@ -612,6 +624,18 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         (
             "okoscope_web_api_duration_microseconds_total",
             WEB_API_DURATION_MICROSECONDS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_authentication_attempts_total",
+            AUTH_ATTEMPTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_authentication_successes_total",
+            AUTH_SUCCESSES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_authentication_failures_total",
+            AUTH_FAILURES.load(Ordering::Relaxed),
         ),
     ];
     let mut body = String::new();

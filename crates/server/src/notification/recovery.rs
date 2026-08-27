@@ -620,7 +620,7 @@ async fn insert_operation<T: Serialize>(
     tx: &mut Transaction<'_, Postgres>,
     input: OperationInsert<'_, T>,
 ) -> Result<(), RecoveryError> {
-    sqlx::query("INSERT INTO notification_recovery_operations (id,organization_id,project_id,command_type,target_delivery_id,actor_kind,actor_id,request_id,idempotency_key_hash,request_fingerprint,safe_filters,outcome,selected_count,retried_count,cancelled_count,skipped_count,remaining_count,result,completed_at) VALUES ($1,$2,$3,$4,$5,'api_credential',$6,$7,$8,$9,$10,'completed',$11,$12,$13,$14,$15,$16,$17)")
+    sqlx::query("INSERT INTO notification_recovery_operations (id,organization_id,project_id,command_type,target_delivery_id,actor_kind,actor_id,request_id,idempotency_key_hash,request_fingerprint,safe_filters,outcome,selected_count,retried_count,cancelled_count,skipped_count,remaining_count,result,completed_at) VALUES ($1,$2,$3,$4,$5,'user',$6,$7,$8,$9,$10,'completed',$11,$12,$13,$14,$15,$16,$17)")
         .bind(input.id).bind(input.organization_id).bind(input.project_id).bind(input.command.as_str()).bind(input.target_delivery_id)
         .bind(input.actor.id).bind(input.actor.request_id).bind(input.key_hash.as_slice()).bind(input.fingerprint.as_slice()).bind(input.safe_filters)
         .bind(input.selected).bind(input.retried).bind(input.cancelled).bind(input.skipped).bind(input.remaining)

@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -11,7 +11,7 @@ use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::auth::{ApiCredentialAuthenticator, ApiPrincipal};
+use crate::auth::{UserPrincipal, UserSessionAuthenticator};
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
@@ -19,12 +19,12 @@ const MAX_LIMIT: i64 = 200;
 #[derive(Clone, Debug)]
 struct ReleaseState {
     pool: PgPool,
-    authenticator: ApiCredentialAuthenticator,
+    authenticator: UserSessionAuthenticator,
 }
 
 pub fn router(pool: PgPool) -> Router {
     let state = ReleaseState {
-        authenticator: ApiCredentialAuthenticator::new(pool.clone()),
+        authenticator: UserSessionAuthenticator::new(pool.clone()),
         pool,
     };
     Router::new()
@@ -201,15 +201,10 @@ struct RuntimeDiffSummary {
 async fn principal(
     headers: &HeaderMap,
     state: &ReleaseState,
-) -> Result<ApiPrincipal, ReleaseError> {
-    let credential = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or(ReleaseError::Unauthorized)?;
+) -> Result<UserPrincipal, ReleaseError> {
     state
         .authenticator
-        .authenticate(credential)
+        .authenticate_headers(headers)
         .await?
         .ok_or(ReleaseError::Unauthorized)
 }

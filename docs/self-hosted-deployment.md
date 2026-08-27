@@ -37,20 +37,24 @@ kubectl create secret generic okoscope-secrets -n okoscope \
   --from-literal=database-url="$OKOSCOPE_DATABASE_URL" \
   --from-literal=postgres-password="$OKOSCOPE_POSTGRES_PASSWORD" \
   --from-literal=admin-credential="$(openssl rand -hex 32)" \
-  --from-literal=api-credential="$(openssl rand -hex 32)" \
   --from-literal=webhook-encryption-key="$(openssl rand -hex 32)"
 unset OKOSCOPE_DATABASE_URL OKOSCOPE_POSTGRES_PASSWORD
 ```
 
-For an existing installation, do not run `create` again. Rotate one key with a server-side merge so unspecified keys survive:
+For an existing installation, do not run `create` again. Human access uses individually revocable user sessions, so there is no shared tenant API credential to rotate. Never put bootstrap passwords, session values, Application tokens, or other secrets in shell history, tickets, CI artifacts, or repository files. The preflight reports key names and validation reasons only.
+
+Before removing a legacy tenant API credential, migrate the database, create or resolve the target Organization, and establish its first owner through the one-shot command. Supply the password through a protected environment/secret injection rather than a command-line argument:
 
 ```bash
-kubectx aliens
-kubectl patch secret okoscope-secrets -n okoscope --type merge \
-  -p "{\"stringData\":{\"api-credential\":\"$(openssl rand -hex 32)\"}}"
+read -rs OKOSCOPE_BOOTSTRAP_OWNER_PASSWORD
+export OKOSCOPE_BOOTSTRAP_OWNER_PASSWORD
+export OKOSCOPE_BOOTSTRAP_OWNER_EMAIL='owner@example.com'
+server --database-url "$OKOSCOPE_DATABASE_URL" bootstrap-owner \
+  --organization-id '<organization-uuid>'
+unset OKOSCOPE_BOOTSTRAP_OWNER_PASSWORD OKOSCOPE_BOOTSTRAP_OWNER_EMAIL
 ```
 
-Rotation invalidates clients using the old value. Coordinate agent and UI credential changes before restarting workloads. Never put values in shell history, tickets, CI artifacts, or repository files. The preflight reports key names and validation reasons only.
+The command is idempotent: if the Organization already has an owner, it does not replace credentials or create another membership. Back up PostgreSQL before migration `0016`; rollback after the legacy table drop requires restoring that backup with the previous server release.
 
 ## Provision tenants and Application ingestion
 

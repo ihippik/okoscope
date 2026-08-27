@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -11,17 +11,17 @@ use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::auth::{ApiCredentialAuthenticator, ApiPrincipal};
+use crate::auth::{UserPrincipal, UserSessionAuthenticator};
 
 #[derive(Clone, Debug)]
 struct ApiState {
     pool: PgPool,
-    authenticator: ApiCredentialAuthenticator,
+    authenticator: UserSessionAuthenticator,
 }
 
 pub fn router(pool: PgPool) -> Router {
     let state = ApiState {
-        authenticator: ApiCredentialAuthenticator::new(pool.clone()),
+        authenticator: UserSessionAuthenticator::new(pool.clone()),
         pool,
     };
     Router::new()
@@ -200,15 +200,10 @@ struct GroupDetail {
     notification: NotificationSummary,
 }
 
-async fn principal(headers: &HeaderMap, state: &ApiState) -> Result<ApiPrincipal, ApiError> {
-    let value = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or(ApiError::Unauthorized)?;
+async fn principal(headers: &HeaderMap, state: &ApiState) -> Result<UserPrincipal, ApiError> {
     state
         .authenticator
-        .authenticate(value)
+        .authenticate_headers(headers)
         .await?
         .ok_or(ApiError::Unauthorized)
 }
@@ -248,7 +243,7 @@ async fn list_groups(
     };
     let (cursor_time, cursor_id) = cursor.unzip();
     let mut items = sqlx::query_as::<_, GroupSummary>(
-        "SELECT id,project_id,application_id,cluster_id,namespace,workload_kind,workload_name,fingerprint_version,event_kind,semantic_summary,status,first_seen_at,first_seen_event_id,last_seen_at,occurrence_count,representative_event_id,status_changed_at,status_changed_by FROM runtime_event_groups g WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND ($4::text IS NULL OR event_kind=$4) AND ($5::text IS NULL OR status=$5) AND ($6::text IS NULL OR namespace=$6) AND ($7::text IS NULL OR workload_kind=$7) AND ($8::text IS NULL OR workload_name=$8) AND ($9::timestamptz IS NULL OR last_seen_at >= $9) AND ($10::timestamptz IS NULL OR first_seen_at >= $10) AND ($11::timestamptz IS NULL OR first_seen_at <= $11) AND ($12::timestamptz IS NULL OR last_seen_at <= $12) AND ($13::uuid IS NULL OR EXISTS (SELECT 1 FROM runtime_event_group_releases gr WHERE gr.group_id=g.id AND gr.release_id=$13)) AND ($14::timestamptz IS NULL OR (last_seen_at,id) < ($14,$15)) ORDER BY last_seen_at DESC,id DESC LIMIT $16",
+        "SELECT id,project_id,application_id,cluster_id,namespace,workload_kind,workload_name,fingerprint_version,event_kind,semantic_summary,status,first_seen_at,first_seen_event_id,last_seen_at,occurrence_count,representative_event_id,status_changed_at,status_changed_by_user_id AS status_changed_by FROM runtime_event_groups g WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND ($4::text IS NULL OR event_kind=$4) AND ($5::text IS NULL OR status=$5) AND ($6::text IS NULL OR namespace=$6) AND ($7::text IS NULL OR workload_kind=$7) AND ($8::text IS NULL OR workload_name=$8) AND ($9::timestamptz IS NULL OR last_seen_at >= $9) AND ($10::timestamptz IS NULL OR first_seen_at >= $10) AND ($11::timestamptz IS NULL OR first_seen_at <= $11) AND ($12::timestamptz IS NULL OR last_seen_at <= $12) AND ($13::uuid IS NULL OR EXISTS (SELECT 1 FROM runtime_event_group_releases gr WHERE gr.group_id=g.id AND gr.release_id=$13)) AND ($14::timestamptz IS NULL OR (last_seen_at,id) < ($14,$15)) ORDER BY last_seen_at DESC,id DESC LIMIT $16",
     )
     .bind(principal.organization_id).bind(query.project_id).bind(query.application_id)
     .bind(query.event_kind).bind(query.status).bind(query.namespace).bind(query.workload_kind).bind(query.workload_name)
@@ -272,7 +267,7 @@ async fn get_group(
     crate::metrics::record_api_request();
     let principal = principal(&headers, &state).await?;
     let group = sqlx::query_as::<_, GroupSummary>(
-        "SELECT id,project_id,application_id,cluster_id,namespace,workload_kind,workload_name,fingerprint_version,event_kind,semantic_summary,status,first_seen_at,first_seen_event_id,last_seen_at,occurrence_count,representative_event_id,status_changed_at,status_changed_by FROM runtime_event_groups WHERE organization_id=$1 AND id=$2",
+        "SELECT id,project_id,application_id,cluster_id,namespace,workload_kind,workload_name,fingerprint_version,event_kind,semantic_summary,status,first_seen_at,first_seen_event_id,last_seen_at,occurrence_count,representative_event_id,status_changed_at,status_changed_by_user_id AS status_changed_by FROM runtime_event_groups WHERE organization_id=$1 AND id=$2",
     )
     .bind(principal.organization_id).bind(group_id).fetch_optional(&state.pool).await?.ok_or(ApiError::NotFound)?;
     let mut representative_event = event_by_id(
@@ -423,12 +418,12 @@ async fn transition_group(
     crate::metrics::record_api_request();
     let principal = principal(&headers, &state).await?;
     let group = sqlx::query_as::<_, GroupSummary>(
-        "UPDATE runtime_event_groups SET status=$3,status_changed_at=CASE WHEN status=$3 THEN status_changed_at ELSE now() END,status_changed_by=CASE WHEN status=$3 THEN status_changed_by ELSE $4 END,updated_at=CASE WHEN status=$3 THEN updated_at ELSE now() END WHERE organization_id=$1 AND id=$2 AND (status=$3 OR status=ANY($5)) RETURNING id,project_id,application_id,cluster_id,namespace,workload_kind,workload_name,fingerprint_version,event_kind,semantic_summary,status,first_seen_at,first_seen_event_id,last_seen_at,occurrence_count,representative_event_id,status_changed_at,status_changed_by",
+        "UPDATE runtime_event_groups SET status=$3,status_changed_at=CASE WHEN status=$3 THEN status_changed_at ELSE now() END,status_changed_by_user_id=CASE WHEN status=$3 THEN status_changed_by_user_id ELSE $4 END,status_changed_by_kind=CASE WHEN status=$3 THEN status_changed_by_kind ELSE 'user' END,updated_at=CASE WHEN status=$3 THEN updated_at ELSE now() END WHERE organization_id=$1 AND id=$2 AND (status=$3 OR status=ANY($5)) RETURNING id,project_id,application_id,cluster_id,namespace,workload_kind,workload_name,fingerprint_version,event_kind,semantic_summary,status,first_seen_at,first_seen_event_id,last_seen_at,occurrence_count,representative_event_id,status_changed_at,status_changed_by_user_id AS status_changed_by",
     )
     .bind(principal.organization_id)
     .bind(group_id)
     .bind(target)
-    .bind(principal.credential_id)
+    .bind(principal.user_id)
     .bind(allowed)
     .fetch_optional(&state.pool)
     .await?;

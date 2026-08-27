@@ -1,7 +1,7 @@
 use axum::{
     Extension, Json, Router,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    auth::{ApiCredentialAuthenticator, ApiPrincipal},
+    auth::{UserPrincipal, UserSessionAuthenticator},
     web_api::RequestId,
 };
 
@@ -32,7 +32,7 @@ use super::{
 
 #[derive(Clone, Debug)]
 struct NotificationApiState {
-    authenticator: ApiCredentialAuthenticator,
+    authenticator: UserSessionAuthenticator,
     destinations: DestinationRepository,
     policy: WebhookPolicy,
     service: NotificationService,
@@ -40,7 +40,7 @@ struct NotificationApiState {
 
 pub fn router(pool: PgPool, service: NotificationService) -> Router {
     let state = NotificationApiState {
-        authenticator: ApiCredentialAuthenticator::new(pool),
+        authenticator: UserSessionAuthenticator::new(pool),
         destinations: service.destinations.clone(),
         policy: service.policy.clone(),
         service,
@@ -249,15 +249,10 @@ fn idempotency_key(headers: &HeaderMap) -> Result<&str, ApiError> {
 async fn principal(
     headers: &HeaderMap,
     state: &NotificationApiState,
-) -> Result<ApiPrincipal, ApiError> {
-    let token = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or(ApiError::Unauthorized)?;
+) -> Result<UserPrincipal, ApiError> {
     state
         .authenticator
-        .authenticate(token)
+        .authenticate_headers(headers)
         .await?
         .ok_or(ApiError::Unauthorized)
 }
@@ -496,7 +491,7 @@ async fn retry_delivery(
             project_id,
             delivery_id,
             RecoveryActor {
-                id: principal.credential_id,
+                id: principal.user_id,
                 request_id: &request_id.0,
             },
             key,
@@ -529,7 +524,7 @@ async fn cancel_delivery(
             project_id,
             delivery_id,
             RecoveryActor {
-                id: principal.credential_id,
+                id: principal.user_id,
                 request_id: &request_id.0,
             },
             key,
@@ -563,7 +558,7 @@ async fn bulk_retry_deliveries(
             project_id,
             &filter,
             RecoveryActor {
-                id: principal.credential_id,
+                id: principal.user_id,
                 request_id: &request_id.0,
             },
             key,

@@ -78,6 +78,25 @@ async fn migration_only_can_retry_after_failure_is_repaired(pool: sqlx::PgPool) 
 
 #[sqlx::test(migrator = "MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn user_authorisation_schema_replaces_legacy_credentials(pool: sqlx::PgPool) {
+    for table in ["users", "organization_memberships", "user_sessions"] {
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(exists, "{table} must exist");
+    }
+    let legacy_exists: bool =
+        sqlx::query_scalar("SELECT to_regclass('api_credentials') IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!legacy_exists, "legacy tenant credentials must be removed");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn inventory_schema_enforces_identity_tenant_scope_and_indexes(pool: sqlx::PgPool) {
     let first = bootstrap(&pool, &config("inventory-first")).await.unwrap();
     let second = bootstrap(&pool, &config("inventory-second")).await.unwrap();

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use axum::{
     Extension, Json, Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -14,7 +14,7 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
-    auth::{ApiCredentialAuthenticator, ApiPrincipal},
+    auth::{UserPrincipal, UserSessionAuthenticator},
     notification::health::{NotificationHealthState, NotificationQueueSnapshot, derive_state},
     web_api::{RequestId, error_response},
 };
@@ -26,13 +26,13 @@ pub const APPLICATION_ATTENTION_QUERY_BUDGET: usize = 8;
 #[derive(Clone)]
 struct AttentionState {
     pool: PgPool,
-    auth: ApiCredentialAuthenticator,
+    auth: UserSessionAuthenticator,
     delivery_enabled: bool,
 }
 
 pub fn router(pool: PgPool, delivery_enabled: bool) -> Router {
     let state = AttentionState {
-        auth: ApiCredentialAuthenticator::new(pool.clone()),
+        auth: UserSessionAuthenticator::new(pool.clone()),
         pool,
         delivery_enabled,
     };
@@ -439,15 +439,10 @@ struct ApplicationSummary {
 async fn principal(
     headers: &HeaderMap,
     state: &AttentionState,
-) -> Result<ApiPrincipal, AttentionError> {
-    let credential = headers
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or(AttentionError::Unauthorized)?;
+) -> Result<UserPrincipal, AttentionError> {
     state
         .auth
-        .authenticate(credential)
+        .authenticate_headers(headers)
         .await?
         .ok_or(AttentionError::Unauthorized)
 }

@@ -6,7 +6,7 @@ use std::{
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -19,14 +19,14 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::{
-    auth::{ApiCredentialAuthenticator, ApiPrincipal},
+    auth::{UserPrincipal, UserSessionAuthenticator},
     inventory::CURRENT_INVENTORY_IDENTITY_VERSION,
 };
 
 #[derive(Clone, Debug)]
 struct InventoryApiState {
     pool: PgPool,
-    auth: ApiCredentialAuthenticator,
+    auth: UserSessionAuthenticator,
     identity_tokens: IdentityTokenCodec,
 }
 
@@ -144,7 +144,7 @@ impl IdentityTokenCodec {
 
 pub fn router(pool: PgPool) -> Router {
     let state = InventoryApiState {
-        auth: ApiCredentialAuthenticator::new(pool.clone()),
+        auth: UserSessionAuthenticator::new(pool.clone()),
         identity_tokens: IdentityTokenCodec::process_default(),
         pool,
     };
@@ -568,15 +568,10 @@ struct OccurrencePage {
 async fn principal(
     headers: &HeaderMap,
     state: &InventoryApiState,
-) -> Result<ApiPrincipal, InventoryApiError> {
-    let credential = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or(InventoryApiError::Unauthorized)?;
+) -> Result<UserPrincipal, InventoryApiError> {
     state
         .auth
-        .authenticate(credential)
+        .authenticate_headers(headers)
         .await?
         .ok_or(InventoryApiError::Unauthorized)
 }
@@ -686,7 +681,7 @@ impl InventoryScope {
 
 async fn validate_release_scope(
     pool: &PgPool,
-    principal: ApiPrincipal,
+    principal: UserPrincipal,
     project_id: Uuid,
     application_id: Uuid,
     release_id: Option<Uuid>,
@@ -708,7 +703,7 @@ async fn validate_release_scope(
 
 async fn ensure_application(
     pool: &PgPool,
-    principal: ApiPrincipal,
+    principal: UserPrincipal,
     project_id: Uuid,
     application_id: Uuid,
 ) -> Result<(), InventoryApiError> {
@@ -723,7 +718,7 @@ async fn ensure_application(
 
 async fn ensure_item(
     pool: &PgPool,
-    principal: ApiPrincipal,
+    principal: UserPrincipal,
     project_id: Uuid,
     application_id: Uuid,
     item_id: Uuid,
@@ -1067,7 +1062,7 @@ async fn list_items(
 
 async fn fetch_item(
     state: &InventoryApiState,
-    principal: ApiPrincipal,
+    principal: UserPrincipal,
     project_id: Uuid,
     application_id: Uuid,
     item_id: Uuid,

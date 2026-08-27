@@ -3,7 +3,7 @@ set -euo pipefail
 
 namespace=${1:-okoscope}
 secret_name=${2:-okoscope-secrets}
-required=(database-url postgres-password admin-credential api-credential webhook-encryption-key)
+required=(database-url postgres-password admin-credential webhook-encryption-key)
 
 fail() {
   echo "secret preflight failed: $1" >&2

@@ -10,6 +10,10 @@ web=ghcr.io/ihippik/okoscope-web:2222222222222222222222222222222222222222
 
 cd "$root"
 deploy/scripts/render-release.sh "$work/release" "$commit" "$commit" "$web" disabled
+grep -q 'name: OKOSCOPE_REGISTRATION_ENABLED' "$work/release/03-upgrade.yaml"
+grep -q 'value: "false"' "$work/release/03-upgrade.yaml"
+grep -q 'name: OKOSCOPE_SESSION_LIFETIME_SECONDS' "$work/release/03-upgrade.yaml"
+! grep -q 'OKOSCOPE_API_CREDENTIAL\|api-credential' "$work/release/03-upgrade.yaml"
 mkdir "$work/bin"
 cat >"$work/bin/kubectx" <<'MOCK'
 #!/usr/bin/env bash
@@ -26,7 +30,6 @@ if [[ ${1-} == get && ${2-} == secret && "$*" == *jsonpath* ]]; then
     *database-url*) value='postgres://user:password@postgres:5432/okoscope' ;;
     *postgres-password*) value='password' ;;
     *admin-credential*) value='admin-credential-with-at-least-32-bytes' ;;
-    *api-credential*) value='api-token' ;;
     *webhook-encryption-key*) value='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' ;;
   esac
   printf %s "$value" | base64

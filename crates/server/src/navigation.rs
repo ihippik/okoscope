@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
-    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -12,19 +12,19 @@ use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::{
-    auth::{ApiCredentialAuthenticator, ApiPrincipal},
+    auth::{UserPrincipal, UserSessionAuthenticator},
     web_api::{RequestId, error_response},
 };
 
 #[derive(Clone, Debug)]
 struct StateData {
     pool: PgPool,
-    auth: ApiCredentialAuthenticator,
+    auth: UserSessionAuthenticator,
 }
 
 pub fn router(pool: PgPool) -> Router {
     let state = StateData {
-        auth: ApiCredentialAuthenticator::new(pool.clone()),
+        auth: UserSessionAuthenticator::new(pool.clone()),
         pool,
     };
     Router::new()
@@ -194,15 +194,10 @@ async fn principal(
     headers: &HeaderMap,
     state: &StateData,
     request_id: &RequestId,
-) -> Result<ApiPrincipal, NavigationError> {
-    let credential = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or_else(|| NavigationError::unauthorized(request_id))?;
+) -> Result<UserPrincipal, NavigationError> {
     state
         .auth
-        .authenticate(credential)
+        .authenticate_headers(headers)
         .await
         .map_err(|error| NavigationError::database(&error, request_id))?
         .ok_or_else(|| NavigationError::unauthorized(request_id))
