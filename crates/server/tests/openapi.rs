@@ -424,15 +424,41 @@ fn assert_inventory_contract(document: &serde_json::Value) {
             "lifecycle"
         ])
     );
-    assert_eq!(
-        schemas["InventoryLifecycleSemanticSummary"]["properties"]["event_kind"]["enum"],
-        serde_json::json!([
+    let lifecycle_variants = schemas["InventoryLifecycleSemanticSummary"]["oneOf"]
+        .as_array()
+        .unwrap();
+    assert_eq!(lifecycle_variants.len(), 4);
+    for (schema, event_kind, required) in [
+        (
+            "ProcessExitSemanticSummary",
             "process.exit",
+            &["identity", "termination"][..],
+        ),
+        (
+            "ContainerTerminationSemanticSummary",
             "container.terminated",
+            &["container_name", "reason", "exit_code"][..],
+        ),
+        (
+            "ContainerRestartSemanticSummary",
             "container.restart",
-            "container.restart_loop"
-        ])
-    );
+            &["container_name"][..],
+        ),
+        (
+            "RestartLoopSemanticSummary",
+            "container.restart_loop",
+            &["container_name"][..],
+        ),
+    ] {
+        assert_eq!(
+            schemas[schema]["properties"]["event_kind"]["const"],
+            event_kind
+        );
+        let schema_required = schemas[schema]["required"].as_array().unwrap();
+        for field in required {
+            assert!(schema_required.iter().any(|value| value == field));
+        }
+    }
     assert_eq!(
         schemas["InventoryReleasePresence"]["enum"],
         serde_json::json!(["observed", "not_observed", "unknown"])

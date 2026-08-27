@@ -4,9 +4,10 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use event_model::{
-    DnsDirection, DnsName, DnsQueryType, DnsTransport, EVENT_SCHEMA_VERSION, EventPayload,
-    KubernetesAttribution, NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome,
-    NetworkDnsQuery, ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
+    ContainerRestart, ContainerTermination, DnsDirection, DnsName, DnsQueryType, DnsTransport,
+    EVENT_SCHEMA_VERSION, EventPayload, GenerationCorrelation, KubernetesAttribution,
+    NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery, ProcessExec,
+    ProcessExit, ProcessIdentity, ProcessTermination, RuntimeEvent, SyscallEvent,
 };
 use server::{
     auth::SessionScope,
@@ -120,6 +121,31 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         ),
         event(
             &first,
+            EventPayload::ProcessExit(ProcessExit::new(
+                0,
+                ProcessTermination::exited(0),
+                GenerationCorrelation::Unresolved {
+                    reason: event_model::UnresolvedGenerationReason::BeforeObservation,
+                },
+            )),
+            Some("v1"),
+        ),
+        event(
+            &first,
+            EventPayload::ContainerTermination(
+                ContainerTermination::new("containerd://app", "Completed", 0, None, None).unwrap(),
+            ),
+            Some("v1"),
+        ),
+        event(
+            &first,
+            EventPayload::ContainerRestart(
+                ContainerRestart::new("containerd://app", 3, 1, None, None).unwrap(),
+            ),
+            Some("v1"),
+        ),
+        event(
+            &first,
             EventPayload::NetworkConnect(
                 NetworkConnect::new(
                     NetworkAddressFamily::Ipv4,
@@ -190,8 +216,8 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         .unwrap();
     assert_eq!(summary_response.status(), StatusCode::OK);
     let summary = json(summary_response).await;
-    assert_eq!(summary["item_count"], 6);
-    assert_eq!(summary["kinds"].as_array().unwrap().len(), 6);
+    assert_eq!(summary["item_count"], 9);
+    assert_eq!(summary["kinds"].as_array().unwrap().len(), 7);
     assert_eq!(
         summary["kinds"]
             .as_array()
@@ -204,12 +230,13 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
             "domain",
             "inbound_endpoint",
             "file_activity",
+            "lifecycle",
             "process",
             "syscall",
         ]
     );
 
-    for kind in ["process", "destination", "domain", "syscall"] {
+    for kind in ["process", "destination", "domain", "syscall", "lifecycle"] {
         let response = app
             .clone()
             .oneshot(request(
@@ -232,6 +259,51 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         assert_eq!(distribution.status(), StatusCode::OK);
         assert_eq!(json(distribution).await["kind"], kind);
     }
+
+    let lifecycle_distribution = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/distribution?kind=lifecycle&limit=10"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(lifecycle_distribution.status(), StatusCode::OK);
+    let lifecycle_distribution = json(lifecycle_distribution).await;
+    let lifecycle_entries = lifecycle_distribution["entries"].as_array().unwrap();
+    assert_eq!(lifecycle_entries.len(), 3);
+    let process_exit = lifecycle_entries
+        .iter()
+        .find(|entry| entry["semantic_summary"]["event_kind"] == "process.exit")
+        .unwrap();
+    assert_eq!(process_exit["semantic_summary"]["identity"], "app");
+    assert_eq!(
+        process_exit["semantic_summary"]["termination"]["type"],
+        "exited"
+    );
+    let container_termination = lifecycle_entries
+        .iter()
+        .find(|entry| entry["semantic_summary"]["event_kind"] == "container.terminated")
+        .unwrap();
+    assert_eq!(
+        container_termination["semantic_summary"]["container_name"],
+        "app"
+    );
+    assert_eq!(
+        container_termination["semantic_summary"]["reason"],
+        "Completed"
+    );
+    assert_eq!(container_termination["semantic_summary"]["exit_code"], 0);
+    let container_restart = lifecycle_entries
+        .iter()
+        .find(|entry| entry["semantic_summary"]["event_kind"] == "container.restart")
+        .unwrap();
+    assert_eq!(
+        container_restart["semantic_summary"]["container_name"],
+        "app"
+    );
+    assert_eq!(container_restart["semantic_summary"]["restart_count"], 3);
+    assert_eq!(container_restart["semantic_summary"]["restart_delta"], 1);
 
     let distribution_response = app
         .clone()

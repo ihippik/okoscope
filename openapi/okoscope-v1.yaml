@@ -1526,15 +1526,18 @@ components:
     ProcessExitSemanticSummary:
       type: object
       additionalProperties: true
-      required: [evidence_source, termination]
+      required: [evidence_source, identity, termination]
       properties:
+        event_kind: { type: string, const: process.exit }
         evidence_source: { type: string, const: kernel }
+        identity: { type: string, minLength: 1 }
         termination: { $ref: '#/components/schemas/ProcessTermination' }
     ContainerTerminationSemanticSummary:
       type: object
       additionalProperties: true
       required: [evidence_source, container_name, reason, exit_code]
       properties:
+        event_kind: { type: string, const: container.terminated }
         evidence_source: { type: string, const: kubernetes }
         container_name: { type: string, minLength: 1 }
         reason: { type: string, minLength: 1 }
@@ -1544,6 +1547,7 @@ components:
       additionalProperties: true
       required: [evidence_source, container_name]
       properties:
+        event_kind: { type: string, const: container.restart }
         evidence_source: { type: string, const: kubernetes }
         container_name: { type: string, minLength: 1 }
     RestartLoopSemanticSummary:
@@ -1551,6 +1555,7 @@ components:
       additionalProperties: false
       required: [evidence_source, projection_version, threshold, window_started_at, window_ended_at, observed_restart_count, container_name]
       properties:
+        event_kind: { type: string, const: container.restart_loop }
         evidence_source: { type: string, const: derived }
         projection_version: { type: integer, minimum: 1 }
         threshold: { type: integer, minimum: 1 }
@@ -2353,14 +2358,24 @@ components:
         - { $ref: '#/components/schemas/FileActivitySemanticSummary' }
         - { $ref: '#/components/schemas/InventoryLifecycleSemanticSummary' }
     InventoryLifecycleSemanticSummary:
-      type: object
-      additionalProperties: true
-      required: [event_kind, evidence_source]
-      properties:
-        event_kind:
-          type: string
-          enum: [process.exit, container.terminated, container.restart, container.restart_loop]
-        evidence_source: { type: string, enum: [kernel, kubernetes, derived] }
+      description: User-visible lifecycle identity and termination context; identity_token remains an opaque filtering mechanism.
+      oneOf:
+        - allOf:
+            - { $ref: '#/components/schemas/ProcessExitSemanticSummary' }
+            - type: object
+              required: [event_kind]
+        - allOf:
+            - { $ref: '#/components/schemas/ContainerTerminationSemanticSummary' }
+            - type: object
+              required: [event_kind]
+        - allOf:
+            - { $ref: '#/components/schemas/ContainerRestartSemanticSummary' }
+            - type: object
+              required: [event_kind]
+        - allOf:
+            - { $ref: '#/components/schemas/RestartLoopSemanticSummary' }
+            - type: object
+              required: [event_kind]
     InventoryProcessIdentity:
       type: object
       additionalProperties: false
