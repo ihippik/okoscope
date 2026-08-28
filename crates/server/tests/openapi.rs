@@ -562,6 +562,11 @@ fn assert_inventory_contract(document: &serde_json::Value) {
     ] {
         assert_eq!(schemas[page]["properties"]["items"]["maxItems"], 200);
     }
+    assert_inventory_policy_contract(document);
+}
+
+fn assert_inventory_policy_contract(document: &serde_json::Value) {
+    let schemas = &document["components"]["schemas"];
     assert_required_fields(
         document,
         "InventorySighting",
