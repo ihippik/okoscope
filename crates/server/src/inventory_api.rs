@@ -433,6 +433,15 @@ struct KindCount {
     occurrence_count: i64,
 }
 
+#[derive(Debug, FromRow)]
+struct KindAggregate {
+    kind: String,
+    item_count: i64,
+    occurrence_count: i64,
+    first_seen_at: DateTime<Utc>,
+    last_seen_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize)]
 struct InventorySummary {
     identity_version: i16,
@@ -754,13 +763,12 @@ async fn summary(
     .await?;
     let version = CURRENT_INVENTORY_IDENTITY_VERSION.get();
     let search = scope.search_pattern();
-    let aggregate: (i64, i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
-        sqlx::query_as("SELECT count(*)::bigint,COALESCE(sum(i.occurrence_count),0)::bigint,min(i.first_seen_at),max(i.last_seen_at) FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND ($5::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$5)) AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$6)) AND ($7::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$10)) AND ($11::timestamptz IS NULL OR i.last_seen_at >= $11) AND ($12::timestamptz IS NULL OR i.first_seen_at <= $12) AND ($13::text IS NULL OR i.semantic_summary->>'operation'=$13) AND ($14::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $14)")
+    let rows: Vec<KindAggregate> =
+        sqlx::query_as("SELECT CASE WHEN i.inventory_kind IN ('process_exit','container_termination','container_restart') THEN 'lifecycle' ELSE i.inventory_kind END kind,count(*)::bigint item_count,COALESCE(sum(i.occurrence_count),0)::bigint occurrence_count,min(i.first_seen_at) first_seen_at,max(i.last_seen_at) last_seen_at FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND ($5::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$5)) AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$6)) AND ($7::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$10)) AND ($11::timestamptz IS NULL OR i.last_seen_at >= $11) AND ($12::timestamptz IS NULL OR i.first_seen_at <= $12) AND ($13::text IS NULL OR i.semantic_summary->>'operation'=$13) AND ($14::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $14) GROUP BY 1")
             .bind(principal.organization_id).bind(project_id).bind(application_id).bind(version)
             .bind(scope.release_id).bind(scope.cluster_id).bind(scope.namespace.as_deref()).bind(scope.workload_kind.as_deref()).bind(scope.workload_name.as_deref()).bind(scope.container_name.as_deref()).bind(scope.observed_from).bind(scope.observed_to).bind(scope.operation.as_deref()).bind(search.as_deref())
-            .fetch_one(&state.pool).await?;
-    let mut kinds = Vec::with_capacity(7);
-    for kind in [
+            .fetch_all(&state.pool).await?;
+    let mut kinds: Vec<_> = [
         "destination",
         "domain",
         "inbound_endpoint",
@@ -768,26 +776,39 @@ async fn summary(
         "lifecycle",
         "process",
         "syscall",
-    ] {
-        let row: (i64, i64) = sqlx::query_as("SELECT count(*)::bigint,COALESCE(sum(i.occurrence_count),0)::bigint FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND i.inventory_kind=$5 AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$6)) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$10)) AND ($11::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$11)) AND ($12::timestamptz IS NULL OR i.last_seen_at >= $12) AND ($13::timestamptz IS NULL OR i.first_seen_at <= $13) AND ($14::text IS NULL OR i.semantic_summary->>'operation'=$14) AND ($15::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $15)")
-            .bind(principal.organization_id).bind(project_id).bind(application_id).bind(version).bind(kind)
-            .bind(scope.release_id).bind(scope.cluster_id).bind(scope.namespace.as_deref()).bind(scope.workload_kind.as_deref()).bind(scope.workload_name.as_deref()).bind(scope.container_name.as_deref()).bind(scope.observed_from).bind(scope.observed_to).bind(scope.operation.as_deref()).bind(search.as_deref())
-            .fetch_one(&state.pool).await?;
-        kinds.push(KindCount {
-            kind: kind.into(),
-            item_count: row.0,
-            occurrence_count: row.1,
-        });
+    ]
+    .into_iter()
+    .map(|kind| KindCount {
+        kind: kind.into(),
+        item_count: 0,
+        occurrence_count: 0,
+    })
+    .collect();
+    let mut first_seen_at: Option<DateTime<Utc>> = None;
+    let mut last_seen_at: Option<DateTime<Utc>> = None;
+    for row in rows {
+        let kind = kinds
+            .iter_mut()
+            .find(|kind| kind.kind == row.kind)
+            .expect("database inventory kind constraint must match the API contract");
+        kind.item_count = row.item_count;
+        kind.occurrence_count = row.occurrence_count;
+        first_seen_at =
+            Some(first_seen_at.map_or(row.first_seen_at, |value| value.min(row.first_seen_at)));
+        last_seen_at =
+            Some(last_seen_at.map_or(row.last_seen_at, |value| value.max(row.last_seen_at)));
     }
+    let item_count = kinds.iter().map(|kind| kind.item_count).sum();
+    let occurrence_count = kinds.iter().map(|kind| kind.occurrence_count).sum();
     crate::metrics::record_inventory_query(
         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
     );
     Ok(Json(InventorySummary {
         identity_version: version,
-        item_count: aggregate.0,
-        occurrence_count: aggregate.1,
-        first_seen_at: aggregate.2,
-        last_seen_at: aggregate.3,
+        item_count,
+        occurrence_count,
+        first_seen_at,
+        last_seen_at,
         kinds,
     }))
 }

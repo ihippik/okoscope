@@ -78,6 +78,20 @@ async fn json(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
 }
 
+fn assert_summary_count_invariants(summary: &serde_json::Value) {
+    let kinds = summary["kinds"].as_array().unwrap();
+    let item_count: i64 = kinds
+        .iter()
+        .map(|kind| kind["item_count"].as_i64().unwrap())
+        .sum();
+    let occurrence_count: i64 = kinds
+        .iter()
+        .map(|kind| kind["occurrence_count"].as_i64().unwrap())
+        .sum();
+    assert_eq!(summary["item_count"], item_count);
+    assert_eq!(summary["occurrence_count"], occurrence_count);
+}
+
 async fn release(pool: &sqlx::PgPool, ids: &BootstrapIds, version: &str, age_days: i64) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query("INSERT INTO releases(id,organization_id,project_id,application_id,version,deployed_at) VALUES($1,$2,$3,$4,$5,$6)")
@@ -217,6 +231,7 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
     assert_eq!(summary_response.status(), StatusCode::OK);
     let summary = json(summary_response).await;
     assert_eq!(summary["item_count"], 9);
+    assert_summary_count_invariants(&summary);
     assert_eq!(summary["kinds"].as_array().unwrap().len(), 7);
     assert_eq!(
         summary["kinds"]
@@ -523,4 +538,59 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         .await
         .unwrap();
     assert_eq!(foreign_distribution.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn inventory_summary_normalizes_legacy_lifecycle_kinds(pool: sqlx::PgPool) {
+    let test_config = config("inventory-summary-legacy-lifecycle");
+    let ids = bootstrap(&pool, &test_config).await.unwrap();
+    let observed_at = Utc::now();
+    for (index, (kind, occurrence_count)) in [
+        ("process_exit", 2_i64),
+        ("container_termination", 3),
+        ("container_restart", 5),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut digest = vec![0_u8; 32];
+        digest[0] = u8::try_from(index + 1).unwrap();
+        sqlx::query("INSERT INTO runtime_inventory_items(id,organization_id,project_id,application_id,inventory_kind,identity_version,identity_digest,semantic_summary,first_seen_at,last_seen_at,occurrence_count) VALUES($1,$2,$3,$4,$5,1,$6,'{}'::jsonb,$7,$7,$8)")
+            .bind(Uuid::new_v4())
+            .bind(ids.organization_id)
+            .bind(ids.project_id)
+            .bind(ids.application_id)
+            .bind(kind)
+            .bind(digest)
+            .bind(observed_at)
+            .bind(occurrence_count)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let response = inventory_api::router(pool)
+        .oneshot(request(
+            &format!(
+                "/api/v1/projects/{}/applications/{}/runtime-inventory/summary",
+                ids.project_id, ids.application_id
+            ),
+            &test_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let summary = json(response).await;
+    assert_summary_count_invariants(&summary);
+    assert_eq!(summary["item_count"], 3);
+    assert_eq!(summary["occurrence_count"], 10);
+    let lifecycle = summary["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|kind| kind["kind"] == "lifecycle")
+        .unwrap();
+    assert_eq!(lifecycle["item_count"], 3);
+    assert_eq!(lifecycle["occurrence_count"], 10);
 }
