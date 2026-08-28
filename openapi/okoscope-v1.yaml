@@ -892,6 +892,8 @@ components:
       { name: credential_id, in: path, required: true, schema: { type: string, format: uuid } }
     InventoryItemId:
       { name: item_id, in: path, required: true, schema: { type: string, format: uuid } }
+    PolicyId:
+      { name: policy_id, in: path, required: true, schema: { type: string, format: uuid } }
     GroupId: { name: group_id, in: path, required: true, schema: { type: string, format: uuid } }
     ReleaseId:
       { name: release_id, in: path, required: true, schema: { type: string, format: uuid } }

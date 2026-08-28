@@ -224,6 +224,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     let source = include_str!("../../../openapi/okoscope-v1.yaml");
     let document: serde_json::Value = serde_yaml::from_str(source).expect("valid OpenAPI YAML");
     assert_eq!(document["openapi"], "3.1.0");
+    assert_all_local_refs_resolve(&document, &document);
     assert_eq!(
         document["security"][0]["sessionAuth"],
         serde_json::json!([])
@@ -319,6 +320,31 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         "get",
         &["baseline_id", "cursor", "limit"],
     );
+}
+
+fn assert_all_local_refs_resolve(document: &serde_json::Value, value: &serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str) {
+                let pointer = reference.strip_prefix('#').unwrap_or_else(|| {
+                    panic!("external OpenAPI reference is unsupported: {reference}")
+                });
+                assert!(
+                    document.pointer(pointer).is_some(),
+                    "unresolved OpenAPI reference: {reference}"
+                );
+            }
+            for nested in object.values() {
+                assert_all_local_refs_resolve(document, nested);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                assert_all_local_refs_resolve(document, item);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn assert_navigation_and_group_contract(document: &serde_json::Value) {
