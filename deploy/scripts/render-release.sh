@@ -12,6 +12,7 @@ server_tag=$2
 agent_tag=$3
 web_image=$4
 routing=${5:-disabled}
+required_migration=$(sed -nE 's/^pub const REQUIRED_MIGRATION: i64 = ([0-9]+);$/\1/p' crates/server/src/database.rs)
 notification_enabled=${OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED:-false}
 notification_poll_ms=${OKOSCOPE_NOTIFICATION_POLL_MS:-1000}
 notification_claim_size=${OKOSCOPE_NOTIFICATION_CLAIM_SIZE:-50}
@@ -64,6 +65,10 @@ notification_substitutions() {
   exit 2
 }
 [[ $routing == enabled || $routing == disabled ]] || usage
+[[ $required_migration =~ ^[1-9][0-9]*$ ]] || {
+  echo "cannot read REQUIRED_MIGRATION from crates/server/src/database.rs" >&2
+  exit 1
+}
 [[ $notification_enabled == true || $notification_enabled == false ]] || {
   echo "OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED must be true or false" >&2
   exit 2
@@ -103,10 +108,12 @@ kubectl kustomize deploy/kubernetes/install/bundled-postgres >"$output_dir/01-in
 kubectl kustomize deploy/kubernetes/migrate \
   | sed -e "s/0000000000000000000000000000000000000000/$server_tag/g" \
         -e "s/okoscope-migrate-000000000000/okoscope-migrate-${server_tag:0:12}/g" \
+        -e "s/__REQUIRED_MIGRATION__/\"$required_migration\"/g" \
   >"$output_dir/02-migrate-${server_tag:0:12}.yaml"
 kubectl kustomize deploy/kubernetes/check \
   | sed -e "s/0000000000000000000000000000000000000000/$server_tag/g" \
         -e "s/okoscope-notification-check-000000000000/okoscope-notification-check-${server_tag:0:8}-$activation_fingerprint/g" \
+        -e "s/__REQUIRED_MIGRATION__/\"$required_migration\"/g" \
   | notification_substitutions \
   >"$output_dir/02-notification-check-${server_tag:0:12}.yaml"
 kubectl kustomize deploy/kubernetes/overlays/production \
@@ -145,7 +152,7 @@ cat >"$output_dir/PROVENANCE.txt" <<EOF
 server_image=ghcr.io/ihippik/okoscope-server:$server_tag
 agent_image=ghcr.io/ihippik/okoscope-agent:$agent_tag
 web_image=$web_image
-required_migration=15
+required_migration=$required_migration
 routing=$routing
 notification_delivery_enabled=$notification_enabled
 notification_poll_ms=$notification_poll_ms

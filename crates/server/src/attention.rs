@@ -21,7 +21,7 @@ use crate::{
 
 // Authentication plus a fixed repository statement sequence; neither budget depends on tenant cardinality.
 pub const ORGANIZATION_ATTENTION_QUERY_BUDGET: usize = 9;
-pub const APPLICATION_ATTENTION_QUERY_BUDGET: usize = 8;
+pub const APPLICATION_ATTENTION_QUERY_BUDGET: usize = 9;
 
 #[derive(Clone)]
 struct AttentionState {
@@ -190,6 +190,10 @@ enum ReasonCode {
     DiscoveryFirstSeenInWindow,
     DiscoveryOpen,
     ContainerRestartLoopObserved,
+    PolicyReviewRequired,
+    PolicyConflict,
+    PolicyUnclassified,
+    PolicyEvaluationPending,
 }
 #[derive(Clone, Debug, Serialize)]
 struct RestartLoopFacts {
@@ -234,6 +238,8 @@ enum ResourceRef {
         namespace: String,
         workload_kind: String,
         workload_name: String,
+        policy_verdict: Option<String>,
+        policy_evaluation_state: String,
     },
     RuntimeDiff {
         project_id: Uuid,
@@ -276,6 +282,8 @@ struct DiscoveryRow {
     workload_kind: String,
     workload_name: String,
     is_new: bool,
+    policy_verdict: Option<String>,
+    policy_evaluation_state: String,
 }
 
 #[derive(Clone, Debug, FromRow)]
@@ -403,6 +411,7 @@ struct OrganizationTotals {
     changed_applications: i64,
     projects_with_notification_problems: i64,
     failed_notification_deliveries: i64,
+    policy: Value,
 }
 #[derive(Debug, Serialize)]
 struct OrganizationSummary {
@@ -423,6 +432,7 @@ struct ApplicationTotals {
     disappeared_runtime_items: i64,
     unchanged_runtime_items: i64,
     total_runtime_items: i64,
+    policy: Value,
 }
 #[derive(Debug, Serialize)]
 struct ApplicationSummary {
@@ -538,8 +548,9 @@ async fn load_discoveries(
     to: DateTime<Utc>,
     limit: i64,
 ) -> Result<Vec<DiscoveryRow>, sqlx::Error> {
-    sqlx::query_as("SELECT g.id group_id,g.project_id,p.name project_name,p.slug project_slug,g.application_id,a.name application_name,a.slug application_slug,g.first_seen_at,g.last_seen_at,g.occurrence_count,g.event_kind,g.semantic_summary,g.namespace,g.workload_kind,g.workload_name,(g.first_seen_at BETWEEN $3 AND $4) is_new FROM runtime_event_groups g JOIN projects p ON p.organization_id=g.organization_id AND p.id=g.project_id JOIN applications a ON a.organization_id=g.organization_id AND a.project_id=g.project_id AND a.id=g.application_id WHERE g.organization_id=$1 AND ($2::uuid IS NULL OR g.application_id=$2) AND g.status='open' ORDER BY CASE WHEN g.event_kind='container.restart_loop' THEN 0 WHEN g.first_seen_at BETWEEN $3 AND $4 THEN 1 ELSE 2 END,g.occurrence_count DESC,CASE WHEN g.first_seen_at BETWEEN $3 AND $4 THEN g.first_seen_at ELSE g.last_seen_at END DESC,g.id LIMIT $5")
-        .bind(organization_id).bind(application_id).bind(from).bind(to).bind(limit).fetch_all(&mut **tx).await
+    sqlx::query_as("SELECT g.id group_id,g.project_id,p.name project_name,p.slug project_slug,g.application_id,a.name application_name,a.slug application_slug,g.first_seen_at,g.last_seen_at,g.occurrence_count,g.event_kind,g.semantic_summary,g.namespace,g.workload_kind,g.workload_name,(g.first_seen_at BETWEEN $3 AND $4) is_new,CASE WHEN e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$6 THEN NULL ELSE e.verdict END policy_verdict,CASE WHEN e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$6 THEN 'evaluation_pending' ELSE 'current' END policy_evaluation_state FROM runtime_event_groups g JOIN projects p ON p.organization_id=g.organization_id AND p.id=g.project_id JOIN applications a ON a.organization_id=g.organization_id AND a.project_id=g.project_id AND a.id=g.application_id LEFT JOIN runtime_group_policy_evaluations e ON e.group_id=g.id LEFT JOIN runtime_policy_states ps ON ps.organization_id=g.organization_id AND ps.project_id=g.project_id AND ps.application_id=g.application_id WHERE g.organization_id=$1 AND ($2::uuid IS NULL OR g.application_id=$2) AND g.status='open' AND (e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$6 OR e.verdict<>'expected') AND NOT EXISTS(SELECT 1 FROM runtime_inventory_group_links gl JOIN runtime_inventory_items i ON i.id=gl.item_id JOIN runtime_policy_suppressions s ON s.organization_id=i.organization_id AND s.project_id=i.project_id AND s.application_id=i.application_id AND s.identity_version=i.identity_version AND s.identity_digest=i.identity_digest WHERE gl.group_id=g.id AND s.cancelled_at IS NULL AND s.expires_at>$4 AND (cardinality(s.cluster_ids)=0 OR g.cluster_id=ANY(s.cluster_ids)) AND (cardinality(s.namespaces)=0 OR g.namespace=ANY(s.namespaces)) AND (cardinality(s.workload_kinds)=0 OR g.workload_kind=ANY(s.workload_kinds)) AND (cardinality(s.workload_names)=0 OR g.workload_name=ANY(s.workload_names))) ORDER BY CASE WHEN e.verdict='policy_conflict' THEN 0 WHEN g.event_kind='container.restart_loop' THEN 1 WHEN g.first_seen_at BETWEEN $3 AND $4 THEN 2 ELSE 3 END,g.occurrence_count DESC,CASE WHEN g.first_seen_at BETWEEN $3 AND $4 THEN g.first_seen_at ELSE g.last_seen_at END DESC,g.id LIMIT $5")
+        .bind(organization_id).bind(application_id).bind(from).bind(to).bind(limit)
+        .bind(crate::policy::POLICY_EVALUATOR_VERSION).fetch_all(&mut **tx).await
 }
 
 async fn load_problems(
@@ -826,12 +837,22 @@ fn discovery_item(r: DiscoveryRow) -> PriorityItem {
         } else {
             ItemKind::OpenDiscovery
         },
-        priority: if is_restart_loop {
+        priority: if r.policy_verdict.as_deref() == Some("policy_conflict") {
+            Priority::Urgent
+        } else if is_restart_loop || r.policy_verdict.as_deref() == Some("requires_review") {
             Priority::High
         } else {
             Priority::Normal
         },
-        reason_code: if is_restart_loop {
+        reason_code: if r.policy_evaluation_state == "evaluation_pending" {
+            ReasonCode::PolicyEvaluationPending
+        } else if r.policy_verdict.as_deref() == Some("policy_conflict") {
+            ReasonCode::PolicyConflict
+        } else if r.policy_verdict.as_deref() == Some("requires_review") {
+            ReasonCode::PolicyReviewRequired
+        } else if r.policy_verdict.as_deref() == Some("unclassified") {
+            ReasonCode::PolicyUnclassified
+        } else if is_restart_loop {
             ReasonCode::ContainerRestartLoopObserved
         } else if r.is_new {
             ReasonCode::DiscoveryFirstSeenInWindow
@@ -866,6 +887,8 @@ fn discovery_item(r: DiscoveryRow) -> PriorityItem {
             namespace: r.namespace,
             workload_kind: r.workload_kind,
             workload_name: r.workload_name,
+            policy_verdict: r.policy_verdict,
+            policy_evaluation_state: r.policy_evaluation_state,
         },
         stable_id: r.group_id,
     }
@@ -986,7 +1009,7 @@ async fn organization_summary(
     .await?;
     let new_discovery_scopes =
         load_new_discovery_scopes(&mut tx, principal.organization_id, from, now, rec_limit).await?;
-    let mut totals:OrganizationTotals=sqlx::query_as(&format!("{CHANGED_CTE} SELECT (SELECT count(*) FROM runtime_event_groups WHERE organization_id=$1 AND first_seen_at BETWEEN $2 AND $3)::bigint new_discoveries,(SELECT count(*) FROM runtime_event_groups WHERE organization_id=$1 AND status='open')::bigint open_discoveries,(SELECT count(*) FROM runtime_event_groups WHERE organization_id=$1 AND status='acknowledged')::bigint acknowledged_discoveries,(SELECT count(*) FROM agg WHERE new_count+disappeared_count>0)::bigint changed_applications,0::bigint projects_with_notification_problems,(SELECT count(*) FROM notification_deliveries WHERE organization_id=$1 AND status='failed' AND terminal_at BETWEEN $2 AND $3)::bigint failed_notification_deliveries" )).bind(principal.organization_id).bind(from).bind(now).fetch_one(&mut *tx).await?;
+    let mut totals:OrganizationTotals=sqlx::query_as(&format!("{CHANGED_CTE} SELECT (SELECT count(*) FROM runtime_event_groups WHERE organization_id=$1 AND first_seen_at BETWEEN $2 AND $3)::bigint new_discoveries,(SELECT count(*) FROM runtime_event_groups WHERE organization_id=$1 AND status='open')::bigint open_discoveries,(SELECT count(*) FROM runtime_event_groups WHERE organization_id=$1 AND status='acknowledged')::bigint acknowledged_discoveries,(SELECT count(*) FROM agg WHERE new_count+disappeared_count>0)::bigint changed_applications,0::bigint projects_with_notification_problems,(SELECT count(*) FROM notification_deliveries WHERE organization_id=$1 AND status='failed' AND terminal_at BETWEEN $2 AND $3)::bigint failed_notification_deliveries,(SELECT jsonb_build_object('factual_total',count(*),'actionable_total',count(*) FILTER(WHERE (e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>1 OR e.verdict<>'expected')),'evaluation_pending',count(*) FILTER(WHERE e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>1),'expected',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='expected'),'requires_review',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='requires_review'),'policy_conflict',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='policy_conflict'),'unclassified',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='unclassified')) FROM runtime_event_groups g LEFT JOIN runtime_group_policy_evaluations e ON e.group_id=g.id LEFT JOIN runtime_policy_states ps ON ps.organization_id=g.organization_id AND ps.project_id=g.project_id AND ps.application_id=g.application_id WHERE g.organization_id=$1) policy" )).bind(principal.organization_id).bind(from).bind(now).fetch_one(&mut *tx).await?;
     totals.projects_with_notification_problems = total_problem_count;
     let mut items: Vec<_> = changed
         .iter()
@@ -1111,6 +1134,7 @@ async fn application_summary(
     sort_items(&mut items);
     items.truncate(usize::try_from(limit).unwrap_or_default());
     let counts:(i64,i64,i64)=sqlx::query_as("SELECT count(*) FILTER(WHERE first_seen_at BETWEEN $3 AND $4)::bigint,count(*) FILTER(WHERE status='open')::bigint,count(*) FILTER(WHERE status='acknowledged')::bigint FROM runtime_event_groups WHERE organization_id=$1 AND application_id=$2").bind(principal.organization_id).bind(application_id).bind(from).bind(now).fetch_one(&mut *tx).await?;
+    let policy: Value = sqlx::query_scalar("SELECT jsonb_build_object('factual_total',count(*),'actionable_total',count(*) FILTER(WHERE e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$3 OR e.verdict<>'expected'),'evaluation_pending',count(*) FILTER(WHERE e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$3),'expected',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$3 AND e.verdict='expected'),'requires_review',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$3 AND e.verdict='requires_review'),'policy_conflict',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$3 AND e.verdict='policy_conflict'),'unclassified',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$3 AND e.verdict='unclassified')) FROM runtime_event_groups g LEFT JOIN runtime_group_policy_evaluations e ON e.group_id=g.id LEFT JOIN runtime_policy_states ps ON ps.organization_id=g.organization_id AND ps.project_id=g.project_id AND ps.application_id=g.application_id WHERE g.organization_id=$1 AND g.application_id=$2").bind(principal.organization_id).bind(application_id).bind(crate::policy::POLICY_EVALUATOR_VERSION).fetch_one(&mut *tx).await?;
     let largest_changes = if let Some(ref row) = changed {
         load_largest(&mut tx, std::slice::from_ref(row), largest)
             .await?
@@ -1203,6 +1227,7 @@ async fn application_summary(
             disappeared_runtime_items,
             unchanged_runtime_items,
             total_runtime_items,
+            policy,
         },
         release_comparison: comparison,
         priority_items: items,
@@ -1232,7 +1257,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&WindowKind::Day).unwrap(), "\"24h\"");
         assert!(serde_json::from_str::<WindowKind>("\"30d\"").is_err());
         assert_eq!(ORGANIZATION_ATTENTION_QUERY_BUDGET, 9);
-        assert_eq!(APPLICATION_ATTENTION_QUERY_BUDGET, 8);
+        assert_eq!(APPLICATION_ATTENTION_QUERY_BUDGET, 9);
     }
     #[test]
     fn tuple_order_is_stable() {
@@ -1308,6 +1333,8 @@ mod tests {
                 namespace: "production".into(),
                 workload_kind: "Deployment".into(),
                 workload_name: "worker".into(),
+                policy_verdict: Some("unclassified".into()),
+                policy_evaluation_state: "current".into(),
             },
             stable_id: id,
         };
@@ -1360,10 +1387,12 @@ mod tests {
             workload_kind: "Deployment".into(),
             workload_name: "worker".into(),
             is_new: true,
+            policy_verdict: Some("requires_review".into()),
+            policy_evaluation_state: "current".into(),
         });
         let value = serde_json::to_value(item).unwrap();
         assert_eq!(value["kind"], "container_restart_loop");
-        assert_eq!(value["reason_code"], "container_restart_loop_observed");
+        assert_eq!(value["reason_code"], "policy_review_required");
         assert_eq!(value["priority"], "high");
         assert_eq!(value["facts"]["restart_loop"]["threshold"], 3);
         assert_eq!(value["facts"]["restart_loop"]["observed_restart_count"], 4);

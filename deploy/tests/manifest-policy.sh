@@ -6,6 +6,7 @@ work=$(mktemp -d /tmp/okoscope-manifest-test.XXXXXX)
 trap 'rm -rf "$work"' EXIT
 commit=1111111111111111111111111111111111111111
 web=ghcr.io/ihippik/okoscope-web:2222222222222222222222222222222222222222
+required_migration=$(sed -nE 's/^pub const REQUIRED_MIGRATION: i64 = ([0-9]+);$/\1/p' crates/server/src/database.rs)
 
 cd "$root"
 deploy/scripts/render-release.sh "$work/no-routing" "$commit" "$commit" "$web" disabled
@@ -19,7 +20,10 @@ check=$(find "$work/no-routing" -name '02-notification-check-*.yaml' -print -qui
 [[ $(grep -c 'resources:' "$upgrade") -ge 3 ]]
 [[ $(grep -c 'resources:' "$migrate") -eq 1 ]]
 grep -q 'OKOSCOPE_MIGRATE: "false"' "$upgrade"
-grep -q 'okoscope.io/required-migration: "13"' "$migrate"
+grep -q "okoscope.io/required-migration: \"$required_migration\"" "$migrate"
+grep -q "okoscope.io/required-migration: \"$required_migration\"" "$check"
+grep -q "required_migration=$required_migration" "$work/no-routing/PROVENANCE.txt"
+! grep -q '__REQUIRED_MIGRATION__' "$migrate" "$check"
 grep -q 'OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: "false"' "$upgrade" "$check"
 grep -Eq 'okoscope.io/notification-config: "[0-9a-f]{12}"' "$upgrade"
 grep -q 'notification_delivery_enabled=false' "$work/no-routing/PROVENANCE.txt"

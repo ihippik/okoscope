@@ -40,9 +40,18 @@ struct OutboxRow {
     id: Uuid,
     organization_id: Uuid,
     project_id: Uuid,
+    aggregate_id: Uuid,
     source: String,
     payload: Value,
     created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, FromRow)]
+struct PolicyEligibility {
+    reason: String,
+    evaluated_at: DateTime<Utc>,
+    policy_revision_id: Option<Uuid>,
+    policy_suppression_id: Option<Uuid>,
 }
 
 #[derive(Debug, FromRow)]
@@ -255,7 +264,7 @@ pub async fn materialize_once(
 ) -> Result<MaterializeStats, WorkerError> {
     let mut tx = service.pool.begin().await?;
     let rows = sqlx::query_as::<_, OutboxRow>(
-        "SELECT id,organization_id,project_id,source,payload,created_at FROM outbox_messages WHERE topic='runtime_group.first_seen' AND processed_at IS NULL AND materialized_at IS NULL ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT $1",
+        "SELECT id,organization_id,project_id,aggregate_id,source,payload,created_at FROM outbox_messages WHERE topic='runtime_group.first_seen' AND processed_at IS NULL AND materialized_at IS NULL ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT $1",
     )
     .bind(i64::from(service.config.claim_size))
     .fetch_all(&mut *tx)
@@ -280,6 +289,22 @@ async fn materialize_message(
     outbox: &OutboxRow,
     stats: &mut MaterializeStats,
 ) -> Result<(), WorkerError> {
+    let eligibility: PolicyEligibility = sqlx::query_as("SELECT CASE WHEN s.id IS NOT NULL THEN 'active_suppression' WHEN e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$3 THEN 'evaluation_pending' WHEN e.verdict='expected' THEN 'expected' ELSE 'eligible' END reason,now() evaluated_at,CASE WHEN e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$3 THEN e.winning_revision_id END policy_revision_id,s.id policy_suppression_id FROM runtime_event_groups g LEFT JOIN runtime_group_policy_evaluations e ON e.group_id=g.id LEFT JOIN runtime_policy_states ps ON ps.organization_id=g.organization_id AND ps.project_id=g.project_id AND ps.application_id=g.application_id LEFT JOIN LATERAL (SELECT x.id FROM runtime_inventory_group_links gl JOIN runtime_inventory_items i ON i.id=gl.item_id JOIN runtime_policy_suppressions x ON x.organization_id=i.organization_id AND x.project_id=i.project_id AND x.application_id=i.application_id AND x.identity_version=i.identity_version AND x.identity_digest=i.identity_digest WHERE gl.group_id=g.id AND x.cancelled_at IS NULL AND x.expires_at>now() AND (cardinality(x.cluster_ids)=0 OR g.cluster_id=ANY(x.cluster_ids)) AND (cardinality(x.namespaces)=0 OR g.namespace=ANY(x.namespaces)) AND (cardinality(x.workload_kinds)=0 OR g.workload_kind=ANY(x.workload_kinds)) AND (cardinality(x.workload_names)=0 OR g.workload_name=ANY(x.workload_names)) ORDER BY x.expires_at,x.id LIMIT 1) s ON true WHERE g.organization_id=$1 AND g.id=$2")
+        .bind(outbox.organization_id).bind(outbox.aggregate_id).bind(crate::policy::POLICY_EVALUATOR_VERSION)
+        .fetch_one(&mut **tx).await?;
+    sqlx::query("UPDATE outbox_messages SET policy_eligibility_reason=$2,policy_evaluated_at=$3,policy_revision_id=$4,policy_suppression_id=$5 WHERE id=$1")
+        .bind(outbox.id).bind(&eligibility.reason).bind(eligibility.evaluated_at)
+        .bind(eligibility.policy_revision_id).bind(eligibility.policy_suppression_id)
+        .execute(&mut **tx).await?;
+    if matches!(
+        eligibility.reason.as_str(),
+        "expected" | "active_suppression"
+    ) {
+        stats.suppressed = stats.suppressed.saturating_add(1);
+        sqlx::query("UPDATE outbox_messages SET materialized_at=now(),processed_at=now(),completion_reason=$2 WHERE id=$1")
+            .bind(outbox.id).bind(&eligibility.reason).execute(&mut **tx).await?;
+        return Ok(());
+    }
     let destinations = sqlx::query_as::<_, DestinationSnapshot>(
         "SELECT id,deliver_backfill FROM webhook_destinations WHERE organization_id=$1 AND project_id=$2 AND enabled=true ORDER BY id",
     )
@@ -289,7 +314,7 @@ async fn materialize_message(
     .await?;
     if destinations.is_empty() {
         stats.no_destinations = stats.no_destinations.saturating_add(1);
-        sqlx::query("UPDATE outbox_messages SET materialized_at=now(),processed_at=now(),completion_reason='no_destinations' WHERE id=$1")
+        sqlx::query("UPDATE outbox_messages SET materialized_at=now(),processed_at=now(),completion_reason='no_destinations',policy_eligibility_reason='no_destinations' WHERE id=$1")
             .bind(outbox.id).execute(&mut **tx).await?;
         return Ok(());
     }
@@ -316,7 +341,7 @@ async fn materialize_message(
         }
     }
     if pending == 0 {
-        sqlx::query("UPDATE outbox_messages SET materialized_at=now(),processed_at=now(),completion_reason='suppressed' WHERE id=$1")
+        sqlx::query("UPDATE outbox_messages SET materialized_at=now(),processed_at=now(),completion_reason='backfill_suppressed',policy_eligibility_reason='backfill_suppressed' WHERE id=$1")
             .bind(outbox.id).execute(&mut **tx).await?;
     } else {
         sqlx::query("UPDATE outbox_messages SET materialized_at=now() WHERE id=$1")

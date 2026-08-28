@@ -155,3 +155,52 @@ async fn inventory_schema_enforces_identity_tenant_scope_and_indexes(pool: sqlx:
         );
     }
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn managed_policy_schema_enforces_revision_and_suppression_contracts(pool: sqlx::PgPool) {
+    let required_tables = [
+        "runtime_policies",
+        "runtime_policy_states",
+        "runtime_policy_revisions",
+        "runtime_policy_commands",
+        "runtime_policy_suppressions",
+        "runtime_policy_recomputations",
+        "runtime_group_policy_evaluations",
+        "runtime_sighting_policy_evaluations",
+    ];
+    for table in required_tables {
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(exists, "{table} must exist");
+    }
+
+    let immutable_trigger: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='runtime_policy_revisions_immutable' AND NOT tgisinternal)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(immutable_trigger);
+
+    let constraints: Vec<String> = sqlx::query_scalar(
+        "SELECT conname FROM pg_constraint WHERE conrelid IN ('runtime_policies'::regclass,'runtime_policy_revisions'::regclass,'runtime_policy_commands'::regclass,'runtime_policy_suppressions'::regclass) ORDER BY conname",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    for expected in [
+        "runtime_policies_current_revision_fkey",
+        "runtime_policy_revisions_prior_fkey",
+        "runtime_policy_commands_organization_id_idempotency_key_key",
+        "runtime_policy_suppressions_check",
+    ] {
+        assert!(
+            constraints.iter().any(|name| name == expected),
+            "missing constraint {expected}: {constraints:?}"
+        );
+    }
+}

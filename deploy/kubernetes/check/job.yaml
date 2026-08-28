@@ -5,7 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/name: okoscope-notification-check
   annotations:
-    okoscope.io/required-migration: "13"
+    okoscope.io/required-migration: "__REQUIRED_MIGRATION__"
 spec:
   backoffLimit: 0
   ttlSecondsAfterFinished: 604800

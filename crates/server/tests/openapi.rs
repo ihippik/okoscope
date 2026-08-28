@@ -84,6 +84,62 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/occurrences",
         "get",
     ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policies",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policies",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policies/preview",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}/revisions",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}/replace",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}/enable",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}/disable",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/policy-seed",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-groups/{group_id}/policy-seed",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policy-suppressions",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policy-suppressions",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policy-suppressions/{suppression_id}/cancel",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/policy-recomputations/{recomputation_id}",
+        "get",
+    ),
     ("/api/v1/runtime-groups", "get"),
     ("/api/v1/runtime-groups/{group_id}", "get"),
     ("/api/v1/runtime-groups/{group_id}/occurrences", "get"),
@@ -289,6 +345,9 @@ fn assert_navigation_and_group_contract(document: &serde_json::Value) {
             "first_seen_to",
             "last_seen_to",
             "release_id",
+            "verdict",
+            "suppressed",
+            "evaluation_pending",
             "cursor",
             "limit",
         ],

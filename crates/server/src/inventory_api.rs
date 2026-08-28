@@ -457,6 +457,7 @@ struct InventoryItemDetail {
     #[serde(flatten)]
     item: InventoryItem,
     evidence: EvidenceLinks,
+    policy_placement_summary: Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -511,6 +512,8 @@ struct InventorySighting {
     occurrence_count: i64,
     first_seen_at: DateTime<Utc>,
     last_seen_at: DateTime<Utc>,
+    policy_evaluation: Value,
+    active_suppression: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1101,12 +1104,23 @@ async fn item_detail(
     let started = Instant::now();
     let principal = principal(&headers, &state).await?;
     let item = fetch_item(&state, principal, project_id, application_id, item_id).await?;
+    let policy_placement_summary: Value = sqlx::query_scalar(
+        "SELECT jsonb_build_object('placement_count',count(*),'evaluation_pending',count(*) FILTER (WHERE e.item_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$5),'verdicts',jsonb_build_object('expected',count(*) FILTER (WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$5 AND e.verdict='expected'),'requires_review',count(*) FILTER (WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$5 AND e.verdict='requires_review'),'policy_conflict',count(*) FILTER (WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$5 AND e.verdict='policy_conflict'),'unclassified',count(*) FILTER (WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$5 AND e.verdict='unclassified'))) FROM runtime_inventory_sightings s LEFT JOIN runtime_sighting_policy_evaluations e ON e.item_id=s.item_id AND e.cluster_id=s.cluster_id AND e.namespace=s.namespace AND e.workload_kind=s.workload_kind AND e.workload_name=s.workload_name AND e.pod_uid=s.pod_uid AND e.container_name=s.container_name LEFT JOIN runtime_policy_states ps ON ps.organization_id=s.organization_id AND ps.project_id=s.project_id AND ps.application_id=s.application_id WHERE s.organization_id=$1 AND s.project_id=$2 AND s.application_id=$3 AND s.item_id=$4",
+    )
+    .bind(principal.organization_id)
+    .bind(project_id)
+    .bind(application_id)
+    .bind(item_id)
+    .bind(crate::policy::POLICY_EVALUATOR_VERSION)
+    .fetch_one(&state.pool)
+    .await?;
     crate::metrics::record_inventory_query(
         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
     );
     Ok(Json(InventoryItemDetail {
         item,
         evidence: EvidenceLinks::scoped(project_id, application_id, item_id),
+        policy_placement_summary,
     }))
 }
 
@@ -1162,12 +1176,13 @@ async fn item_sightings(
     ensure_item(&state.pool, principal, project_id, application_id, item_id).await?;
     let limit = limit(query.limit)?;
     let cursor: Option<SightingCursor> = query.cursor.as_deref().map(decode_cursor).transpose()?;
-    let mut items = sqlx::query_as::<_, InventorySighting>("SELECT cluster_id,namespace,workload_kind,workload_name,pod_uid,pod_name,container_name,occurrence_count,first_seen_at,last_seen_at FROM runtime_inventory_sightings WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND item_id=$4 AND ($5::timestamptz IS NULL OR (last_seen_at,cluster_id,namespace,workload_kind,workload_name,pod_uid,container_name)<($5,$6,$7,$8,$9,$10,$11)) ORDER BY last_seen_at DESC,cluster_id DESC,namespace DESC,workload_kind DESC,workload_name DESC,pod_uid DESC,container_name DESC LIMIT $12")
+    let mut items = sqlx::query_as::<_, InventorySighting>("SELECT s.cluster_id,s.namespace,s.workload_kind,s.workload_name,s.pod_uid,s.pod_name,s.container_name,s.occurrence_count,s.first_seen_at,s.last_seen_at,jsonb_build_object('state',CASE WHEN e.item_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$13 THEN 'evaluation_pending' ELSE 'current' END,'verdict',CASE WHEN e.item_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$13 THEN NULL ELSE e.verdict END,'reason_code',CASE WHEN e.item_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$13 THEN 'evaluation_pending' ELSE e.reason_code END,'winning_revision_id',CASE WHEN e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$13 THEN e.winning_revision_id END,'explanation',CASE WHEN e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$13 THEN e.explanation ELSE '{}'::jsonb END,'evaluated_at',CASE WHEN e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$13 THEN e.evaluated_at END) policy_evaluation,x.summary active_suppression FROM runtime_inventory_sightings s LEFT JOIN runtime_sighting_policy_evaluations e ON e.item_id=s.item_id AND e.cluster_id=s.cluster_id AND e.namespace=s.namespace AND e.workload_kind=s.workload_kind AND e.workload_name=s.workload_name AND e.pod_uid=s.pod_uid AND e.container_name=s.container_name LEFT JOIN runtime_policy_states ps ON ps.organization_id=s.organization_id AND ps.project_id=s.project_id AND ps.application_id=s.application_id LEFT JOIN runtime_inventory_items i ON i.id=s.item_id LEFT JOIN LATERAL (SELECT jsonb_build_object('id',z.id,'reason',z.reason,'expires_at',z.expires_at,'created_at',z.created_at) summary FROM runtime_policy_suppressions z WHERE z.organization_id=s.organization_id AND z.project_id=s.project_id AND z.application_id=s.application_id AND z.identity_version=i.identity_version AND z.identity_digest=i.identity_digest AND z.cancelled_at IS NULL AND z.expires_at>now() AND (cardinality(z.cluster_ids)=0 OR s.cluster_id=ANY(z.cluster_ids)) AND (cardinality(z.namespaces)=0 OR s.namespace=ANY(z.namespaces)) AND (cardinality(z.workload_kinds)=0 OR s.workload_kind=ANY(z.workload_kinds)) AND (cardinality(z.workload_names)=0 OR s.workload_name=ANY(z.workload_names)) ORDER BY z.expires_at,z.id LIMIT 1) x ON true WHERE s.organization_id=$1 AND s.project_id=$2 AND s.application_id=$3 AND s.item_id=$4 AND ($5::timestamptz IS NULL OR (s.last_seen_at,s.cluster_id,s.namespace,s.workload_kind,s.workload_name,s.pod_uid,s.container_name)<($5,$6,$7,$8,$9,$10,$11)) ORDER BY s.last_seen_at DESC,s.cluster_id DESC,s.namespace DESC,s.workload_kind DESC,s.workload_name DESC,s.pod_uid DESC,s.container_name DESC LIMIT $12")
         .bind(principal.organization_id).bind(project_id).bind(application_id).bind(item_id)
         .bind(cursor.as_ref().map(|value| value.last_seen_at)).bind(cursor.as_ref().map(|value| value.cluster_id))
         .bind(cursor.as_ref().map(|value| value.namespace.as_str())).bind(cursor.as_ref().map(|value| value.workload_kind.as_str()))
         .bind(cursor.as_ref().map(|value| value.workload_name.as_str())).bind(cursor.as_ref().map(|value| value.pod_uid.as_str()))
-        .bind(cursor.as_ref().map(|value| value.container_name.as_str())).bind(limit + 1).fetch_all(&state.pool).await?;
+        .bind(cursor.as_ref().map(|value| value.container_name.as_str())).bind(limit + 1)
+        .bind(crate::policy::POLICY_EVALUATOR_VERSION).fetch_all(&state.pool).await?;
     let next_cursor = if items.len() > usize::try_from(limit).unwrap_or(usize::MAX) {
         items.pop();
         items

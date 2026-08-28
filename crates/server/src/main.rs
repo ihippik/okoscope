@@ -14,6 +14,7 @@ use server::{
     metrics,
     notification::NotificationService,
     notification_config::NotificationArgs,
+    policy_recompute::{BackfillOptions as PolicyBackfillOptions, backfill as backfill_policy},
     session::AgentSessionService,
     transport::TransportSecurity,
     web_api::WebApiConfig,
@@ -91,6 +92,10 @@ async fn serve(
                 shutdown_receiver.clone(),
             ))
         });
+    let policy_worker_task = tokio::spawn(server::policy_recompute::run(
+        pool.clone(),
+        shutdown_receiver.clone(),
+    ));
     let grpc_server = grpc
         .add_service(AgentServiceServer::new(AgentSessionService::new(
             pool.clone(),
@@ -132,6 +137,7 @@ async fn serve(
     if let Some(retention_task) = retention_task {
         let _ = retention_task.await;
     }
+    let _ = policy_worker_task.await;
     Ok(())
 }
 
@@ -215,6 +221,15 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         identity_version: i16,
     },
+    /// Enqueue idempotent evaluation work for existing Runtime Groups and inventory sightings.
+    PolicyBackfill {
+        #[arg(long)]
+        organization_id: Uuid,
+        #[arg(long)]
+        project_id: Uuid,
+        #[arg(long)]
+        application_id: Option<Uuid>,
+    },
     /// Establish the first owner of an existing Organization and exit.
     BootstrapOwner {
         #[arg(long)]
@@ -257,6 +272,7 @@ async fn check_notifications(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_command(
     command: Option<Command>,
     pool: &sqlx::PgPool,
@@ -338,6 +354,24 @@ async fn run_command(
                 result.mismatch_count
             );
             tracing::info!(?result, "runtime inventory reconciliation passed");
+            Ok(true)
+        }
+        Some(Command::PolicyBackfill {
+            organization_id,
+            project_id,
+            application_id,
+        }) => {
+            let stats = backfill_policy(
+                pool,
+                PolicyBackfillOptions {
+                    organization_id,
+                    project_id,
+                    application_id,
+                },
+            )
+            .await
+            .context("enqueue managed policy evaluation backfill")?;
+            tracing::info!(?stats, "managed policy evaluation backfill enqueued");
             Ok(true)
         }
         Some(Command::BootstrapOwner {

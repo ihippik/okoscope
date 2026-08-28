@@ -19,6 +19,8 @@ CI publishes an `okoscope-kubernetes-<commit>` bundle containing:
 5. `04-routing.yaml` — optional public route and certificate resources.
 6. `PROVENANCE.txt` — source/image mapping, required migration, activation state, and non-secret worker bounds.
 
+Set the GitHub Actions repository variable `OKOSCOPE_WEB_IMAGE` to the current immutable Web image before publishing a bundle. Bundle rendering derives `required_migration` from the backend's `REQUIRED_MIGRATION` constant and uses that value in both schema-gate Jobs and `PROVENANCE.txt`; rendering fails instead of falling back to a stale Web image or migration version.
+
 The bundled PostgreSQL profile requests 100m CPU/256 MiB and limits 1 CPU/1 GiB. Server defaults are 100m/128 MiB requests and 1 CPU/512 MiB limits; agent defaults are 100m/96 MiB and 1 CPU/512 MiB. Tune these in a site overlay after measuring usage.
 
 The agent is the only host-aware workload. `hostPID` is required to map kernel PIDs to containers; read-only `/proc` and cgroup v2 mounts provide attribution; tracefs is writable for probe attachment. The container drops every capability except `BPF`, `PERFMON`, `SYS_RESOURCE`, and `SYS_ADMIN`; the latter is required by the reference cluster kernel for tracepoint `perf_event_open`. RBAC is read-only for Pods, ReplicaSets, Deployments, and the single `kube-system` Namespace used to discover its stable UID. It has no host network, host root mount, Secret read API, workload mutation, or broad `privileged` mode.

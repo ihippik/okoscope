@@ -151,13 +151,22 @@ async fn persist_event(
         GroupingSource::Live,
     )
     .await?;
-    project_event(
+    let inventory = project_event(
         tx,
         raw_event_id,
         grouping.group_id,
         release_id,
         context.scope.cluster_id,
         context.scope.organization_id,
+        event,
+    )
+    .await?;
+    crate::policy_projection::project_current_evaluation(
+        tx,
+        context.scope.organization_id,
+        context.scope.cluster_id,
+        grouping.group_id,
+        inventory.item_id,
         event,
     )
     .await?;

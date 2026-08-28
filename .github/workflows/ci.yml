@@ -185,7 +185,7 @@ jobs:
           version: v1.31.4
       - name: Render immutable release bundle
         env:
-          WEB_IMAGE: ${{ vars.OKOSCOPE_WEB_IMAGE || 'ghcr.io/ihippik/okoscope-web:0df87f703f3f1801590a6ec7ad73dae9ad487f87' }}
+          WEB_IMAGE: ${{ vars.OKOSCOPE_WEB_IMAGE }}
           OKOSCOPE_DOMAIN: okoscope.com
           OKOSCOPE_CERTIFICATE_NAME: okoscope-com
           OKOSCOPE_CERT_ISSUER: letsencrypt-prod
@@ -195,6 +195,7 @@ jobs:
           OKOSCOPE_SERVER_SERVICE: okoscope-server
           OKOSCOPE_WEB_SERVICE: okoscope-web
         run: |
+          : "${WEB_IMAGE:?Set the OKOSCOPE_WEB_IMAGE repository variable to an immutable current Web image}"
           deploy/scripts/render-release.sh release \
             "${{ github.sha }}" "${{ github.sha }}" "$WEB_IMAGE" enabled
           deploy/tests/manifest-policy.sh

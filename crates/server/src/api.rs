@@ -114,6 +114,9 @@ struct ListQuery {
     first_seen_to: Option<DateTime<Utc>>,
     last_seen_to: Option<DateTime<Utc>>,
     release_id: Option<Uuid>,
+    verdict: Option<String>,
+    suppressed: Option<bool>,
+    evaluation_pending: Option<bool>,
     cursor: Option<Uuid>,
     limit: Option<i64>,
 }
@@ -138,6 +141,12 @@ struct GroupSummary {
     representative_event_id: Uuid,
     status_changed_at: Option<DateTime<Utc>>,
     status_changed_by: Option<Uuid>,
+    #[sqlx(skip)]
+    policy_evaluation: Value,
+    #[sqlx(skip)]
+    active_suppression: Option<Value>,
+    #[sqlx(skip)]
+    actionable: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -208,6 +217,45 @@ async fn principal(headers: &HeaderMap, state: &ApiState) -> Result<UserPrincipa
         .ok_or(ApiError::Unauthorized)
 }
 
+#[derive(FromRow)]
+struct GroupPolicyRow {
+    group_id: Uuid,
+    policy_evaluation: Value,
+    active_suppression: Option<Value>,
+    actionable: bool,
+}
+
+async fn attach_group_policy(
+    pool: &PgPool,
+    organization_id: Uuid,
+    groups: &mut [GroupSummary],
+) -> Result<(), sqlx::Error> {
+    if groups.is_empty() {
+        return Ok(());
+    }
+    let ids = groups.iter().map(|group| group.id).collect::<Vec<_>>();
+    let rows = sqlx::query_as::<_, GroupPolicyRow>(
+        "SELECT g.id group_id,jsonb_build_object('state',CASE WHEN e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$3 THEN 'evaluation_pending' ELSE 'current' END,'verdict',CASE WHEN e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$3 THEN NULL ELSE e.verdict END,'reason_code',CASE WHEN e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$3 THEN 'evaluation_pending' ELSE e.reason_code END,'winning_revision_id',CASE WHEN e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$3 THEN e.winning_revision_id END,'explanation',CASE WHEN e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$3 THEN e.explanation ELSE '{}'::jsonb END,'evaluated_at',CASE WHEN e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=$3 THEN e.evaluated_at END) policy_evaluation,s.summary active_suppression,(s.summary IS NULL AND (e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$3 OR e.verdict<>'expected')) actionable FROM runtime_event_groups g LEFT JOIN runtime_group_policy_evaluations e ON e.group_id=g.id LEFT JOIN runtime_policy_states ps ON ps.organization_id=g.organization_id AND ps.project_id=g.project_id AND ps.application_id=g.application_id LEFT JOIN LATERAL (SELECT jsonb_build_object('id',x.id,'reason',x.reason,'expires_at',x.expires_at,'created_at',x.created_at) summary FROM runtime_inventory_group_links gl JOIN runtime_inventory_items i ON i.id=gl.item_id JOIN runtime_policy_suppressions x ON x.organization_id=i.organization_id AND x.project_id=i.project_id AND x.application_id=i.application_id AND x.identity_version=i.identity_version AND x.identity_digest=i.identity_digest WHERE gl.group_id=g.id AND x.cancelled_at IS NULL AND x.expires_at>now() AND (cardinality(x.cluster_ids)=0 OR g.cluster_id=ANY(x.cluster_ids)) AND (cardinality(x.namespaces)=0 OR g.namespace=ANY(x.namespaces)) AND (cardinality(x.workload_kinds)=0 OR g.workload_kind=ANY(x.workload_kinds)) AND (cardinality(x.workload_names)=0 OR g.workload_name=ANY(x.workload_names)) ORDER BY (cardinality(x.cluster_ids)>0)::int+(cardinality(x.namespaces)>0)::int+(cardinality(x.workload_kinds)>0)::int+(cardinality(x.workload_names)>0)::int DESC,x.expires_at,x.id LIMIT 1) s ON true WHERE g.organization_id=$1 AND g.id=ANY($2)",
+    )
+    .bind(organization_id)
+    .bind(&ids)
+    .bind(crate::policy::POLICY_EVALUATOR_VERSION)
+    .fetch_all(pool)
+    .await?;
+    let by_id = rows
+        .into_iter()
+        .map(|row| (row.group_id, row))
+        .collect::<std::collections::HashMap<_, _>>();
+    for group in groups {
+        if let Some(row) = by_id.get(&group.id) {
+            group.policy_evaluation = row.policy_evaluation.clone();
+            group.active_suppression = row.active_suppression.clone();
+            group.actionable = row.actionable;
+        }
+    }
+    Ok(())
+}
+
 async fn list_groups(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -225,6 +273,14 @@ async fn list_groups(
         .is_some_and(|status| !matches!(status, "open" | "acknowledged" | "resolved"))
     {
         return Err(ApiError::Invalid("unsupported status".into()));
+    }
+    if query.verdict.as_deref().is_some_and(|verdict| {
+        !matches!(
+            verdict,
+            "unclassified" | "expected" | "requires_review" | "policy_conflict"
+        )
+    }) {
+        return Err(ApiError::Invalid("unsupported policy verdict".into()));
     }
     let cursor = if let Some(cursor) = query.cursor {
         let position = sqlx::query_as::<_, (DateTime<Utc>, Uuid)>(
@@ -250,6 +306,17 @@ async fn list_groups(
     .bind(query.since).bind(query.first_seen_from).bind(query.first_seen_to).bind(query.last_seen_to)
     .bind(query.release_id).bind(cursor_time).bind(cursor_id).bind(limit + 1)
     .fetch_all(&state.pool).await?;
+    attach_group_policy(&state.pool, principal.organization_id, &mut items).await?;
+    items.retain(|group| {
+        query.verdict.as_ref().is_none_or(|verdict| {
+            group.policy_evaluation["verdict"].as_str() == Some(verdict.as_str())
+        }) && query
+            .suppressed
+            .is_none_or(|suppressed| group.active_suppression.is_some() == suppressed)
+            && query.evaluation_pending.is_none_or(|pending| {
+                (group.policy_evaluation["state"] == "evaluation_pending") == pending
+            })
+    });
     let next_cursor = if i64::try_from(items.len()).unwrap_or(i64::MAX) > limit {
         items.pop();
         items.last().map(|group| group.id)
@@ -266,10 +333,16 @@ async fn get_group(
 ) -> Result<Json<GroupDetail>, ApiError> {
     crate::metrics::record_api_request();
     let principal = principal(&headers, &state).await?;
-    let group = sqlx::query_as::<_, GroupSummary>(
+    let mut group = sqlx::query_as::<_, GroupSummary>(
         "SELECT id,project_id,application_id,cluster_id,namespace,workload_kind,workload_name,fingerprint_version,event_kind,semantic_summary,status,first_seen_at,first_seen_event_id,last_seen_at,occurrence_count,representative_event_id,status_changed_at,status_changed_by_user_id AS status_changed_by FROM runtime_event_groups WHERE organization_id=$1 AND id=$2",
     )
     .bind(principal.organization_id).bind(group_id).fetch_optional(&state.pool).await?.ok_or(ApiError::NotFound)?;
+    attach_group_policy(
+        &state.pool,
+        principal.organization_id,
+        std::slice::from_mut(&mut group),
+    )
+    .await?;
     let mut representative_event = event_by_id(
         &state.pool,
         principal.organization_id,
@@ -427,7 +500,13 @@ async fn transition_group(
     .bind(allowed)
     .fetch_optional(&state.pool)
     .await?;
-    if let Some(group) = group {
+    if let Some(mut group) = group {
+        attach_group_policy(
+            &state.pool,
+            principal.organization_id,
+            std::slice::from_mut(&mut group),
+        )
+        .await?;
         return Ok(Json(group));
     }
     let current: Option<String> = sqlx::query_scalar(
@@ -451,7 +530,7 @@ async fn notification_summary(
     group_id: Uuid,
 ) -> Result<NotificationSummary, sqlx::Error> {
     let summary = sqlx::query_as::<_, NotificationSummary>(
-        "SELECT CASE WHEN o.source='backfill' THEN 'backfill_suppressed' WHEN count(d.id)=0 AND o.processed_at IS NOT NULL THEN 'not_configured' WHEN count(d.id) FILTER (WHERE d.status IN ('pending','in_flight'))>0 THEN CASE WHEN count(d.id) FILTER (WHERE d.status='in_flight')>0 THEN 'delivering' ELSE 'pending' END WHEN count(d.id) FILTER (WHERE d.status='succeeded')>0 THEN 'delivered' WHEN count(d.id) FILTER (WHERE d.status IN ('failed','cancelled','suppressed'))>0 THEN 'terminally_failed' ELSE 'pending' END state,count(d.id)::bigint delivery_count,count(d.id) FILTER (WHERE d.status='succeeded')::bigint succeeded_count,count(d.id) FILTER (WHERE d.status IN ('failed','cancelled','suppressed'))::bigint failed_count FROM outbox_messages o LEFT JOIN notification_deliveries d ON d.outbox_message_id=o.id WHERE o.organization_id=$1 AND o.aggregate_id=$2 AND o.topic='runtime_group.first_seen' GROUP BY o.id,o.source,o.processed_at",
+        "SELECT CASE WHEN o.completion_reason='expected' THEN 'policy_expected' WHEN o.completion_reason='active_suppression' THEN 'temporary_policy_suppressed' WHEN o.completion_reason='backfill_suppressed' OR o.source='backfill' AND count(d.id) FILTER(WHERE d.status<>'suppressed')=0 THEN 'backfill_suppressed' WHEN count(d.id)=0 AND o.processed_at IS NOT NULL THEN 'not_configured' WHEN count(d.id) FILTER (WHERE d.status IN ('pending','in_flight'))>0 THEN CASE WHEN count(d.id) FILTER (WHERE d.status='in_flight')>0 THEN 'delivering' ELSE 'pending' END WHEN count(d.id) FILTER (WHERE d.status='succeeded')>0 THEN 'delivered' WHEN count(d.id) FILTER (WHERE d.status IN ('failed','cancelled','suppressed'))>0 THEN 'terminally_failed' ELSE 'pending' END state,count(d.id)::bigint delivery_count,count(d.id) FILTER (WHERE d.status='succeeded')::bigint succeeded_count,count(d.id) FILTER (WHERE d.status IN ('failed','cancelled','suppressed'))::bigint failed_count FROM outbox_messages o LEFT JOIN notification_deliveries d ON d.outbox_message_id=o.id WHERE o.organization_id=$1 AND o.aggregate_id=$2 AND o.topic='runtime_group.first_seen' GROUP BY o.id,o.source,o.processed_at,o.completion_reason",
     )
     .bind(organization_id)
     .bind(group_id)
