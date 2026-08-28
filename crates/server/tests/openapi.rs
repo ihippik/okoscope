@@ -444,6 +444,9 @@ fn assert_inventory_contract(document: &serde_json::Value) {
             "observed_to",
             "search",
             "identity_token",
+            "verdict",
+            "suppressed",
+            "evaluation_pending",
             "cursor",
             "limit",
         ],
@@ -513,6 +516,18 @@ fn assert_inventory_contract(document: &serde_json::Value) {
     ] {
         assert_eq!(schemas[page]["properties"]["items"]["maxItems"], 200);
     }
+    assert_required_fields(
+        document,
+        "InventorySighting",
+        &["policy_evaluation", "active_suppression", "actionable"],
+    );
+    assert!(
+        schemas["InventoryItemDetail"]["allOf"][1]["required"]
+            .as_array()
+            .expect("InventoryItemDetail extension required fields")
+            .iter()
+            .any(|field| field == "policy_placement_summary")
+    );
 }
 
 fn assert_inventory_lifecycle_contract(schemas: &serde_json::Value) {
@@ -729,7 +744,8 @@ fn assert_success_response_is_typed(
     assert!(
         schema.get("properties").is_some()
             || schema.get("items").is_some()
-            || schema.get("allOf").is_some(),
+            || schema.get("allOf").is_some()
+            || schema.get("oneOf").is_some(),
         "success schema has no declared shape for {method} {path}"
     );
 }

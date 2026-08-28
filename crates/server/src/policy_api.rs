@@ -223,6 +223,12 @@ struct PolicySummary {
     revision_number: Option<i64>,
     enabled: Option<bool>,
     inventory_kind: Option<String>,
+    identity_version: Option<i16>,
+    behavior_matcher: Option<Value>,
+    cluster_ids: Option<Vec<Uuid>>,
+    namespaces: Option<Vec<String>>,
+    workload_kinds: Option<Vec<String>>,
+    workload_names: Option<Vec<String>>,
     inside_effect: Option<String>,
     outside_effect: Option<String>,
     created_by_user_id: Uuid,
@@ -359,6 +365,17 @@ struct PreviewResult {
     expected_count: i64,
     requires_review_count: i64,
     representative_group_ids: Vec<Uuid>,
+    representative_sightings: Vec<PreviewSighting>,
+}
+
+#[derive(Debug, FromRow, Serialize)]
+struct PreviewSighting {
+    cluster_id: Uuid,
+    namespace: String,
+    workload_kind: String,
+    workload_name: String,
+    pod_uid: String,
+    container_name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -443,7 +460,7 @@ async fn list_policies(
     let principal = principal(&headers, &state, &request_id).await?;
     ensure_application(&state, principal, path, &request_id).await?;
     let limit = page_limit(query.limit, &request_id)?;
-    let mut items:Vec<PolicySummary>=sqlx::query_as("SELECT p.id,p.project_id,p.application_id,p.name,p.current_revision_id,r.revision_number,r.enabled,r.inventory_kind,r.inside_effect,r.outside_effect,p.created_by_user_id,p.created_at,p.updated_at FROM runtime_policies p LEFT JOIN runtime_policy_revisions r ON r.id=p.current_revision_id WHERE p.organization_id=$1 AND p.project_id=$2 AND p.application_id=$3 AND ($4::uuid IS NULL OR p.id>$4) ORDER BY p.id LIMIT $5")
+    let mut items:Vec<PolicySummary>=sqlx::query_as("SELECT p.id,p.project_id,p.application_id,p.name,p.current_revision_id,r.revision_number,r.enabled,r.inventory_kind,r.identity_version,r.behavior_matcher,r.cluster_ids,r.namespaces,r.workload_kinds,r.workload_names,r.inside_effect,r.outside_effect,p.created_by_user_id,p.created_at,p.updated_at FROM runtime_policies p LEFT JOIN runtime_policy_revisions r ON r.id=p.current_revision_id WHERE p.organization_id=$1 AND p.project_id=$2 AND p.application_id=$3 AND ($4::uuid IS NULL OR p.id>$4) ORDER BY p.id LIMIT $5")
         .bind(principal.organization_id).bind(path.project_id).bind(path.application_id).bind(query.cursor).bind(limit+1)
         .fetch_all(&state.pool).await.map_err(|error|PolicyApiError::database(&error,&request_id))?;
     let next_cursor =
@@ -458,7 +475,7 @@ async fn get_policy(
     Path(path): Path<PolicyPath>,
 ) -> Result<Json<PolicySummary>, PolicyApiError> {
     let principal = principal(&headers, &state, &request_id).await?;
-    let item=sqlx::query_as("SELECT p.id,p.project_id,p.application_id,p.name,p.current_revision_id,r.revision_number,r.enabled,r.inventory_kind,r.inside_effect,r.outside_effect,p.created_by_user_id,p.created_at,p.updated_at FROM runtime_policies p LEFT JOIN runtime_policy_revisions r ON r.id=p.current_revision_id WHERE p.organization_id=$1 AND p.project_id=$2 AND p.application_id=$3 AND p.id=$4")
+    let item=sqlx::query_as("SELECT p.id,p.project_id,p.application_id,p.name,p.current_revision_id,r.revision_number,r.enabled,r.inventory_kind,r.identity_version,r.behavior_matcher,r.cluster_ids,r.namespaces,r.workload_kinds,r.workload_names,r.inside_effect,r.outside_effect,p.created_by_user_id,p.created_at,p.updated_at FROM runtime_policies p LEFT JOIN runtime_policy_revisions r ON r.id=p.current_revision_id WHERE p.organization_id=$1 AND p.project_id=$2 AND p.application_id=$3 AND p.id=$4")
         .bind(principal.organization_id).bind(path.project_id).bind(path.application_id).bind(path.policy_id)
         .fetch_optional(&state.pool).await.map_err(|error|PolicyApiError::database(&error,&request_id))?
         .ok_or_else(||PolicyApiError::not_found(&request_id))?;
@@ -867,6 +884,7 @@ async fn preview_policy(
         .collect::<Vec<_>>();
     let (sighting_count,cluster_count,namespace_count,workload_count,inside_count):(i64,i64,i64,i64,i64)=sqlx::query_as("SELECT count(*)::bigint,count(DISTINCT cluster_id)::bigint,count(DISTINCT (cluster_id,namespace))::bigint,count(DISTINCT (cluster_id,namespace,workload_kind,workload_name))::bigint,count(*) FILTER(WHERE (cardinality($2::uuid[])=0 OR cluster_id=ANY($2)) AND (cardinality($3::text[])=0 OR namespace=ANY($3)) AND (cardinality($4::text[])=0 OR workload_kind=ANY($4)) AND (cardinality($5::text[])=0 OR workload_name=ANY($5)))::bigint FROM runtime_inventory_sightings WHERE item_id=$1").bind(identity.id).bind(&clusters).bind(&namespaces).bind(&kinds).bind(&names).fetch_one(&mut *tx).await.map_err(|e|PolicyApiError::database(&e,&request_id))?;
     let representative_group_ids:Vec<Uuid>=sqlx::query_scalar("SELECT g.id FROM runtime_inventory_group_links l JOIN runtime_event_groups g ON g.organization_id=l.organization_id AND g.project_id=l.project_id AND g.application_id=l.application_id AND g.id=l.group_id WHERE l.item_id=$1 AND ((cardinality($2::uuid[])=0 OR g.cluster_id=ANY($2)) AND (cardinality($3::text[])=0 OR g.namespace=ANY($3)) AND (cardinality($4::text[])=0 OR g.workload_kind=ANY($4)) AND (cardinality($5::text[])=0 OR g.workload_name=ANY($5)) OR $6::boolean) ORDER BY g.id LIMIT 20").bind(identity.id).bind(&clusters).bind(&namespaces).bind(&kinds).bind(&names).bind(input.outside_effect.is_some()).fetch_all(&mut *tx).await.map_err(|e|PolicyApiError::database(&e,&request_id))?;
+    let representative_sightings:Vec<PreviewSighting>=sqlx::query_as("SELECT cluster_id,namespace,workload_kind,workload_name,pod_uid,container_name FROM runtime_inventory_sightings WHERE item_id=$1 AND ((cardinality($2::uuid[])=0 OR cluster_id=ANY($2)) AND (cardinality($3::text[])=0 OR namespace=ANY($3)) AND (cardinality($4::text[])=0 OR workload_kind=ANY($4)) AND (cardinality($5::text[])=0 OR workload_name=ANY($5)) OR $6::boolean) ORDER BY last_seen_at DESC,cluster_id,namespace,workload_kind,workload_name,pod_uid,container_name LIMIT 20").bind(identity.id).bind(&clusters).bind(&namespaces).bind(&kinds).bind(&names).bind(input.outside_effect.is_some()).fetch_all(&mut *tx).await.map_err(|e|PolicyApiError::database(&e,&request_id))?;
     let group_count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM runtime_inventory_group_links WHERE item_id=$1")
             .bind(identity.id)
@@ -895,6 +913,7 @@ async fn preview_policy(
         expected_count,
         requires_review_count,
         representative_group_ids,
+        representative_sightings,
     }))
 }
 
