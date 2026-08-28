@@ -43,7 +43,5 @@ if deploy/scripts/preflight-secret.sh okoscope okoscope-secrets >"$deploy_log" 2
   exit 1
 fi
 
-grep -q 'webhook-encryption-key: "0000000000000000000000000000000000000000000000000000000000000000"' \
-  deploy/kubernetes/overlays/development/secret.yaml
-! grep -R -q '^kind: Secret$' deploy/kubernetes/base deploy/kubernetes/overlays/production
+! grep -R -q '^kind: Secret$' deploy/kubernetes/server deploy/kubernetes/agent deploy/kubernetes/frontend deploy/kubernetes/common
 echo "secret preflight tests passed"

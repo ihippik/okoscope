@@ -81,7 +81,7 @@ release and an earlier baseline release:
 ```sh
 E2E_RELEASE_VERSION=smoke-v2 \
 E2E_BASELINE_RELEASE_ID=00000000-0000-0000-0000-000000000000 \
-make file-activity-e2e
+tests/kubernetes/file-activity-e2e.sh
 ```
 
 File observation must already be enabled. The test generates unique create, aggregated modify,

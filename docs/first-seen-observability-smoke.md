@@ -56,7 +56,7 @@ Each response must contain the target status plus `status_changed_at` and `statu
 
 ## Verify PostgreSQL
 
-Port-forward PostgreSQL after selecting `aliens`, then run `deploy/queries/runtime-groups.sql`. For the selected group verify exactly one membership per stored event and exactly one `runtime_group.first_seen` outbox row:
+Port-forward PostgreSQL after selecting `aliens`, then run `ops/queries/runtime-groups.sql`. For the selected group verify exactly one membership per stored event and exactly one `runtime_group.first_seen` outbox row:
 
 ```sql
 SELECT count(*) FROM runtime_event_group_memberships WHERE group_id = '<group-id>';

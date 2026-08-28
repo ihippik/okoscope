@@ -44,7 +44,7 @@ Monitor the following metrics:
 - `okoscope_inventory_reconciliation_mismatches_total`;
 - inventory query request and duration totals.
 
-Use [`deploy/queries/runtime-inventory.sql`](../deploy/queries/runtime-inventory.sql) to inspect per-Application projection totals, missing memberships, and kind cardinality without selecting event payloads.
+Use [`ops/queries/runtime-inventory.sql`](../ops/queries/runtime-inventory.sql) to inspect per-Application projection totals, missing memberships, and kind cardinality without selecting event payloads.
 
 ## Rollback and rebuild
 

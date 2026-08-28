@@ -1,35 +1,24 @@
-name: ci
+name: backend-ci
 
 on:
   pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: backend-ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
-jobs:
-  userspace:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.91.0
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --exclude agent-ebpf --all-targets -- -D warnings
-      - run: cargo test --workspace --exclude agent-ebpf
-      - run: cargo check -p protocol
+env:
+  SERVER_IMAGE: ghcr.io/${{ github.repository }}-server
+  PRODUCTION_KUSTOMIZATION: deploy/kubernetes/common
 
-  postgres-migrations:
+jobs:
+  verify:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -51,157 +40,108 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.91.0
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p server --test migrations -- --ignored
-      - run: cargo test -p server --test notification -- --ignored
-
-  deployment-validation:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-kubectl@v4
+      - uses: imranismail/setup-kustomize@v2
         with:
-          version: v1.31.4
-      - name: Run release policy and secret regression tests
-        run: make deployment-test
+          kustomize-version: 5.4.3
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint userspace
+        run: cargo clippy --workspace --exclude agent-ebpf --all-targets -- -D warnings
+      - name: Test userspace
+        run: cargo test --workspace --exclude agent-ebpf
+      - name: Test PostgreSQL migrations and notifications
+        run: |
+          cargo test -p server --test migrations -- --ignored --test-threads=1
+          cargo test -p server --test notification -- --ignored --test-threads=1
+          cargo test -p server --test policy_api -- --ignored --test-threads=1
+      - name: Build production manifests with Kustomize
+        run: |
+          kustomize build "$PRODUCTION_KUSTOMIZATION" > /tmp/okoscope-production.yaml
+          test -s /tmp/okoscope-production.yaml
+          if grep -Eq '__[A-Z0-9_]+__|:0{40}([[:space:]]|$)' /tmp/okoscope-production.yaml; then
+            echo "production manifests contain unresolved placeholders" >&2
+            exit 1
+          fi
+          server_images=$(grep -Ec 'image: ghcr.io/.+-server:[0-9a-f]{40}$' /tmp/okoscope-production.yaml)
+          test "$server_images" -eq 1
       - name: Install pinned kubeconform
         run: |
           curl --fail --location --silent --show-error \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
             | tar -xz kubeconform
           sudo install kubeconform /usr/local/bin/kubeconform
-      - name: Validate supported Kubernetes overlays
-        run: |
-          work=$(mktemp -d)
-          kubectl kustomize deploy/kubernetes/install/bundled-postgres > "$work/install.yaml"
-          kubectl kustomize deploy/kubernetes/migrate > "$work/migrate.yaml"
-          kubectl kustomize deploy/kubernetes/check > "$work/notification-check.yaml"
-          kubectl kustomize deploy/kubernetes/overlays/production > "$work/production.yaml"
-          kubectl kustomize deploy/kubernetes/overlays/external-postgres > "$work/external.yaml"
-          kubectl kustomize deploy/kubernetes/overlays/development > "$work/development.yaml"
-          kubectl kustomize deploy/kubernetes/routing > "$work/routing.yaml"
-          kubeconform -strict -summary "$work/install.yaml" "$work/migrate.yaml" "$work/notification-check.yaml" \
-            "$work/production.yaml" "$work/external.yaml" "$work/development.yaml"
-          kubeconform -strict -ignore-missing-schemas -summary "$work/routing.yaml"
+      - name: Validate production manifests
+        run: kubeconform -strict -summary /tmp/okoscope-production.yaml
 
-  image-build:
-    needs: userspace
-    runs-on: ${{ matrix.runner }}
+  publish-server:
+    if: github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - component: agent
-            dockerfile: Dockerfile.agent
-            architecture: amd64
-            runner: ubuntu-24.04
-          - component: server
-            dockerfile: Dockerfile.server
-            architecture: amd64
-            runner: ubuntu-24.04
-          - component: agent
-            dockerfile: Dockerfile.agent
-            architecture: arm64
-            runner: ubuntu-24.04-arm
-          - component: server
-            dockerfile: Dockerfile.server
-            architecture: arm64
-            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and optionally publish image
+      - name: Build and publish immutable backend image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/${{ matrix.architecture }}
-          build-args: |
-            OKOSCOPE_GIT_COMMIT=${{ github.sha }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ghcr.io/${{ github.repository }}-${{ matrix.component }}:${{ github.sha }}-${{ matrix.architecture }}
-          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.architecture }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.architecture }}
+          file: Dockerfile.server
+          platforms: linux/amd64,linux/arm64
+          build-args: OKOSCOPE_GIT_COMMIT=${{ github.sha }}
+          push: true
+          tags: ${{ env.SERVER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
 
-  image-index:
+  promote-server:
     if: github.event_name != 'pull_request'
-    needs: image-build
+    needs: publish-server
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
-    strategy:
-      matrix:
-        component: [agent, server]
-    steps:
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Generate multi-platform image metadata
-        id: metadata
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}-${{ matrix.component }}
-          tags: |
-            type=raw,value=${{ github.sha }}
-            type=ref,event=branch
-            type=ref,event=tag
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-      - name: Publish multi-platform image index
-        env:
-          IMAGE: ghcr.io/${{ github.repository }}-${{ matrix.component }}
-          SOURCE_TAG: ${{ github.sha }}
-          OUTPUT_TAGS: ${{ steps.metadata.outputs.tags }}
-        run: |
-          tags=()
-          while IFS= read -r tag; do
-            tags+=(--tag "$tag")
-          done <<< "$OUTPUT_TAGS"
-          docker buildx imagetools create "${tags[@]}" \
-            "$IMAGE:$SOURCE_TAG-amd64" \
-            "$IMAGE:$SOURCE_TAG-arm64"
-
-  deployment-manifest:
-    if: github.event_name != 'pull_request'
-    needs: [userspace, postgres-migrations, deployment-validation, image-index]
-    runs-on: ubuntu-latest
+      contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-kubectl@v4
         with:
-          version: v1.31.4
-      - name: Render immutable release bundle
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - uses: imranismail/setup-kustomize@v2
+        with:
+          kustomize-version: 5.4.3
+      - name: Update only the backend image tag
         env:
-          WEB_IMAGE: ${{ vars.OKOSCOPE_WEB_IMAGE }}
-          OKOSCOPE_DOMAIN: okoscope.com
-          OKOSCOPE_CERTIFICATE_NAME: okoscope-com
-          OKOSCOPE_CERT_ISSUER: letsencrypt-prod
-          OKOSCOPE_TLS_SECRET: okoscope-com-tls
-          OKOSCOPE_HTTP_ENTRYPOINT: web
-          OKOSCOPE_HTTPS_ENTRYPOINT: websecure
-          OKOSCOPE_SERVER_SERVICE: okoscope-server
-          OKOSCOPE_WEB_SERVICE: okoscope-web
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          : "${WEB_IMAGE:?Set the OKOSCOPE_WEB_IMAGE repository variable to an immutable current Web image}"
-          deploy/scripts/render-release.sh release \
-            "${{ github.sha }}" "${{ github.sha }}" "$WEB_IMAGE" enabled
-          deploy/tests/manifest-policy.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: okoscope-kubernetes-${{ github.sha }}
-          path: release/
-          if-no-files-found: error
-          retention-days: 30
+          if [[ $(git rev-parse HEAD) != "$IMAGE_TAG" ]]; then
+            echo "main advanced while the image was building; the newer run will promote its own image"
+            exit 0
+          fi
+          sed -i "/name: ghcr.io\/ihippik\/okoscope-server/{n;s/newTag:.*/newTag: \"$IMAGE_TAG\"/;}" \
+            "$PRODUCTION_KUSTOMIZATION/kustomization.yaml"
+          changed=$(git diff --name-only)
+          test "$changed" = "$PRODUCTION_KUSTOMIZATION/kustomization.yaml"
+          kustomize build "$PRODUCTION_KUSTOMIZATION" > /tmp/okoscope-production.yaml
+          grep -q "image: $SERVER_IMAGE:$IMAGE_TAG" /tmp/okoscope-production.yaml
+      - name: Commit GitOps promotion
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if git diff --quiet; then
+            echo "backend image tag is already promoted"
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$PRODUCTION_KUSTOMIZATION/kustomization.yaml"
+          git commit -m "deploy: backend $IMAGE_TAG [skip ci]"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"

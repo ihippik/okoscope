@@ -1,25 +1,27 @@
 # Self-hosted Kubernetes deployment
 
-The hardened deployment workflow separates one-time stateful installation from repeatable application upgrades. Production release bundles never create or update `okoscope-secrets`, and the upgrade artifact never contains PostgreSQL resources.
+The repository is the source of truth for production deployment state. Build manifests directly with Kustomize from `deploy/kubernetes/common`; generated release bundles are not committed or uploaded by CI.
 
-## Requirements and release bundle
+## Requirements and GitOps deployment
 
 - Kubernetes with `kubectl` and Kustomize support.
 - An existing `okoscope` namespace for external PostgreSQL, or the bundled install artifact for a new installation.
 - An externally managed `okoscope-secrets` Secret.
-- Immutable server, agent, and Web image references.
+- Immutable server, agent, and Web image references in the production Kustomization.
 - Optional Traefik `traefik.io/v1alpha1` and cert-manager `cert-manager.io/v1` CRDs when public routing is enabled.
 
-CI publishes an `okoscope-kubernetes-<commit>` bundle containing:
+On pull requests, CI tests the backend and validates the rendered production manifests. On `main`, it then publishes `ghcr.io/ihippik/okoscope-server:<commit-sha>` for `linux/amd64` and `linux/arm64`. Only after publication succeeds, CI updates the server `newTag`, rebuilds the overlay with Kustomize, and commits that one-line manifest change. Agent and Web tags are untouched. The promotion commit contains `[skip ci]`, preventing an Actions loop.
 
-1. `01-install-bundled-postgres.yaml` — one-time namespace, Service, StatefulSet, and PVC template.
-2. `02-migrate-<commit>.yaml` — release-specific migration gate.
-3. `02-notification-check-<commit>.yaml` — secret-redacted notification activation and schema gate.
-4. `03-upgrade.yaml` — stateless server, Web, agent, Services, RBAC, configuration, and disruption controls.
-5. `04-routing.yaml` — optional public route and certificate resources.
-6. `PROVENANCE.txt` — source/image mapping, required migration, activation state, and non-secret worker bounds.
+Repository Actions settings must allow `GITHUB_TOKEN` read/write access, and branch protection must permit `github-actions[bot]` to create the promotion commit on the default branch.
 
-Set the GitHub Actions repository variable `OKOSCOPE_WEB_IMAGE` to the current immutable Web image before publishing a bundle. Bundle rendering derives `required_migration` from the backend's `REQUIRED_MIGRATION` constant and uses that value in both schema-gate Jobs and `PROVENANCE.txt`; rendering fails instead of falling back to a stale Web image or migration version.
+Render or apply the tracked state with:
+
+```bash
+kustomize build deploy/kubernetes/common
+kubectl apply -k deploy/kubernetes/common
+```
+
+The one-time PostgreSQL install, migration/check Jobs, and optional routing remain separate Kustomize roots under `deploy/kubernetes/`; run them explicitly when required. Production application manifests never create or update `okoscope-secrets` or PostgreSQL resources.
 
 The bundled PostgreSQL profile requests 100m CPU/256 MiB and limits 1 CPU/1 GiB. Server defaults are 100m/128 MiB requests and 1 CPU/512 MiB limits; agent defaults are 100m/96 MiB and 1 CPU/512 MiB. Tune these in a site overlay after measuring usage.
 
@@ -27,7 +29,7 @@ The agent is the only host-aware workload. `hostPID` is required to map kernel P
 
 ## Provision the Secret
 
-Use [the placeholder schema](../deploy/examples/okoscope-secret.example.yaml) only as a key inventory. Create real values without writing a populated YAML file:
+Use [the placeholder schema](../deploy/kubernetes/common/secret.example.yaml) only as a key inventory. Create real values without writing a populated YAML file:
 
 ```bash
 kubectx aliens
@@ -75,7 +77,7 @@ kubectx aliens
 kubectl apply -f 01-install-bundled-postgres.yaml
 # Provision okoscope-secrets, then:
 deploy/scripts/preflight-secret.sh okoscope okoscope-secrets
-OKOSCOPE_INSTALL_BUNDLED_POSTGRES=false deploy/scripts/deploy-release.sh ./release
+kubectl apply -k deploy/kubernetes/common
 ```
 
 For external PostgreSQL, create the namespace and Secret with the external `database-url`, skip `01-install-bundled-postgres.yaml`, and use the same migration and upgrade artifacts.
@@ -100,33 +102,33 @@ The 2026-08-17 `aliens` adoption dry-run found and corrected two compatibility i
 
 ## Ordered upgrade and failure gate
 
-The canonical sequence is render, validate, secret preflight, migration, notification configuration check, rollout, then smoke verification. `deploy-release.sh` stops immediately when any gate fails; it never applies `03-upgrade.yaml` after such a failure.
+CI validates the tracked production overlay before publishing an image and again before committing its tag. A GitOps reconciler can watch the production Kustomization, or an operator can apply it directly after running the required database migration.
 
 ```bash
-deploy/scripts/render-release.sh ./release \
-  "$SERVER_COMMIT" "$AGENT_COMMIT" "$WEB_IMAGE" disabled
-deploy/tests/manifest-policy.sh
+kubectx aliens
 deploy/tests/secret-preflight.sh
-deploy/scripts/deploy-release.sh ./release
+# Run the release migration gate before reconciling a version that requires it.
+kubectl apply -k deploy/kubernetes/common
+kubectl rollout status deployment/okoscope-server -n okoscope --timeout=5m
 ```
 
-The production server has `OKOSCOPE_MIGRATE=false`. Only the release-specific Job runs `server migrate`. Reapplying an already completed release is safe; migration history and credentials are preserved.
+The production server has `OKOSCOPE_MIGRATE=false`; migrations remain an explicit pre-rollout gate. Reapplying the production Kustomization is safe and does not modify Secrets or PostgreSQL resources.
 
-Notification delivery is disabled by default. To activate it, set `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=true` before rendering. Optional bounded inputs are `OKOSCOPE_NOTIFICATION_POLL_MS`, `OKOSCOPE_NOTIFICATION_CLAIM_SIZE`, `OKOSCOPE_NOTIFICATION_CONCURRENCY`, `OKOSCOPE_NOTIFICATION_LEASE_SECONDS`, `OKOSCOPE_WEBHOOK_TIMEOUT_SECONDS`, `OKOSCOPE_WEBHOOK_MAX_ATTEMPTS`, `OKOSCOPE_WEBHOOK_BACKOFF_MIN_SECONDS`, `OKOSCOPE_WEBHOOK_BACKOFF_MAX_SECONDS`, `OKOSCOPE_WEBHOOK_MAX_RESPONSE_BYTES`, and `OKOSCOPE_NOTIFICATION_DRAIN_SECONDS`. Invalid values fail rendering; an absent, malformed, or all-zero encryption key fails the cluster check. Output contains only activation state, bounds, and enabled destination count.
+Notification delivery is disabled by default. Its non-secret bounded values are explicit patches in the production Kustomization. Change those tracked values deliberately and validate with `make deployment-test`; an absent, malformed, or all-zero encryption key still fails the cluster check.
 
 Before activation, review enabled destinations through the tenant-scoped API, confirm each receiver deduplicates by stable delivery ID, and verify it validates the timestamped HMAC signature. `okoscope_notification_worker_state` is a bounded gauge: `0=disabled`, `1=ready/idle`, `2=backlogged`, `3=retrying`, `4=failing`, and `5=draining`. Alert on oldest due work, due/retrying deliveries, terminal failures, expired leases, cycle failures, and drain timeouts. Receiver failures are delivery signals and do not make the core API unready.
 
 Authenticated users can read the equivalent Project-scoped snapshot from `GET /api/v1/projects/{project_id}/notification-health`. The response uses the string states `disabled`, `idle`, `backlogged`, `retrying`, `failing`, and `draining`; includes only bounded counts, nullable oldest-due age, and an observation timestamp; and never returns destination URLs or secret material. The endpoint is intended for 10-second UI polling and uses `Cache-Control: no-store`. Notification failure changes this snapshot but does not make the ingestion/API readiness probe fail.
 
-To pause delivery, render and roll out with `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=false`. Workers stop taking new claims and drain in-flight work for the configured bounded interval; queued and retryable rows remain durable. Re-enable with the same key to resume. Back up the encryption key separately from the database. Rotation must use the destination rotation API so stored secrets are re-encrypted deliberately. Never delete delivery rows, outbox rows, or migrations as rollback.
+To pause delivery, set `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED` to `false` in the production Kustomization and reconcile it. Workers stop taking new claims and drain in-flight work for the configured bounded interval; queued and retryable rows remain durable. Re-enable with the same key to resume. Back up the encryption key separately from the database. Rotation must use the destination rotation API so stored secrets are re-encrypted deliberately. Never delete delivery rows, outbox rows, or migrations as rollback.
 
-For public routing, set `OKOSCOPE_DOMAIN`, `OKOSCOPE_CERTIFICATE_NAME`, `OKOSCOPE_CERT_ISSUER`, `OKOSCOPE_TLS_SECRET`, `OKOSCOPE_HTTP_ENTRYPOINT`, `OKOSCOPE_HTTPS_ENTRYPOINT`, `OKOSCOPE_SERVER_SERVICE`, and `OKOSCOPE_WEB_SERVICE`, then render with the final argument `enabled`. Existing environments must use their current Certificate name and issuer to avoid competing ownership of one TLS Secret. Invalid or missing values fail before rendering.
+Public routing is stored at `deploy/kubernetes/common/routing.yaml`. Existing environments must retain their current Certificate name and issuer to avoid competing ownership of one TLS Secret.
 
 ## Verification and rollback
 
-After rollout, verify `/readyz`, `/api/v1/build-info`, server migration logs, connected agent sessions, Certificate readiness, the HTTPS redirect, `/api` routing, Web fallback, and one bounded runtime-event smoke. Record the image IDs and database migration from `PROVENANCE.txt`.
+After rollout, verify `/readyz`, `/api/v1/build-info`, server migration logs, connected agent sessions, Certificate readiness, the HTTPS redirect, `/api` routing, Web fallback, and one bounded runtime-event smoke. The production Kustomization and Git history are the image provenance record.
 
-If application readiness fails after a successful additive migration, render `03-upgrade.yaml` with the previous compatible image commits and apply it. Do not delete or roll back migration rows, Jobs, the Secret, StatefulSet, or PVC. If the previous server is not forward-compatible with the recorded migration, stop rather than forcing rollback.
+If application readiness fails after a successful additive migration, revert only the server `newTag` in the production Kustomization to the previous compatible image commit and reconcile it. Do not delete or roll back migration rows, Jobs, the Secret, StatefulSet, or PVC. If the previous server is not forward-compatible with the recorded migration, stop rather than forcing rollback.
 
 ## PostgreSQL durability
 

@@ -116,7 +116,9 @@ kubectl kustomize deploy/kubernetes/check \
         -e "s/__REQUIRED_MIGRATION__/\"$required_migration\"/g" \
   | notification_substitutions \
   >"$output_dir/02-notification-check-${server_tag:0:12}.yaml"
-kubectl kustomize deploy/kubernetes/overlays/production \
+# The legacy bundle renderer starts from the neutral base. The tracked
+# production overlay is the GitOps source of truth and owns its image tags.
+kubectl kustomize deploy/kubernetes/base \
   | sed -e "s#ghcr.io/ihippik/okoscope-server:0000000000000000000000000000000000000000#ghcr.io/ihippik/okoscope-server:$server_tag#g" \
         -e "s#ghcr.io/ihippik/okoscope-agent:0000000000000000000000000000000000000000#ghcr.io/ihippik/okoscope-agent:$agent_tag#g" \
         -e "s#ghcr.io/ihippik/okoscope-web:0000000000000000000000000000000000000000#$web_image#g" \

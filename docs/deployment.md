@@ -41,21 +41,21 @@ The job requests `packages: write` for its `GITHUB_TOKEN`. Organization policies
 Build `okoscope/server:dev` from `Dockerfile.server` and `okoscope/agent:dev` from `Dockerfile.agent`, load them into the target cluster, then apply:
 
 ```sh
-kubectl apply -f deploy/kubernetes/mvp.yaml
-kubectl apply -f deploy/kubernetes/e2e-workloads.yaml
+kubectl apply -k deploy/kubernetes/common
+kubectl apply -f tests/kubernetes/e2e-workloads.yaml
 kubectl -n okoscope rollout status deployment/okoscope-server
 kubectl -n okoscope rollout status daemonset/okoscope-agent
 ```
 
 The agent requires host PID visibility, `/proc`, cgroup v2, tracefs, BTF, and eBPF privileges. The MVP manifest uses `privileged: true`; production hardening must replace it with the smallest capability set validated for the target distribution. The agent can observe process metadata for every workload on its node even though it forwards only configured workloads, so node access and images must be tightly controlled.
 
-Before a cluster deployment, the image can be smoke-tested on a compatible Docker Linux VM. The repository includes a raw agent configuration at `deploy/examples/agent.yaml`; unlike `agent-config.yaml`, it is not wrapped in a ConfigMap. With a valid kubeconfig mounted for client initialization, the following command mounts tracefs, loads both eBPF programs, and attaches `process.exec` to `sched/sched_process_exec` and syscall observation to `raw_syscalls/sys_enter`:
+Before a cluster deployment, the image can be smoke-tested on a compatible Docker Linux VM. The repository includes a raw agent configuration at `docs/examples/agent.yaml`; unlike `agent-config.yaml`, it is not wrapped in a ConfigMap. With a valid kubeconfig mounted for client initialization, the following command mounts tracefs, loads both eBPF programs, and attaches `process.exec` to `sched/sched_process_exec` and syscall observation to `raw_syscalls/sys_enter`:
 
 ```sh
 docker run --rm --privileged --platform linux/amd64 \
   -e KUBECONFIG=/root/.kube/config \
   -v "$HOME/.kube/config:/root/.kube/config:ro" \
-  -v "$PWD/deploy/examples/agent.yaml:/etc/okoscope/agent.yaml:ro" \
+  -v "$PWD/docs/examples/agent.yaml:/etc/okoscope/agent.yaml:ro" \
   -v /path/to/application-token:/var/run/secrets/okoscope/applications/payment-api:ro \
   --entrypoint /bin/sh okoscope/agent:dev \
   -c 'mount -t tracefs tracefs /sys/kernel/tracing && exec /usr/local/bin/okoscope-agent'
@@ -77,7 +77,7 @@ Cross-origin browser access is disabled by default. Set `OKOSCOPE_CORS_ORIGINS` 
 
 The server image receives `OKOSCOPE_GIT_COMMIT` as a Docker build argument in GitHub Actions; local builds deterministically report `unknown`. This milestone has no database migration. Rollback consists of deploying the previous server image and removing `OKOSCOPE_CORS_ORIGINS`; stored runtime data is unaffected.
 
-For navigation performance, run [`deploy/queries/navigation.sql`](../deploy/queries/navigation.sql) with tenant IDs from the installation and confirm PostgreSQL uses tenant/ownership indexes rather than unbounded scans.
+For navigation performance, run [`ops/queries/navigation.sql`](../ops/queries/navigation.sql) with tenant IDs from the installation and confirm PostgreSQL uses tenant/ownership indexes rather than unbounded scans.
 
 ## Acceptance checks
 
@@ -98,8 +98,8 @@ Port-forward PostgreSQL and inspect selected events:
 
 ```sh
 kubectl -n okoscope port-forward service/postgres 5432:5432
-psql postgres://okoscope:okoscope@localhost:5432/okoscope -f deploy/queries/recent-events.sql
-psql postgres://okoscope:okoscope@localhost:5432/okoscope -f deploy/queries/runtime-groups.sql
+psql postgres://okoscope:okoscope@localhost:5432/okoscope -f ops/queries/recent-events.sql
+psql postgres://okoscope:okoscope@localhost:5432/okoscope -f ops/queries/runtime-groups.sql
 ```
 
 The query must show a `process.exec` row with `process_command = 'sh'`, namespace `okoscope-demo`, kind `Deployment`, and workload `payment-api`; it must not show `control-api`. A short-lived executable can disappear from `/proc` before userspace enrichment, so the MVP falls back to the kernel `comm` value (`sh`) instead of promising the original `/bin/sh` path. The agent indexes the host cgroup v2 hierarchy by inode so this race does not lose container attribution.
@@ -146,7 +146,7 @@ okoscope-server \
 
 Backfill-created `runtime_group.first_seen` outbox records have `source=backfill`. Webhook destinations suppress these messages by default and require an explicit `deliver_backfill` opt-in before materialization.
 
-To roll back, deploy the prior server image. The additive grouping tables remain unused and raw-event ingestion continues. Do not reverse or drop migration `0003` during a service rollback. Inspect group totals, ungrouped events, and pending outbox records with `deploy/queries/runtime-groups.sql`.
+To roll back, deploy the prior server image. The additive grouping tables remain unused and raw-event ingestion continues. Do not reverse or drop migration `0003` during a service rollback. Inspect group totals, ungrouped events, and pending outbox records with `ops/queries/runtime-groups.sql`.
 
 ## First-seen observability upgrade
 
@@ -183,7 +183,7 @@ Production destinations require HTTPS. Okoscope disables redirects and rejects U
 
 After configuring a test destination, enable the worker with `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED=true`. Tune polling, claim size, concurrency, leases, request timeout, attempts, backoff, and response limits using the `OKOSCOPE_NOTIFICATION_*` and `OKOSCOPE_WEBHOOK_*` variables documented by `okoscope-server --help`. Keep lease duration longer than request timeout.
 
-Inspect delivery health through `/metrics`, the Project delivery APIs, and `deploy/queries/notification-delivery.sql`. Retryable network/timeouts and HTTP 408/425/429/5xx responses use capped exponential backoff with jitter. Other 4xx and exhausted retries become terminal failures. Response excerpts are truncated and headers are not stored.
+Inspect delivery health through `/metrics`, the Project delivery APIs, and `ops/queries/notification-delivery.sql`. Retryable network/timeouts and HTTP 408/425/429/5xx responses use capped exponential backoff with jitter. Other 4xx and exhausted retries become terminal failures. Response excerpts are truncated and headers are not stored.
 
 To recover from a worker outage, restore outbound connectivity and restart the server; expired leases are reclaimed automatically. To roll back, set delivery enabled to false and deploy the prior image. Pending outbox and delivery rows remain durable. Do not drop migration `0004` during a service rollback.
 
@@ -223,4 +223,4 @@ curl -H 'Authorization: Bearer <api-credential>' \
   'http://localhost:8080/api/v1/projects/<project-uuid>/applications/<application-uuid>/releases/<target-release-uuid>/runtime-diff?limit=50'
 ```
 
-Pass `baseline_id=<release-uuid>` for an explicit comparison. Entries are `new`, `disappeared`, or `unchanged`; baseline and target counts are returned separately. Inspect attribution and summary state with `deploy/queries/release-runtime-diff.sql`. Rollback can deploy the prior binaries while leaving migration `0005` in place; do not drop its nullable columns or tables while attributed data exists.
+Pass `baseline_id=<release-uuid>` for an explicit comparison. Entries are `new`, `disappeared`, or `unchanged`; baseline and target counts are returned separately. Inspect attribution and summary state with `ops/queries/release-runtime-diff.sql`. Rollback can deploy the prior binaries while leaving migration `0005` in place; do not drop its nullable columns or tables while attributed data exists.
