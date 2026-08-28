@@ -299,6 +299,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     );
     assert_network_contract(&document);
     assert_inventory_contract(&document);
+    assert_policy_seed_contract(&document);
     assert_notification_health_contract(&document);
     assert_delivery_contract(&document);
     assert_recovery_contract(&document);
@@ -319,6 +320,25 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
         "get",
         &["baseline_id", "cursor", "limit"],
+    );
+}
+
+fn assert_policy_seed_contract(document: &serde_json::Value) {
+    let schemas = &document["components"]["schemas"];
+    assert_eq!(
+        schemas["PolicySeed"]["discriminator"]["mapping"],
+        serde_json::json!({
+            "available": "#/components/schemas/AvailablePolicySeed",
+            "unavailable": "#/components/schemas/UnavailablePolicySeed"
+        })
+    );
+    assert_eq!(
+        schemas["AvailablePolicySeed"]["properties"]["state"]["const"],
+        "available"
+    );
+    assert_eq!(
+        schemas["UnavailablePolicySeed"]["properties"]["state"]["const"],
+        "unavailable"
     );
 }
 

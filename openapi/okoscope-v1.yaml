@@ -1038,7 +1038,11 @@ components:
       oneOf:
         - { $ref: '#/components/schemas/AvailablePolicySeed' }
         - { $ref: '#/components/schemas/UnavailablePolicySeed' }
-      discriminator: { propertyName: state }
+      discriminator:
+        propertyName: state
+        mapping:
+          available: '#/components/schemas/AvailablePolicySeed'
+          unavailable: '#/components/schemas/UnavailablePolicySeed'
     AvailablePolicySeed: { type: object, additionalProperties: false, required: [state, seed], properties: { state: { const: available }, seed: { $ref: '#/components/schemas/PolicySeedValue' } } }
     UnavailablePolicySeed: { type: object, additionalProperties: false, required: [state, reason], properties: { state: { const: unavailable }, reason: { type: string, enum: [unsupported_identity_version, unsupported_inventory_kind, invalid_semantic_identity, invalid_identity_digest] } } }
     PolicySeedValue: { type: object, additionalProperties: false, required: [behavior, placement, inside_effect], properties: { behavior: { $ref: '#/components/schemas/BehaviorIdentity' }, placement: { $ref: '#/components/schemas/PolicyPlacementMatcher' }, source_inventory_item_id: { $ref: '#/components/schemas/Uuid' }, source_runtime_group_id: { $ref: '#/components/schemas/Uuid' }, inside_effect: { $ref: '#/components/schemas/PolicyEffect' }, outside_effect: { type: string, enum: [requires_review] } } }
