@@ -954,7 +954,18 @@ components:
         - { $ref: '#/components/schemas/InboundBehaviorMatcher' }
         - { $ref: '#/components/schemas/FileBehaviorMatcher' }
         - { $ref: '#/components/schemas/LifecycleBehaviorMatcher' }
-      discriminator: { propertyName: kind }
+      discriminator:
+        propertyName: kind
+        mapping:
+          process: '#/components/schemas/ProcessBehaviorMatcher'
+          destination: '#/components/schemas/DestinationBehaviorMatcher'
+          domain: '#/components/schemas/DomainBehaviorMatcher'
+          syscall: '#/components/schemas/SyscallBehaviorMatcher'
+          inbound_endpoint: '#/components/schemas/InboundBehaviorMatcher'
+          file_activity: '#/components/schemas/FileBehaviorMatcher'
+          lifecycle_process_exit: '#/components/schemas/LifecycleBehaviorMatcher'
+          lifecycle_container_termination: '#/components/schemas/LifecycleBehaviorMatcher'
+          lifecycle_container_restart: '#/components/schemas/LifecycleBehaviorMatcher'
     ProcessBehaviorMatcher: { type: object, additionalProperties: false, required: [kind, executable], properties: { kind: { const: process }, executable: { type: string } } }
     DestinationBehaviorMatcher: { type: object, additionalProperties: false, required: [kind, process_command, address_family, destination_address, destination_port], properties: { kind: { const: destination }, process_command: { type: string }, address_family: { type: string, enum: [ipv4, ipv6] }, destination_address: { type: string }, destination_port: { type: integer, minimum: 0, maximum: 65535 } } }
     DomainBehaviorMatcher: { type: object, additionalProperties: false, required: [kind, process_command, name, query_type], properties: { kind: { const: domain }, process_command: { type: string }, name: { type: string }, query_type: { type: string } } }

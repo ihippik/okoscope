@@ -304,6 +304,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     assert_network_contract(&document);
     assert_inventory_contract(&document);
     assert_policy_seed_contract(&document);
+    assert_behavior_matcher_discriminator(&document);
     assert_notification_health_contract(&document);
     assert_delivery_contract(&document);
     assert_recovery_contract(&document);
@@ -324,6 +325,24 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
         "get",
         &["baseline_id", "cursor", "limit"],
+    );
+}
+
+fn assert_behavior_matcher_discriminator(document: &serde_json::Value) {
+    let mapping = &document["components"]["schemas"]["BehaviorMatcher"]["discriminator"]["mapping"];
+    assert_eq!(
+        mapping,
+        &serde_json::json!({
+            "process": "#/components/schemas/ProcessBehaviorMatcher",
+            "destination": "#/components/schemas/DestinationBehaviorMatcher",
+            "domain": "#/components/schemas/DomainBehaviorMatcher",
+            "syscall": "#/components/schemas/SyscallBehaviorMatcher",
+            "inbound_endpoint": "#/components/schemas/InboundBehaviorMatcher",
+            "file_activity": "#/components/schemas/FileBehaviorMatcher",
+            "lifecycle_process_exit": "#/components/schemas/LifecycleBehaviorMatcher",
+            "lifecycle_container_termination": "#/components/schemas/LifecycleBehaviorMatcher",
+            "lifecycle_container_restart": "#/components/schemas/LifecycleBehaviorMatcher"
+        })
     );
 }
 
