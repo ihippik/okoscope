@@ -621,61 +621,75 @@ fn source_initialized(initialized: &AtomicU8, bit: u8, readiness: &watch::Sender
 async fn watch_pods(api: Api<Pod>, context: &PodWatchContext) -> anyhow::Result<()> {
     let mut stream = watcher::watcher(api, watcher::Config::default()).boxed();
     let mut lifecycle = crate::lifecycle::ContainerLifecycleStore::new(8192);
-    while let Some(event) = stream.try_next().await? {
-        match event {
-            Event::Apply(pod) | Event::InitApply(pod) => {
-                context.cache.apply_pod(&pod);
-                if let Some(evidence) = context.cache.release_evidence(&pod, &context.selectors) {
-                    let _ = context.release_sender.try_send(evidence);
-                }
-                let ready = context.initialized.load(Ordering::Acquire) == 0b111;
-                for snapshot in context.cache.readiness_snapshots(ready, true) {
-                    let _ = context.release_sender.try_send(snapshot);
-                }
-                let capacity_before = lifecycle.capacity_drops;
-                let invalid_before = lifecycle.invalid_statuses;
-                let dedup_before = lifecycle.deduplicated;
-                for observation in lifecycle.observe_pod(&pod) {
-                    if context.lifecycle_sender.try_send(observation).is_err() {
-                        context
-                            .counters
-                            .lifecycle_capacity
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                context.counters.lifecycle_capacity.fetch_add(
-                    lifecycle.capacity_drops.saturating_sub(capacity_before),
-                    Ordering::Relaxed,
-                );
-                context.counters.lifecycle_invalid_status.fetch_add(
-                    lifecycle.invalid_statuses.saturating_sub(invalid_before),
-                    Ordering::Relaxed,
-                );
-                context.counters.lifecycle_deduplicated.fetch_add(
-                    lifecycle.deduplicated.saturating_sub(dedup_before),
-                    Ordering::Relaxed,
-                );
+    let mut snapshot_interval = tokio::time::interval(Duration::from_secs(15));
+    loop {
+        tokio::select! {
+            event = stream.try_next() => {
+                let Some(event) = event? else { return Ok(()) };
+                handle_pod_event(context, &mut lifecycle, event);
             }
-            Event::Delete(pod) => {
-                context.cache.delete_pod(&pod);
-                let ready = context.initialized.load(Ordering::Acquire) == 0b111;
-                for snapshot in context.cache.readiness_snapshots(ready, true) {
-                    let _ = context.release_sender.try_send(snapshot);
-                }
-            }
-            Event::Init => {
-                source_unavailable(&context.initialized, 0b001, &context.readiness);
-            }
-            Event::InitDone => {
-                source_initialized(&context.initialized, 0b001, &context.readiness);
-                let ready = context.initialized.load(Ordering::Acquire) == 0b111;
-                for snapshot in context.cache.readiness_snapshots(ready, true) {
-                    let _ = context.release_sender.try_send(snapshot);
-                }
+            _ = snapshot_interval.tick() => {
+                emit_readiness_snapshots(context);
             }
         }
     }
-    Ok(())
+}
+
+fn emit_readiness_snapshots(context: &PodWatchContext) {
+    let ready = context.initialized.load(Ordering::Acquire) == 0b111;
+    for snapshot in context.cache.readiness_snapshots(ready, true) {
+        let _ = context.release_sender.try_send(snapshot);
+    }
+}
+
+fn handle_pod_event(
+    context: &PodWatchContext,
+    lifecycle: &mut crate::lifecycle::ContainerLifecycleStore,
+    event: Event<Pod>,
+) {
+    match event {
+        Event::Apply(pod) | Event::InitApply(pod) => {
+            context.cache.apply_pod(&pod);
+            if let Some(evidence) = context.cache.release_evidence(&pod, &context.selectors) {
+                let _ = context.release_sender.try_send(evidence);
+            }
+            emit_readiness_snapshots(context);
+            let capacity_before = lifecycle.capacity_drops;
+            let invalid_before = lifecycle.invalid_statuses;
+            let dedup_before = lifecycle.deduplicated;
+            for observation in lifecycle.observe_pod(&pod) {
+                if context.lifecycle_sender.try_send(observation).is_err() {
+                    context
+                        .counters
+                        .lifecycle_capacity
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            context.counters.lifecycle_capacity.fetch_add(
+                lifecycle.capacity_drops.saturating_sub(capacity_before),
+                Ordering::Relaxed,
+            );
+            context.counters.lifecycle_invalid_status.fetch_add(
+                lifecycle.invalid_statuses.saturating_sub(invalid_before),
+                Ordering::Relaxed,
+            );
+            context.counters.lifecycle_deduplicated.fetch_add(
+                lifecycle.deduplicated.saturating_sub(dedup_before),
+                Ordering::Relaxed,
+            );
+        }
+        Event::Delete(pod) => {
+            context.cache.delete_pod(&pod);
+            emit_readiness_snapshots(context);
+        }
+        Event::Init => {
+            source_unavailable(&context.initialized, 0b001, &context.readiness);
+        }
+        Event::InitDone => {
+            source_initialized(&context.initialized, 0b001, &context.readiness);
+            emit_readiness_snapshots(context);
+        }
+    }
 }
 
 async fn watch_replica_sets(
