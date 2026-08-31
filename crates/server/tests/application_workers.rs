@@ -53,6 +53,7 @@ fn event(project_id: Uuid, application_id: Uuid, node_name: &str, offset: i64) -
             workload_kind: "Deployment".into(),
             workload_name: "app".into(),
             release: None,
+            release_identity: None,
         },
         process: ProcessIdentity {
             cgroup_id: 1,

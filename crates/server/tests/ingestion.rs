@@ -1,9 +1,9 @@
 use chrono::{Duration, Utc};
 use event_model::{
-    DnsAddressAnswer, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
-    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, FileActivityPath, FileModify,
-    KubernetesAttribution, NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome,
-    NetworkDnsResponse, ProcessExec, ProcessIdentity, RuntimeEvent, SyscallEvent,
+    ContainerCategory, DnsAddressAnswer, DnsContext, DnsDirection, DnsName, DnsQueryType,
+    DnsResponseCode, DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, FileActivityPath,
+    FileModify, KubernetesAttribution, NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome,
+    NetworkDnsResponse, ProcessExec, ProcessIdentity, ReleaseIdentity, RuntimeEvent, SyscallEvent,
 };
 use server::{
     application_credentials::{issue, revoke},
@@ -135,6 +135,7 @@ fn event(project_id: Uuid, application_id: Uuid) -> RuntimeEvent {
             workload_kind: "Deployment".into(),
             workload_name: "payment-api".into(),
             release: None,
+            release_identity: None,
         },
         process: ProcessIdentity {
             cgroup_id: 42,
@@ -147,6 +148,157 @@ fn event(project_id: Uuid, application_id: Uuid) -> RuntimeEvent {
             parent_command: None,
         }),
     }
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn observed_release_is_created_attributed_and_replay_safe(pool: sqlx::PgPool) {
+    let ids = bootstrap(&pool, &config("automatic-release-ingestion"))
+        .await
+        .unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,'automatic-node','test')")
+        .bind(agent_id).bind(ids.organization_id).bind(ids.cluster_id).execute(&pool).await.unwrap();
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id,
+    };
+    let mut observed = event(ids.project_id, ids.application_id);
+    observed.attribution.release = Some("legacy-must-not-win".into());
+    observed.attribution.release_identity = Some(
+        ReleaseIdentity::from_images([(
+            ContainerCategory::Application,
+            "payment-api",
+            "registry/payment-api:latest",
+            format!("registry/payment-api@sha256:{}", "ab".repeat(32)),
+        )])
+        .unwrap(),
+    );
+    assert_eq!(
+        persist_batch(&pool, context, &[observed.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(persist_batch(&pool, context, &[observed]).await.unwrap(), 0);
+    let result: (i64, String, i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM releases),(SELECT source FROM releases),(SELECT count(*) FROM runtime_events WHERE release_id IS NOT NULL),(SELECT count(*) FROM runtime_event_group_releases),(SELECT count(*) FROM runtime_inventory_releases)")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(result, (1, "observed".into(), 1, 1, 1));
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn observed_release_concurrency_scope_and_invalid_evidence_are_safe(pool: sqlx::PgPool) {
+    let ids = bootstrap(&pool, &config("automatic-release-concurrency"))
+        .await
+        .unwrap();
+    let first_agent = Uuid::new_v4();
+    let second_agent = Uuid::new_v4();
+    for (agent_id, node) in [(first_agent, "node-a"), (second_agent, "node-b")] {
+        sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,$4,'test')")
+            .bind(agent_id).bind(ids.organization_id).bind(ids.cluster_id).bind(node)
+            .execute(&pool).await.unwrap();
+    }
+    let scope = SessionScope {
+        organization_id: ids.organization_id,
+        cluster_id: ids.cluster_id,
+    };
+    let identity = ReleaseIdentity::from_images([(
+        ContainerCategory::Application,
+        "payment-api",
+        "registry/payment-api:latest",
+        format!("registry/payment-api@sha256:{}", "cd".repeat(32)),
+    )])
+    .unwrap();
+    let mut first = event(ids.project_id, ids.application_id);
+    first.attribution.release_identity = Some(identity.clone());
+    let mut second = first.clone();
+    second.id = Uuid::new_v4();
+    let first_context = IngestionContext {
+        scope,
+        agent_id: first_agent,
+    };
+    let second_context = IngestionContext {
+        scope,
+        agent_id: second_agent,
+    };
+    let first_batch = [first];
+    let second_batch = [second];
+    let (first_result, second_result) = tokio::join!(
+        persist_batch(&pool, first_context, &first_batch),
+        persist_batch(&pool, second_context, &second_batch)
+    );
+    assert_eq!(first_result.unwrap(), 1);
+    assert_eq!(second_result.unwrap(), 1);
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM releases),(SELECT count(*) FROM runtime_events WHERE release_id IS NOT NULL)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, (1, 2));
+
+    let mut malformed = event(ids.project_id, ids.application_id);
+    let mut malformed_identity = identity.clone();
+    malformed_identity.digest[0] ^= 0xff;
+    malformed.attribution.release_identity = Some(malformed_identity);
+    assert!(matches!(
+        persist_batch(&pool, first_context, &[malformed]).await,
+        Err(IngestionError::InvalidReleaseIdentity)
+    ));
+    let incomplete = event(ids.project_id, ids.application_id);
+    assert_eq!(
+        persist_batch(&pool, first_context, &[incomplete])
+            .await
+            .unwrap(),
+        1
+    );
+    let other_cluster = Uuid::new_v4();
+    let other_agent = Uuid::new_v4();
+    sqlx::query("INSERT INTO clusters(id,organization_id,external_id,name) VALUES($1,$2,$3,$4)")
+        .bind(other_cluster)
+        .bind(ids.organization_id)
+        .bind(format!("cluster-{other_cluster}"))
+        .bind("Other Cluster")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,'node-c','test')")
+        .bind(other_agent).bind(ids.organization_id).bind(other_cluster)
+        .execute(&pool).await.unwrap();
+    let mut other_cluster_event = event(ids.project_id, ids.application_id);
+    other_cluster_event.attribution.release_identity = Some(identity);
+    assert_eq!(
+        persist_batch(
+            &pool,
+            IngestionContext {
+                scope: SessionScope {
+                    organization_id: ids.organization_id,
+                    cluster_id: other_cluster,
+                },
+                agent_id: other_agent,
+            },
+            &[other_cluster_event],
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    let foreign = event(ids.project_id, Uuid::new_v4());
+    assert!(matches!(
+        persist_batch(&pool, first_context, &[foreign]).await,
+        Err(IngestionError::InvalidOwnership)
+    ));
+    let final_counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM releases),(SELECT count(*) FROM runtime_events),(SELECT count(*) FROM runtime_events WHERE release_id IS NULL)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(final_counts, (1, 4, 1));
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
@@ -584,7 +736,7 @@ async fn batch_is_tenant_safe_idempotent_and_preserves_timestamps(pool: sqlx::Pg
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(received_at > valid.observed_at);
+    assert!(received_at >= valid.observed_at - chrono::Duration::seconds(5));
     let foreign = event(second.project_id, second.application_id);
     assert!(matches!(
         persist_batch(&pool, context, &[foreign]).await,

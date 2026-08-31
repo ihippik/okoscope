@@ -33,6 +33,8 @@ pub enum IngestionError {
     InvalidDns,
     #[error("termination or lifecycle evidence violates bounded invariants")]
     InvalidTermination,
+    #[error("release identity violates bounded canonical invariants")]
+    InvalidReleaseIdentity,
 }
 
 pub async fn persist_application_batch(
@@ -96,24 +98,14 @@ async fn persist_event(
     if !owned {
         return Err(IngestionError::InvalidOwnership);
     }
-    let release_id: Option<Uuid> = if let Some(version) = event.attribution.release.as_deref() {
-        sqlx::query_scalar(
-            "SELECT id FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND version=$4",
-        )
-        .bind(context.scope.organization_id)
-        .bind(event.attribution.project_id)
-        .bind(event.attribution.application_id)
-        .bind(version)
-        .fetch_optional(&mut **tx)
-        .await?
-    } else {
-        None
-    };
+    let release_id = resolve_release(tx, context, event).await?;
     crate::metrics::record_release_attribution(
-        event.attribution.release.is_some(),
+        event.attribution.release.is_some() || event.attribution.release_identity.is_some(),
         release_id.is_some(),
     );
-    if event.attribution.release.is_some() && release_id.is_none() {
+    if (event.attribution.release.is_some() || event.attribution.release_identity.is_some())
+        && release_id.is_none()
+    {
         tracing::warn!(application_id=%event.attribution.application_id, "runtime event release attribution unresolved");
     }
     let cgroup_id =
@@ -232,6 +224,41 @@ async fn persist_event(
     Ok(1)
 }
 
+async fn resolve_release(
+    tx: &mut Transaction<'_, Postgres>,
+    context: IngestionContext,
+    event: &RuntimeEvent,
+) -> Result<Option<Uuid>, IngestionError> {
+    if let Some(identity) = &event.attribution.release_identity {
+        identity
+            .validate()
+            .map_err(|_| IngestionError::InvalidReleaseIdentity)?;
+        let release_id = crate::release_discovery::resolve_observed_release(
+            tx,
+            context.scope.organization_id,
+            event.attribution.project_id,
+            event.attribution.application_id,
+            identity,
+            event.observed_at,
+        )
+        .await?;
+        tracing::debug!(application_id=%event.attribution.application_id, release_id=%release_id, source="observed", "runtime event release attribution resolved");
+        return Ok(Some(release_id));
+    }
+    let Some(version) = event.attribution.release.as_deref() else {
+        return Ok(None);
+    };
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND version=$4",
+    )
+    .bind(context.scope.organization_id)
+    .bind(event.attribution.project_id)
+    .bind(event.attribution.application_id)
+    .bind(version)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
 fn validate_dns_event(event: &RuntimeEvent) -> Result<(), IngestionError> {
     let valid = match &event.payload {
         EventPayload::NetworkDnsResponse(response) => response.validate().is_ok(),
@@ -339,6 +366,7 @@ mod termination_tests {
                 workload_kind: "Deployment".into(),
                 workload_name: "worker".into(),
                 release: None,
+                release_identity: None,
             },
             process: ProcessIdentity {
                 cgroup_id: 1,

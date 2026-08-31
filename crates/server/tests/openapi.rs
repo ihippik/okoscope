@@ -159,6 +159,10 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "get",
     ),
     (
+        "/api/v1/projects/{project_id}/applications/{application_id}/releases/{release_id}/episodes",
+        "get",
+    ),
+    (
         "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
         "get",
     ),

@@ -250,6 +250,7 @@ impl StoredInventoryEvent {
                 workload_kind: self.workload_kind.clone(),
                 workload_name: self.workload_name.clone(),
                 release: None,
+                release_identity: None,
             },
             process: ProcessIdentity {
                 cgroup_id: u64::try_from(self.cgroup_id).unwrap_or(u64::MAX),

@@ -7,15 +7,22 @@ use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use crate::{
+    attribution::ReleaseObservation,
     config::{LoadedApplicationCredential, SafetyLimits, ServerConfig},
     counters::Counters,
     delivery::EventBuffer,
     session::{connect_with_backoff, handle_control},
 };
 
+#[derive(Clone, Debug)]
+enum StreamItem {
+    Event(Box<RuntimeEvent>),
+    Release(Box<ReleaseObservation>),
+}
+
 #[derive(Debug)]
 pub struct ApplicationStreams {
-    routes: BTreeMap<Uuid, mpsc::Sender<RuntimeEvent>>,
+    routes: BTreeMap<Uuid, mpsc::Sender<StreamItem>>,
     shutdown: watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
     counters: Arc<Counters>,
@@ -62,7 +69,7 @@ impl ApplicationStreams {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return false;
         };
-        match sender.try_send(event) {
+        match sender.try_send(StreamItem::Event(Box::new(event))) {
             Ok(()) => true,
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.counters
@@ -71,6 +78,33 @@ impl ApplicationStreams {
                 false
             }
             Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
+    }
+
+    pub fn route_release_observation(&self, observation: ReleaseObservation) -> bool {
+        let route_id = match &observation {
+            ReleaseObservation::Evidence { route_id, .. }
+            | ReleaseObservation::Snapshot { route_id, .. } => *route_id,
+        };
+        let Some(sender) = self.routes.get(&route_id) else {
+            self.counters
+                .release_evidence_dropped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return false;
+        };
+        if sender
+            .try_send(StreamItem::Release(Box::new(observation)))
+            .is_ok()
+        {
+            self.counters
+                .release_evidence_sent
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            true
+        } else {
+            self.counters
+                .release_evidence_dropped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            false
         }
     }
 
@@ -93,11 +127,12 @@ async fn run_stream(
     hello: AgentHello,
     queue_capacity: usize,
     batch_size: usize,
-    mut receiver: mpsc::Receiver<RuntimeEvent>,
+    mut receiver: mpsc::Receiver<StreamItem>,
     mut shutdown: watch::Receiver<bool>,
     counters: Arc<Counters>,
 ) {
     let mut buffer = EventBuffer::new(queue_capacity, batch_size);
+    let mut release_pending = BTreeMap::<String, ReleaseObservation>::new();
     loop {
         if *shutdown.borrow() {
             return;
@@ -122,13 +157,17 @@ async fn run_stream(
         }
         let mut flush = tokio::time::interval(Duration::from_millis(10));
         let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
+        let mut release_dirty = true;
         loop {
             tokio::select! {
-                event = receiver.recv() => {
-                    let Some(event) = event else { return };
-                    buffer.push(event, &counters);
+                item = receiver.recv() => {
+                    let Some(item) = item else { return };
+                    buffer_stream_item(item, &mut buffer, &mut release_pending,
+                        queue_capacity, &mut release_dirty, &counters);
                 }
                 _ = flush.tick() => {
+                    flush_release_observations(&session.sender, &release_pending,
+                        &mut release_dirty, &counters).await;
                     if let Some(batch) = buffer.next_batch(&counters)
                         && send_batch(&session.sender, batch).await.is_err()
                     {
@@ -180,6 +219,87 @@ async fn run_stream(
     }
 }
 
+fn buffer_stream_item(
+    item: StreamItem,
+    buffer: &mut EventBuffer,
+    release_pending: &mut BTreeMap<String, ReleaseObservation>,
+    queue_capacity: usize,
+    release_dirty: &mut bool,
+    counters: &Counters,
+) {
+    match item {
+        StreamItem::Event(event) => {
+            buffer.push(*event, counters);
+        }
+        StreamItem::Release(observation) => {
+            let observation = *observation;
+            let key = release_observation_key(&observation);
+            if release_pending.contains_key(&key) {
+                counters
+                    .release_evidence_duplicate
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            if release_pending.len() < queue_capacity || release_pending.contains_key(&key) {
+                release_pending.insert(key, observation);
+                *release_dirty = true;
+            } else {
+                counters
+                    .release_evidence_dropped
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+async fn flush_release_observations(
+    sender: &mpsc::Sender<AgentMessage>,
+    pending: &BTreeMap<String, ReleaseObservation>,
+    dirty: &mut bool,
+    counters: &Counters,
+) {
+    if !*dirty {
+        return;
+    }
+    for observation in pending.values().cloned() {
+        if send_release_observation(sender, observation).await.is_err() {
+            return;
+        }
+        counters
+            .release_evidence_replayed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    *dirty = false;
+}
+
+fn release_observation_key(value: &ReleaseObservation) -> String {
+    match value {
+        ReleaseObservation::Evidence { value, .. } => format!("e:{}", value.evidence_id),
+        ReleaseObservation::Snapshot { value, .. } => {
+            format!("s:{}", hex::encode(value.revision_digest))
+        }
+    }
+}
+
+async fn send_release_observation(
+    sender: &mpsc::Sender<AgentMessage>,
+    value: ReleaseObservation,
+) -> Result<(), mpsc::error::SendError<AgentMessage>> {
+    let message = match value {
+        ReleaseObservation::Evidence { value, .. } => {
+            agent_message::Message::RevisionEvidence((*value).into())
+        }
+        ReleaseObservation::Snapshot { value, .. } => {
+            agent_message::Message::ReadinessSnapshot(value.into())
+        }
+    };
+    sender
+        .send(AgentMessage {
+            protocol_version: event_model::PROTOCOL_VERSION,
+            message: Some(message),
+        })
+        .await
+}
+
 async fn send_batch(
     sender: &mpsc::Sender<AgentMessage>,
     batch: crate::delivery::PendingBatch,
@@ -223,6 +343,7 @@ mod tests {
                 workload_kind: "Deployment".into(),
                 workload_name: "app".into(),
                 release: None,
+                release_identity: None,
             },
             process: ProcessIdentity {
                 cgroup_id: 1,
@@ -268,14 +389,10 @@ mod tests {
 
         assert!(!streams.route(event(failed_route)));
         assert!(streams.route(event(healthy_route)));
-        assert_eq!(
-            healthy_receiver
-                .try_recv()
-                .unwrap()
-                .attribution
-                .application_id,
-            healthy_route
-        );
+        let StreamItem::Event(received) = healthy_receiver.try_recv().unwrap() else {
+            panic!("event")
+        };
+        assert_eq!(received.attribution.application_id, healthy_route);
         assert!(healthy_receiver.try_recv().is_err());
     }
 
@@ -296,13 +413,9 @@ mod tests {
         assert!(!streams.route(event(full_route)));
         assert!(streams.route(event(healthy_route)));
         assert_eq!(streams.counters.snapshot().capacity_dropped, 1);
-        assert_eq!(
-            healthy_receiver
-                .try_recv()
-                .unwrap()
-                .attribution
-                .application_id,
-            healthy_route
-        );
+        let StreamItem::Event(received) = healthy_receiver.try_recv().unwrap() else {
+            panic!("event")
+        };
+        assert_eq!(received.attribution.application_id, healthy_route);
     }
 }

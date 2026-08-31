@@ -67,13 +67,23 @@ mod linux {
         let args = Args::parse();
         let architecture = Architecture::current().context("unsupported CPU architecture")?;
         let config = load_config(&args, architecture).await?;
+        if config
+            .scope
+            .workloads
+            .iter()
+            .any(|selector| selector.release.is_some())
+        {
+            tracing::warn!(
+                "scope.workloads[].release is deprecated; observed Kubernetes image digests take precedence"
+            );
+        }
         let credentials = load_application_credentials(&config).await?;
         let cluster_uid = cluster_identity::discover(kube::Client::try_default().await?)
             .await
             .context("discover Kubernetes cluster identity")?;
         let counters = Arc::new(Counters::default());
-        let (cache, mut lifecycle_receiver, mut lifecycle_readiness) =
-            start_attribution_cache(counters.clone()).await?;
+        let (cache, mut lifecycle_receiver, mut lifecycle_readiness, mut release_receiver) =
+            start_attribution_cache(counters.clone(), config.scope.workloads.clone()).await?;
         let mut observer = load_observer(&args, &config, architecture)?;
         let process_exit_ready = if config.observation.process_exit {
             match observer.enable_process_exit(&args.process_exit_ebpf_object) {
@@ -121,6 +131,9 @@ mod linux {
         loop {
             tokio::select! {
                 _ = poll.tick() => {
+                    while let Ok(observation) = release_receiver.try_recv() {
+                        streams.route_release_observation(observation);
+                    }
                     while let Ok(observation) = lifecycle_receiver.try_recv() {
                         let Some(attribution) = resolve_and_count(
                             &cache, &counters, Some(&observation.container_id),
@@ -264,16 +277,19 @@ mod linux {
 
     async fn start_attribution_cache(
         counters: Arc<Counters>,
+        selectors: Vec<agent::config::WorkloadSelector>,
     ) -> Result<(
         Arc<AttributionCache>,
         tokio::sync::mpsc::Receiver<agent::lifecycle::LifecycleObservation>,
         tokio::sync::watch::Receiver<bool>,
+        tokio::sync::mpsc::Receiver<agent::attribution::ReleaseObservation>,
     )> {
         let cache = Arc::new(AttributionCache::new(Duration::from_secs(30)));
         let watch_cache = cache.clone();
         let watch_client = kube::Client::try_default().await?;
         let (lifecycle_sender, lifecycle_receiver) = tokio::sync::mpsc::channel(4096);
         let (readiness_sender, readiness_receiver) = tokio::sync::watch::channel(false);
+        let (release_sender, release_receiver) = tokio::sync::mpsc::channel(4096);
         tokio::spawn(async move {
             if let Err(error) = run_watches(
                 watch_client,
@@ -281,13 +297,20 @@ mod linux {
                 lifecycle_sender,
                 counters,
                 readiness_sender,
+                release_sender,
+                Arc::new(selectors),
             )
             .await
             {
                 tracing::error!(%error, "Kubernetes attribution watch stopped");
             }
         });
-        Ok((cache, lifecycle_receiver, readiness_receiver))
+        Ok((
+            cache,
+            lifecycle_receiver,
+            readiness_receiver,
+            release_receiver,
+        ))
     }
 
     fn load_observer(
@@ -578,6 +601,7 @@ mod linux {
         if container_lifecycle_ready {
             capabilities.push(protocol::CONTAINER_LIFECYCLE_CAPABILITY.into());
         }
+        capabilities.push(protocol::KUBERNETES_RELEASE_DISCOVERY_CAPABILITY.into());
         AgentHello {
             agent_version: env!("CARGO_PKG_VERSION").into(),
             node_name: config.identity.node_name.clone(),

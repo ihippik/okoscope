@@ -176,6 +176,7 @@ mod tests {
                 workload_kind: "Deployment".into(),
                 workload_name: "api".into(),
                 release: None,
+                release_identity: None,
             },
             process: ProcessIdentity {
                 cgroup_id: 1,

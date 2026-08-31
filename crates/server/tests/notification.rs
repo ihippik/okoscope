@@ -142,6 +142,7 @@ fn event(project_id: Uuid, application_id: Uuid, payload: EventPayload) -> Runti
             workload_kind: "Deployment".into(),
             workload_name: "payment-api".into(),
             release: None,
+            release_identity: None,
         },
         process: ProcessIdentity {
             cgroup_id: 1,

@@ -14,6 +14,7 @@ clap.workspace = true
 dashmap.workspace = true
 event-model.workspace = true
 futures.workspace = true
+hex.workspace = true
 k8s-openapi.workspace = true
 kube.workspace = true
 protocol.workspace = true
@@ -26,9 +27,6 @@ tonic.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
-
-[dev-dependencies]
-hex.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 aya.workspace = true

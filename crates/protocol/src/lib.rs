@@ -9,13 +9,14 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use chrono::{DateTime, Utc};
 use event_model::{
-    ContainerRestart, ContainerTermination, DnsAddressAnswer, DnsCname, DnsContext, DnsDirection,
-    DnsName, DnsQueryType, DnsResponseCode, DnsTransport, EVENT_SCHEMA_VERSION, EventPayload,
-    EvidenceSource, FileActivityPath, FileCreate, FileDelete, FileModify, FileRename,
-    GenerationCorrelation, KubernetesAttribution, NetworkAccept, NetworkAddressFamily,
-    NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery, NetworkDnsResponse, NetworkListen,
-    PROTOCOL_VERSION, ProcessExec, ProcessExit, ProcessIdentity, ProcessTermination, RuntimeEvent,
-    SyscallEvent, UnresolvedGenerationReason,
+    ContainerCategory, ContainerImageIdentity, ContainerRestart, ContainerTermination,
+    DnsAddressAnswer, DnsCname, DnsContext, DnsDirection, DnsName, DnsQueryType, DnsResponseCode,
+    DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, EvidenceSource, FileActivityPath, FileCreate,
+    FileDelete, FileModify, FileRename, GenerationCorrelation, KubernetesAttribution,
+    NetworkAccept, NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery,
+    NetworkDnsResponse, NetworkListen, PROTOCOL_VERSION, ProcessExec, ProcessExit, ProcessIdentity,
+    ProcessTermination, ReleaseIdentity, RevisionReadinessSnapshot, RuntimeEvent, SyscallEvent,
+    UnresolvedGenerationReason, WorkloadRevisionEvidence,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -28,6 +29,7 @@ pub const NETWORK_DNS_TCP_CAPABILITY: &str = "network.dns.tcp/v1";
 pub const FILE_ACTIVITY_CAPABILITY: &str = "file.activity.syscall-path/v1";
 pub const PROCESS_EXIT_CAPABILITY: &str = "process.exit/v1";
 pub const CONTAINER_LIFECYCLE_CAPABILITY: &str = "container.lifecycle/v1";
+pub const KUBERNETES_RELEASE_DISCOVERY_CAPABILITY: &str = "kubernetes.release-discovery/v1";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProtocolError {
@@ -49,6 +51,179 @@ pub enum ProtocolError {
     InvalidFile(&'static str),
     #[error("invalid termination or lifecycle field: {0}")]
     InvalidTermination(&'static str),
+    #[error("invalid release identity")]
+    InvalidReleaseIdentity,
+}
+
+fn encode_release_identity(identity: ReleaseIdentity) -> v1::ReleaseIdentity {
+    v1::ReleaseIdentity {
+        version: u32::from(identity.version),
+        digest: identity.digest.to_vec(),
+        containers: identity
+            .containers
+            .into_iter()
+            .map(|value| v1::ContainerImageIdentity {
+                category: match value.category {
+                    ContainerCategory::Init => v1::ContainerCategory::Init.into(),
+                    ContainerCategory::Application => v1::ContainerCategory::Application.into(),
+                },
+                name: value.name,
+                digest: value.digest.to_vec(),
+                image: value.image,
+            })
+            .collect(),
+    }
+}
+
+fn decode_release_identity(value: v1::ReleaseIdentity) -> Result<ReleaseIdentity, ProtocolError> {
+    let digest: [u8; 32] = value
+        .digest
+        .try_into()
+        .map_err(|_| ProtocolError::InvalidReleaseIdentity)?;
+    let containers = value
+        .containers
+        .into_iter()
+        .map(|component| {
+            let category = match v1::ContainerCategory::try_from(component.category).ok() {
+                Some(v1::ContainerCategory::Init) => ContainerCategory::Init,
+                Some(v1::ContainerCategory::Application) => ContainerCategory::Application,
+                _ => return Err(ProtocolError::InvalidReleaseIdentity),
+            };
+            Ok(ContainerImageIdentity {
+                category,
+                name: component.name,
+                image: component.image,
+                digest: component
+                    .digest
+                    .try_into()
+                    .map_err(|_| ProtocolError::InvalidReleaseIdentity)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ProtocolError>>()?;
+    let identity = ReleaseIdentity {
+        version: u16::try_from(value.version).map_err(|_| ProtocolError::InvalidReleaseIdentity)?,
+        digest,
+        containers,
+    };
+    identity
+        .validate()
+        .map_err(|_| ProtocolError::InvalidReleaseIdentity)?;
+    Ok(identity)
+}
+
+impl TryFrom<v1::WorkloadRevisionEvidence> for WorkloadRevisionEvidence {
+    type Error = ProtocolError;
+
+    fn try_from(value: v1::WorkloadRevisionEvidence) -> Result<Self, Self::Error> {
+        require_bounded("evidence_id", &value.evidence_id, 200)?;
+        require_bounded("namespace", &value.namespace, 253)?;
+        require_bounded("workload_uid", &value.workload_uid, 253)?;
+        require_bounded("workload_kind", &value.workload_kind, 64)?;
+        require_bounded("workload_name", &value.workload_name, 253)?;
+        require_bounded("replica_set_uid", &value.replica_set_uid, 253)?;
+        require_bounded("replica_set_name", &value.replica_set_name, 253)?;
+        require_bounded("pod_uid", &value.pod_uid, 253)?;
+        if value
+            .pod_template_hash
+            .as_ref()
+            .is_some_and(|v| v.is_empty() || v.len() > 253)
+        {
+            return Err(ProtocolError::InvalidReleaseIdentity);
+        }
+        Ok(Self {
+            evidence_id: value.evidence_id,
+            observed_at: timestamp(value.observed_at_unix_nanos)?,
+            namespace: value.namespace,
+            workload_uid: value.workload_uid,
+            workload_kind: value.workload_kind,
+            workload_name: value.workload_name,
+            replica_set_uid: value.replica_set_uid,
+            replica_set_name: value.replica_set_name,
+            pod_uid: value.pod_uid,
+            pod_template_hash: value.pod_template_hash,
+            release_identity: decode_release_identity(
+                value
+                    .release_identity
+                    .ok_or(ProtocolError::Missing("release_identity"))?,
+            )?,
+            ready: value.ready,
+        })
+    }
+}
+
+impl From<WorkloadRevisionEvidence> for v1::WorkloadRevisionEvidence {
+    fn from(value: WorkloadRevisionEvidence) -> Self {
+        Self {
+            evidence_id: value.evidence_id,
+            observed_at_unix_nanos: value.observed_at.timestamp_nanos_opt().unwrap_or_default(),
+            namespace: value.namespace,
+            workload_uid: value.workload_uid,
+            workload_kind: value.workload_kind,
+            workload_name: value.workload_name,
+            replica_set_uid: value.replica_set_uid,
+            replica_set_name: value.replica_set_name,
+            pod_uid: value.pod_uid,
+            pod_template_hash: value.pod_template_hash,
+            release_identity: Some(encode_release_identity(value.release_identity)),
+            ready: value.ready,
+        }
+    }
+}
+
+impl TryFrom<v1::RevisionReadinessSnapshot> for RevisionReadinessSnapshot {
+    type Error = ProtocolError;
+
+    fn try_from(value: v1::RevisionReadinessSnapshot) -> Result<Self, Self::Error> {
+        require_bounded("snapshot_id", &value.snapshot_id, 200)?;
+        if value.ready_pod_count > value.pod_count
+            || value.ready_pod_count > value.workload_ready_pod_count
+        {
+            return Err(ProtocolError::InvalidReleaseIdentity);
+        }
+        Ok(Self {
+            snapshot_id: value.snapshot_id,
+            observed_at: timestamp(value.observed_at_unix_nanos)?,
+            initialized: value.initialized,
+            continuous: value.continuous,
+            revision_digest: value
+                .revision_digest
+                .try_into()
+                .map_err(|_| ProtocolError::InvalidReleaseIdentity)?,
+            pod_count: value.pod_count,
+            ready_pod_count: value.ready_pod_count,
+            workload_ready_pod_count: value.workload_ready_pod_count,
+        })
+    }
+}
+
+impl From<RevisionReadinessSnapshot> for v1::RevisionReadinessSnapshot {
+    fn from(value: RevisionReadinessSnapshot) -> Self {
+        Self {
+            snapshot_id: value.snapshot_id,
+            observed_at_unix_nanos: value.observed_at.timestamp_nanos_opt().unwrap_or_default(),
+            initialized: value.initialized,
+            continuous: value.continuous,
+            revision_digest: value.revision_digest.to_vec(),
+            pod_count: value.pod_count,
+            ready_pod_count: value.ready_pod_count,
+            workload_ready_pod_count: value.workload_ready_pod_count,
+        }
+    }
+}
+
+fn require_bounded(field: &'static str, value: &str, max: usize) -> Result<(), ProtocolError> {
+    if value.is_empty() || value.len() > max || value.trim() != value {
+        Err(ProtocolError::Missing(field))
+    } else {
+        Ok(())
+    }
+}
+
+fn timestamp(value: i64) -> Result<DateTime<Utc>, ProtocolError> {
+    let nanos = u32::try_from(value.rem_euclid(1_000_000_000))
+        .map_err(|_| ProtocolError::InvalidTimestamp)?;
+    DateTime::from_timestamp(value.div_euclid(1_000_000_000), nanos)
+        .ok_or(ProtocolError::InvalidTimestamp)
 }
 
 /// Validates the wire protocol version.
@@ -84,6 +259,7 @@ impl From<RuntimeEvent> for v1::RuntimeEvent {
                 workload_kind: a.workload_kind,
                 workload_name: a.workload_name,
                 release: a.release,
+                release_identity: a.release_identity.map(encode_release_identity),
             }),
             process: Some(v1::ProcessIdentity {
                 cgroup_id: p.cgroup_id,
@@ -447,6 +623,10 @@ impl TryFrom<v1::RuntimeEvent> for RuntimeEvent {
                 let value = value.trim().to_owned();
                 (!value.is_empty() && value.len() <= 200).then_some(value)
             }),
+            release_identity: a
+                .release_identity
+                .map(decode_release_identity)
+                .transpose()?,
         };
         let p = event.process.ok_or(ProtocolError::Missing("process"))?;
         let process = ProcessIdentity {
@@ -912,6 +1092,7 @@ mod tests {
                 workload_kind: "Deployment".into(),
                 workload_name: "payment-api".into(),
                 release: None,
+                release_identity: None,
             },
             process: ProcessIdentity {
                 cgroup_id: 42,
@@ -949,6 +1130,92 @@ mod tests {
                 .attribution
                 .release
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn optional_release_identity_round_trips_and_rejects_invalid_digest() {
+        let mut original = event();
+        original.attribution.release_identity = Some(
+            ReleaseIdentity::from_image_ids([(
+                ContainerCategory::Application,
+                "payment-api",
+                format!("registry/app@sha256:{}", "ab".repeat(32)),
+            )])
+            .unwrap(),
+        );
+        assert_eq!(
+            RuntimeEvent::try_from(v1::RuntimeEvent::from(original.clone())).unwrap(),
+            original
+        );
+
+        let mut wire = v1::RuntimeEvent::from(original);
+        wire.attribution
+            .as_mut()
+            .unwrap()
+            .release_identity
+            .as_mut()
+            .unwrap()
+            .digest
+            .pop();
+        assert_eq!(
+            RuntimeEvent::try_from(wire).unwrap_err(),
+            ProtocolError::InvalidReleaseIdentity
+        );
+    }
+
+    #[test]
+    fn revision_evidence_and_snapshot_round_trip_with_bounds() {
+        let release_identity = ReleaseIdentity::from_images([(
+            ContainerCategory::Application,
+            "payment-api",
+            "registry/payment-api:latest",
+            format!("registry/payment-api@sha256:{}", "ab".repeat(32)),
+        )])
+        .unwrap();
+        let evidence = WorkloadRevisionEvidence {
+            evidence_id: "pod-1:revision".into(),
+            observed_at: Utc::now(),
+            namespace: "production".into(),
+            workload_uid: "deployment-uid".into(),
+            workload_kind: "Deployment".into(),
+            workload_name: "payment-api".into(),
+            replica_set_uid: "rs-uid".into(),
+            replica_set_name: "payment-api-abc".into(),
+            pod_uid: "pod-uid".into(),
+            pod_template_hash: Some("abc".into()),
+            release_identity,
+            ready: true,
+        };
+        assert_eq!(
+            WorkloadRevisionEvidence::try_from(v1::WorkloadRevisionEvidence::from(
+                evidence.clone()
+            ))
+            .unwrap(),
+            evidence
+        );
+        let snapshot = RevisionReadinessSnapshot {
+            snapshot_id: "snapshot".into(),
+            observed_at: Utc::now(),
+            initialized: true,
+            continuous: true,
+            revision_digest: event_model::revision_digest(&evidence),
+            pod_count: 2,
+            ready_pod_count: 1,
+            workload_ready_pod_count: 2,
+        };
+        assert_eq!(
+            RevisionReadinessSnapshot::try_from(v1::RevisionReadinessSnapshot::from(
+                snapshot.clone()
+            ))
+            .unwrap(),
+            snapshot
+        );
+        let mut invalid = v1::RevisionReadinessSnapshot::from(snapshot);
+        invalid.ready_pod_count = 3;
+        assert_eq!(
+            RevisionReadinessSnapshot::try_from(invalid).unwrap_err(),
+            ProtocolError::InvalidReleaseIdentity
         );
     }
 

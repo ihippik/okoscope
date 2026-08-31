@@ -166,6 +166,13 @@ impl From<CounterSnapshot> for DropCounters {
             lifecycle_invalid_status: value.lifecycle_invalid_status,
             lifecycle_deduplicated: value.lifecycle_deduplicated,
             lifecycle_attribution_failed: value.lifecycle_attribution_failed,
+            release_evidence_complete: value.release_evidence_complete,
+            release_evidence_incomplete: value.release_evidence_incomplete,
+            release_evidence_duplicate: value.release_evidence_duplicate,
+            release_evidence_conflict: value.release_evidence_conflict,
+            release_evidence_sent: value.release_evidence_sent,
+            release_evidence_replayed: value.release_evidence_replayed,
+            release_evidence_dropped: value.release_evidence_dropped,
         }
     }
 }

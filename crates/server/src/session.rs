@@ -63,6 +63,10 @@ impl AgentService for AgentSessionService {
             .capabilities
             .iter()
             .any(|value| value == protocol::FILE_ACTIVITY_CAPABILITY);
+        let release_discovery_capable = hello
+            .capabilities
+            .iter()
+            .any(|value| value == protocol::KUBERNETES_RELEASE_DISCOVERY_CAPABILITY);
         let (sender, receiver) = mpsc::channel(32);
         sender
             .send(Ok(ServerMessage {
@@ -102,6 +106,15 @@ impl AgentService for AgentSessionService {
                         }
                         Some(agent_message::Message::Heartbeat(_)) => { touch_agent(&pool, agent_id).await.map_err(internal)?; }
                         Some(agent_message::Message::ControlResult(result)) => { tracing::info!(agent_id=%agent_id, request_id=%result.request_id, status=result.status, "agent control result"); }
+                        Some(agent_message::Message::RevisionEvidence(_) | agent_message::Message::ReadinessSnapshot(_)) if !release_discovery_capable => return Err(Status::failed_precondition("revision evidence requires kubernetes.release-discovery/v1 capability")),
+                        Some(agent_message::Message::RevisionEvidence(value)) => {
+                            let evidence = event_model::WorkloadRevisionEvidence::try_from(value).map_err(|error| Status::invalid_argument(error.to_string()))?;
+                            crate::release_discovery::persist_revision_evidence(&pool, scope, application_scope, &evidence).await.map_err(internal)?;
+                        }
+                        Some(agent_message::Message::ReadinessSnapshot(value)) => {
+                            let snapshot = event_model::RevisionReadinessSnapshot::try_from(value).map_err(|error| Status::invalid_argument(error.to_string()))?;
+                            crate::release_discovery::persist_readiness_snapshot(&pool, scope, application_scope, &snapshot).await.map_err(internal)?;
+                        }
                         Some(agent_message::Message::Hello(_)) => return Err(Status::invalid_argument("hello can only be sent once")),
                         None => return Err(Status::invalid_argument("unknown or missing typed agent message")),
                     }

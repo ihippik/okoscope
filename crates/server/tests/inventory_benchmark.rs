@@ -90,6 +90,7 @@ async fn inventory_projection_and_read_queries_meet_documented_acceptance_limits
                     }
                     .into(),
                 ),
+                release_identity: None,
             },
             process: ProcessIdentity {
                 cgroup_id: u64::try_from(index + 1).unwrap(),

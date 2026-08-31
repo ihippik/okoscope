@@ -1,7 +1,9 @@
 //! Transport-independent runtime event domain model.
 
+mod release;
 mod termination;
 
+pub use release::*;
 pub use termination::*;
 
 use std::{
@@ -67,6 +69,8 @@ pub struct KubernetesAttribution {
     pub workload_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_identity: Option<ReleaseIdentity>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -806,6 +810,7 @@ mod tests {
                 workload_kind: "Deployment".into(),
                 workload_name: "api".into(),
                 release: None,
+                release_identity: None,
             },
             process: ProcessIdentity {
                 cgroup_id: 1,

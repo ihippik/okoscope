@@ -8,7 +8,10 @@ use std::{
 };
 
 use dashmap::DashMap;
-use event_model::KubernetesAttribution;
+use event_model::{
+    ContainerCategory, KubernetesAttribution, ReleaseIdentity, RevisionReadinessSnapshot,
+    WorkloadRevisionEvidence, revision_digest,
+};
 use futures::{StreamExt, TryStreamExt};
 use k8s_openapi::api::{
     apps::v1::{Deployment, ReplicaSet},
@@ -47,7 +50,27 @@ struct ContainerRecord {
     namespace: String,
     container_name: String,
     owner: Owner,
+    release_identity: Option<ReleaseIdentity>,
     expires_at: Option<Instant>,
+}
+
+#[derive(Clone, Debug)]
+struct PodRevisionRecord {
+    route_id: Uuid,
+    revision_digest: [u8; 32],
+    ready: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum ReleaseObservation {
+    Evidence {
+        route_id: Uuid,
+        value: Box<WorkloadRevisionEvidence>,
+    },
+    Snapshot {
+        route_id: Uuid,
+        value: RevisionReadinessSnapshot,
+    },
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -65,6 +88,8 @@ pub struct AttributionCache {
     containers: DashMap<String, ContainerRecord>,
     replica_sets: DashMap<(String, String), Controller>,
     deployments: DashMap<(String, String), Controller>,
+    revision_pods: DashMap<String, PodRevisionRecord>,
+    known_revisions: DashMap<(Uuid, [u8; 32]), ()>,
     terminated_ttl: Duration,
 }
 
@@ -75,6 +100,8 @@ impl AttributionCache {
             containers: DashMap::new(),
             replica_sets: DashMap::new(),
             deployments: DashMap::new(),
+            revision_pods: DashMap::new(),
+            known_revisions: DashMap::new(),
             terminated_ttl,
         }
     }
@@ -93,6 +120,7 @@ impl AttributionCache {
             .status
             .as_ref()
             .and_then(|status| status.container_statuses.as_ref());
+        let release_identity = pod_release_identity(pod);
         for status in statuses.into_iter().flatten() {
             let Some(container_id) = status.container_id.as_deref() else {
                 continue;
@@ -105,6 +133,7 @@ impl AttributionCache {
                     namespace: namespace.clone(),
                     container_name: status.name.clone(),
                     owner: owner.clone(),
+                    release_identity: release_identity.clone(),
                     expires_at: None,
                 },
             );
@@ -121,6 +150,124 @@ impl AttributionCache {
                 record.expires_at = Some(expires);
             }
         }
+        self.revision_pods.remove(uid);
+    }
+
+    pub fn release_evidence(
+        &self,
+        pod: &Pod,
+        selectors: &[WorkloadSelector],
+    ) -> Option<ReleaseObservation> {
+        let namespace = pod.namespace()?;
+        let pod_uid = pod.meta().uid.clone()?;
+        let owner = controller_owner(&pod.metadata.owner_references)?;
+        if owner.kind != "ReplicaSet" {
+            return None;
+        }
+        let replica_set = self
+            .replica_sets
+            .get(&(namespace.clone(), owner.name.clone()))?;
+        let deployment_owner = replica_set
+            .owner
+            .as_ref()
+            .filter(|value| value.kind == "Deployment")?;
+        let deployment = self
+            .deployments
+            .get(&(namespace.clone(), deployment_owner.name.clone()))?;
+        let metadata = WorkloadMetadata {
+            namespace: namespace.clone(),
+            kind: "Deployment".into(),
+            name: deployment_owner.name.clone(),
+            labels: deployment.labels.clone(),
+        };
+        let selector = selectors.iter().find(|value| value.matches(&metadata))?;
+        let release_identity = pod_release_identity(pod)?;
+        let ready = pod
+            .status
+            .as_ref()
+            .and_then(|value| value.conditions.as_ref())
+            .is_some_and(|conditions| {
+                conditions
+                    .iter()
+                    .any(|condition| condition.type_ == "Ready" && condition.status == "True")
+            });
+        let value = WorkloadRevisionEvidence {
+            evidence_id: format!("{}:{}", pod_uid, hex::encode(release_identity.digest)),
+            observed_at: chrono::Utc::now(),
+            namespace,
+            workload_uid: deployment.uid.clone(),
+            workload_kind: "Deployment".into(),
+            workload_name: deployment_owner.name.clone(),
+            replica_set_uid: replica_set.uid.clone(),
+            replica_set_name: owner.name,
+            pod_uid: pod_uid.clone(),
+            pod_template_hash: pod
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|values| values.get("pod-template-hash").cloned()),
+            release_identity,
+            ready,
+        };
+        self.revision_pods.insert(
+            pod_uid,
+            PodRevisionRecord {
+                route_id: selector.route_id,
+                revision_digest: revision_digest(&value),
+                ready,
+            },
+        );
+        self.known_revisions
+            .insert((selector.route_id, revision_digest(&value)), ());
+        Some(ReleaseObservation::Evidence {
+            route_id: selector.route_id,
+            value: Box::new(value),
+        })
+    }
+
+    pub fn readiness_snapshots(
+        &self,
+        initialized: bool,
+        continuous: bool,
+    ) -> Vec<ReleaseObservation> {
+        let mut totals = BTreeMap::<Uuid, u32>::new();
+        let mut revisions = BTreeMap::<(Uuid, [u8; 32]), (u32, u32)>::new();
+        for revision in &self.known_revisions {
+            revisions.entry(*revision.key()).or_default();
+        }
+        for pod in &self.revision_pods {
+            let ready = u32::from(pod.ready);
+            *totals.entry(pod.route_id).or_default() += ready;
+            let counts = revisions
+                .entry((pod.route_id, pod.revision_digest))
+                .or_default();
+            counts.0 += 1;
+            counts.1 += ready;
+        }
+        let observed_at = chrono::Utc::now();
+        revisions
+            .into_iter()
+            .map(|((route_id, digest), (pod_count, ready_pod_count))| {
+                let workload_ready_pod_count = totals.get(&route_id).copied().unwrap_or_default();
+                let snapshot_id = format!(
+                    "{}:{pod_count}:{ready_pod_count}:{workload_ready_pod_count}",
+                    hex::encode(digest)
+                );
+                ReleaseObservation::Snapshot {
+                    route_id,
+                    value: RevisionReadinessSnapshot {
+                        snapshot_id,
+                        observed_at,
+                        initialized,
+                        continuous,
+                        revision_digest: digest,
+                        pod_count,
+                        ready_pod_count,
+                        workload_ready_pod_count,
+                    },
+                }
+            })
+            .collect()
     }
 
     pub fn apply_replica_set(&self, replica_set: &ReplicaSet) {
@@ -214,6 +361,15 @@ impl AttributionCache {
             .iter()
             .find(|selector| selector.matches(&metadata))
             .ok_or(AttributionError::NotSelected)?;
+        if let (Some(configured), Some(observed)) = (&selector.release, &container.release_identity)
+            && let Some(configured_digest) = configured.strip_prefix("sha256:")
+            && configured_digest != hex::encode(observed.digest)
+        {
+            tracing::warn!(
+                workload_name,
+                "deprecated configured release conflicts with observed image digest; using observed identity"
+            );
+        }
         Ok(KubernetesAttribution {
             project_id: Uuid::nil(),
             application_id: selector.route_id,
@@ -227,8 +383,49 @@ impl AttributionCache {
             workload_kind,
             workload_name,
             release: selector.release.clone(),
+            release_identity: container.release_identity.clone(),
         })
     }
+}
+
+fn pod_release_identity(pod: &Pod) -> Option<ReleaseIdentity> {
+    let spec = pod.spec.as_ref()?;
+    let status = pod.status.as_ref()?;
+    let application_statuses = status.container_statuses.as_ref()?;
+    let init_statuses = status
+        .init_container_statuses
+        .as_deref()
+        .unwrap_or_default();
+    let mut components = Vec::with_capacity(
+        spec.containers.len() + spec.init_containers.as_ref().map_or(0, Vec::len),
+    );
+    for container in spec.init_containers.as_deref().unwrap_or_default() {
+        let image_id = init_statuses
+            .iter()
+            .find(|value| value.name == container.name)?
+            .image_id
+            .as_str();
+        components.push((
+            ContainerCategory::Init,
+            container.name.as_str(),
+            container.image.as_deref().unwrap_or_default(),
+            image_id,
+        ));
+    }
+    for container in &spec.containers {
+        let image_id = application_statuses
+            .iter()
+            .find(|value| value.name == container.name)?
+            .image_id
+            .as_str();
+        components.push((
+            ContainerCategory::Application,
+            container.name.as_str(),
+            container.image.as_deref().unwrap_or_default(),
+            image_id,
+        ));
+    }
+    ReleaseIdentity::from_images(components).ok()
 }
 
 pub fn resolve_and_count(
@@ -242,7 +439,28 @@ pub fn resolve_and_count(
         .ok_or(AttributionError::UnknownContainer)
         .and_then(|id| cache.resolve(id, node_name, selectors));
     match result {
-        Ok(attribution) => Some(attribution),
+        Ok(attribution) => {
+            if attribution.release_identity.is_some() {
+                counters
+                    .release_evidence_complete
+                    .fetch_add(1, Ordering::Relaxed);
+            } else {
+                counters
+                    .release_evidence_incomplete
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            if let (Some(configured), Some(observed)) =
+                (&attribution.release, &attribution.release_identity)
+                && configured
+                    .strip_prefix("sha256:")
+                    .is_some_and(|digest| digest != hex::encode(observed.digest))
+            {
+                counters
+                    .release_evidence_conflict
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Some(attribution)
+        }
         Err(AttributionError::NotSelected) => {
             tracing::debug!(container_id, "event belongs to a non-selected workload");
             counters.filtered.fetch_add(1, Ordering::Relaxed);
@@ -264,20 +482,24 @@ pub async fn run_watches(
     lifecycle_sender: mpsc::Sender<crate::lifecycle::LifecycleObservation>,
     counters: Arc<Counters>,
     readiness: watch::Sender<bool>,
+    release_sender: mpsc::Sender<ReleaseObservation>,
+    selectors: Arc<Vec<WorkloadSelector>>,
 ) -> anyhow::Result<()> {
     let pods: Api<Pod> = Api::all(client.clone());
     let replicas: Api<ReplicaSet> = Api::all(client.clone());
     let deployments: Api<Deployment> = Api::all(client);
     let initialized = Arc::new(AtomicU8::new(0));
+    let pod_context = Arc::new(PodWatchContext {
+        cache: cache.clone(),
+        lifecycle_sender,
+        counters,
+        initialized: initialized.clone(),
+        readiness: readiness.clone(),
+        release_sender,
+        selectors,
+    });
     tokio::join!(
-        supervise_pods(
-            pods,
-            cache.clone(),
-            lifecycle_sender,
-            counters,
-            initialized.clone(),
-            readiness.clone(),
-        ),
+        supervise_pods(pods, pod_context),
         supervise_replica_sets(
             replicas,
             cache.clone(),
@@ -287,6 +509,17 @@ pub async fn run_watches(
         supervise_deployments(deployments, cache, initialized, readiness),
     );
     Ok(())
+}
+
+#[derive(Debug)]
+struct PodWatchContext {
+    cache: Arc<AttributionCache>,
+    lifecycle_sender: mpsc::Sender<crate::lifecycle::LifecycleObservation>,
+    counters: Arc<Counters>,
+    initialized: Arc<AtomicU8>,
+    readiness: watch::Sender<bool>,
+    release_sender: mpsc::Sender<ReleaseObservation>,
+    selectors: Arc<Vec<WorkloadSelector>>,
 }
 
 const WATCH_RETRY_MIN: Duration = Duration::from_secs(1);
@@ -329,26 +562,11 @@ async fn retry_watch(
     sleep(delay).await;
 }
 
-async fn supervise_pods(
-    api: Api<Pod>,
-    cache: Arc<AttributionCache>,
-    lifecycle_sender: mpsc::Sender<crate::lifecycle::LifecycleObservation>,
-    counters: Arc<Counters>,
-    initialized: Arc<AtomicU8>,
-    readiness: watch::Sender<bool>,
-) {
+async fn supervise_pods(api: Api<Pod>, context: Arc<PodWatchContext>) {
     let mut retry = WATCH_RETRY_MIN;
     loop {
-        let result = watch_pods(
-            api.clone(),
-            cache.clone(),
-            lifecycle_sender.clone(),
-            counters.clone(),
-            initialized.clone(),
-            readiness.clone(),
-        )
-        .await;
-        let was_initialized = source_unavailable(&initialized, 0b001, &readiness);
+        let result = watch_pods(api.clone(), &context).await;
+        let was_initialized = source_unavailable(&context.initialized, 0b001, &context.readiness);
         retry_watch("pods", result, was_initialized, &mut retry).await;
     }
 }
@@ -400,46 +618,61 @@ fn source_initialized(initialized: &AtomicU8, bit: u8, readiness: &watch::Sender
     }
 }
 
-async fn watch_pods(
-    api: Api<Pod>,
-    cache: Arc<AttributionCache>,
-    lifecycle_sender: mpsc::Sender<crate::lifecycle::LifecycleObservation>,
-    counters: Arc<Counters>,
-    initialized: Arc<AtomicU8>,
-    readiness: watch::Sender<bool>,
-) -> anyhow::Result<()> {
+async fn watch_pods(api: Api<Pod>, context: &PodWatchContext) -> anyhow::Result<()> {
     let mut stream = watcher::watcher(api, watcher::Config::default()).boxed();
     let mut lifecycle = crate::lifecycle::ContainerLifecycleStore::new(8192);
     while let Some(event) = stream.try_next().await? {
         match event {
             Event::Apply(pod) | Event::InitApply(pod) => {
-                cache.apply_pod(&pod);
+                context.cache.apply_pod(&pod);
+                if let Some(evidence) = context.cache.release_evidence(&pod, &context.selectors) {
+                    let _ = context.release_sender.try_send(evidence);
+                }
+                let ready = context.initialized.load(Ordering::Acquire) == 0b111;
+                for snapshot in context.cache.readiness_snapshots(ready, true) {
+                    let _ = context.release_sender.try_send(snapshot);
+                }
                 let capacity_before = lifecycle.capacity_drops;
                 let invalid_before = lifecycle.invalid_statuses;
                 let dedup_before = lifecycle.deduplicated;
                 for observation in lifecycle.observe_pod(&pod) {
-                    if lifecycle_sender.try_send(observation).is_err() {
-                        counters.lifecycle_capacity.fetch_add(1, Ordering::Relaxed);
+                    if context.lifecycle_sender.try_send(observation).is_err() {
+                        context
+                            .counters
+                            .lifecycle_capacity
+                            .fetch_add(1, Ordering::Relaxed);
                     }
                 }
-                counters.lifecycle_capacity.fetch_add(
+                context.counters.lifecycle_capacity.fetch_add(
                     lifecycle.capacity_drops.saturating_sub(capacity_before),
                     Ordering::Relaxed,
                 );
-                counters.lifecycle_invalid_status.fetch_add(
+                context.counters.lifecycle_invalid_status.fetch_add(
                     lifecycle.invalid_statuses.saturating_sub(invalid_before),
                     Ordering::Relaxed,
                 );
-                counters.lifecycle_deduplicated.fetch_add(
+                context.counters.lifecycle_deduplicated.fetch_add(
                     lifecycle.deduplicated.saturating_sub(dedup_before),
                     Ordering::Relaxed,
                 );
             }
-            Event::Delete(pod) => cache.delete_pod(&pod),
-            Event::Init => {
-                source_unavailable(&initialized, 0b001, &readiness);
+            Event::Delete(pod) => {
+                context.cache.delete_pod(&pod);
+                let ready = context.initialized.load(Ordering::Acquire) == 0b111;
+                for snapshot in context.cache.readiness_snapshots(ready, true) {
+                    let _ = context.release_sender.try_send(snapshot);
+                }
             }
-            Event::InitDone => source_initialized(&initialized, 0b001, &readiness),
+            Event::Init => {
+                source_unavailable(&context.initialized, 0b001, &context.readiness);
+            }
+            Event::InitDone => {
+                source_initialized(&context.initialized, 0b001, &context.readiness);
+                let ready = context.initialized.load(Ordering::Acquire) == 0b111;
+                for snapshot in context.cache.readiness_snapshots(ready, true) {
+                    let _ = context.release_sender.try_send(snapshot);
+                }
+            }
         }
     }
     Ok(())
@@ -518,7 +751,7 @@ fn normalize_container_id(value: &str) -> String {
 mod tests {
     use super::*;
     use k8s_openapi::{
-        api::core::v1::{ContainerStatus, PodStatus},
+        api::core::v1::{Container, ContainerStatus, PodSpec, PodStatus},
         apimachinery::pkg::apis::meta::v1::{ObjectMeta, OwnerReference},
     };
     use uuid::Uuid;
@@ -589,15 +822,23 @@ mod tests {
                 owner_references: Some(vec![owner("ReplicaSet", "payment-api-abc", "rs-uid")]),
                 ..Default::default()
             },
+            spec: Some(PodSpec {
+                containers: vec![Container {
+                    name: "payment-api".into(),
+                    image: Some("registry/payment-api:latest".into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
             status: Some(PodStatus {
                 container_statuses: Some(vec![ContainerStatus {
                     name: "payment-api".into(),
                     container_id: Some("containerd://abc".into()),
+                    image_id: format!("registry/payment-api@sha256:{}", "ab".repeat(32)),
                     ..Default::default()
                 }]),
                 ..Default::default()
             }),
-            ..Default::default()
         };
         cache.apply_deployment(&deployment);
         cache.apply_replica_set(&replica_set);
@@ -617,6 +858,22 @@ mod tests {
         assert_eq!(result.workload_uid, "deployment-uid");
         assert_eq!(result.container_name, "payment-api");
         assert_eq!(result.release.as_deref(), Some("1.7.2"));
+        assert!(result.release_identity.is_some());
+        let ReleaseObservation::Evidence { route_id, value } = cache
+            .release_evidence(&pod, std::slice::from_ref(&selector))
+            .unwrap()
+        else {
+            panic!("revision evidence")
+        };
+        assert_eq!(route_id, selector.route_id);
+        assert_eq!(value.replica_set_uid, "rs-uid");
+        assert_eq!(value.release_identity.containers.len(), 1);
+        let snapshots = cache.readiness_snapshots(true, true);
+        let ReleaseObservation::Snapshot { value, .. } = &snapshots[0] else {
+            panic!("snapshot")
+        };
+        assert!(value.initialized && value.continuous);
+        assert_eq!((value.pod_count, value.ready_pod_count), (1, 0));
         let other = WorkloadSelector {
             name: "other".into(),
             ..selector

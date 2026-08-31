@@ -685,6 +685,18 @@ paths:
     get:
       operationId: getRelease
       responses: { '200': { $ref: '#/components/responses/Release' } }
+  /api/v1/projects/{project_id}/applications/{application_id}/releases/{release_id}/episodes:
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/ReleaseId' },
+      ]
+    get:
+      operationId: listDeploymentEpisodes
+      description: Lists observed Kubernetes deployment episodes. Ready Pod share is not measured traffic share or declared rollout intent.
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses: { '200': { $ref: '#/components/responses/DeploymentEpisodePage' } }
   /api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff:
     parameters:
       [
@@ -1298,7 +1310,7 @@ components:
         service_version: { type: string, example: 0.1.0 }
         git_commit: { type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a }
         api_version: { type: string, const: v1 }
-        required_database_migration: { type: integer, format: int64, example: 18 }
+        required_database_migration: { type: integer, format: int64, example: 19 }
     Organization:
       type: object
       additionalProperties: false
@@ -2123,7 +2135,7 @@ components:
     Release:
       type: object
       additionalProperties: false
-      required: [id, project_id, application_id, version, description, deployed_at, created_at]
+      required: [id, project_id, application_id, version, description, deployed_at, created_at, source, identity_version, identity_digest, identity_components, revision_count, active_episode_count]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         project_id: { $ref: '#/components/schemas/Uuid' }
@@ -2132,6 +2144,41 @@ components:
         description: { type: [string, 'null'], maxLength: 2000 }
         deployed_at: { $ref: '#/components/schemas/Timestamp' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
+        source: { type: string, enum: [manual, observed] }
+        identity_version: { type: [integer, 'null'], minimum: 1 }
+        identity_digest: { type: [string, 'null'], pattern: '^[0-9a-f]{64}$' }
+        identity_components: { type: [array, 'null'], maxItems: 64, items: { type: object } }
+        revision_count: { type: integer, format: int64, minimum: 0 }
+        active_episode_count: { type: integer, format: int64, minimum: 0 }
+    DeploymentEpisode:
+      type: object
+      additionalProperties: false
+      required: [id, release_id, revision_id, cluster_id, occurrence_number, state, transition_kind, first_observed_at, first_ready_at, last_observed_at, ended_at, pod_count, ready_pod_count, workload_ready_pod_count, ready_pod_share, snapshot_observed_at, predecessors]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        release_id: { $ref: '#/components/schemas/Uuid' }
+        revision_id: { $ref: '#/components/schemas/Uuid' }
+        cluster_id: { $ref: '#/components/schemas/Uuid' }
+        occurrence_number: { type: integer, format: int64, minimum: 1 }
+        state: { type: string, enum: [detected, active, inactive] }
+        transition_kind: { type: string, enum: [rollout, rollback_candidate, concurrent, unknown] }
+        first_observed_at: { $ref: '#/components/schemas/Timestamp' }
+        first_ready_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        last_observed_at: { $ref: '#/components/schemas/Timestamp' }
+        ended_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        pod_count: { type: integer, minimum: 0 }
+        ready_pod_count: { type: integer, minimum: 0 }
+        workload_ready_pod_count: { type: integer, minimum: 0 }
+        ready_pod_share: { type: [number, 'null'], minimum: 0, maximum: 1, description: Share of Ready Pods, not request traffic. }
+        snapshot_observed_at: { $ref: '#/components/schemas/NullableTimestamp' }
+        predecessors: { type: array, maxItems: 100, items: { type: object } }
+    DeploymentEpisodePage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DeploymentEpisode' } }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     ReleasePage:
       type: object
       additionalProperties: false
@@ -2177,12 +2224,13 @@ components:
     RuntimeDiff:
       type: object
       additionalProperties: false
-      required: [baseline, target, items, next_cursor]
+      required: [baseline, target, items, next_cursor, baseline_selection_source]
       properties:
         baseline: { oneOf: [{ $ref: '#/components/schemas/Release' }, { type: 'null' }] }
         target: { $ref: '#/components/schemas/Release' }
         items: { type: array, items: { $ref: '#/components/schemas/RuntimeDiffEntry' } }
         next_cursor: { $ref: '#/components/schemas/NullableUuid' }
+        baseline_selection_source: { type: string, enum: [explicit, transition, concurrent_transition_fallback, legacy_deployment_order, none] }
     RuntimeDiffClassificationCount:
       type: object
       additionalProperties: false
@@ -2214,10 +2262,11 @@ components:
     RuntimeDiffSummary:
       type: object
       additionalProperties: false
-      required: [baseline, target, total_item_count, classifications, largest_changes]
+      required: [baseline, target, total_item_count, classifications, largest_changes, baseline_selection_source]
       properties:
         baseline: { oneOf: [{ $ref: '#/components/schemas/Release' }, { type: 'null' }] }
         target: { $ref: '#/components/schemas/Release' }
+        baseline_selection_source: { type: string, enum: [explicit, transition, concurrent_transition_fallback, legacy_deployment_order, none] }
         total_item_count: { type: integer, format: int64, minimum: 0 }
         classifications:
           {
@@ -3154,6 +3203,12 @@ components:
         description: Release page,
         headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
         content: { application/json: { schema: { $ref: '#/components/schemas/ReleasePage' } } },
+      }
+    DeploymentEpisodePage:
+      {
+        description: Kubernetes deployment episode page; Ready Pod share is not traffic share,
+        headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
+        content: { application/json: { schema: { $ref: '#/components/schemas/DeploymentEpisodePage' } } },
       }
     RuntimeDiff:
       {

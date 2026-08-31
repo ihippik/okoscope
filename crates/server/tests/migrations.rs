@@ -78,6 +78,31 @@ async fn migration_only_can_retry_after_failure_is_repaired(pool: sqlx::PgPool) 
 
 #[sqlx::test(migrator = "MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn automatic_release_schema_preserves_manual_releases(pool: sqlx::PgPool) {
+    let ids = bootstrap(&pool, &config("automatic-release-legacy"))
+        .await
+        .unwrap();
+    let release_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO releases(id,organization_id,project_id,application_id,version,deployed_at) VALUES($1,$2,$3,$4,'legacy-v1',now())")
+        .bind(release_id)
+        .bind(ids.organization_id)
+        .bind(ids.project_id)
+        .bind(ids.application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let row: (String, Option<i16>, Option<Vec<u8>>) =
+        sqlx::query_as("SELECT source,identity_version,identity_digest FROM releases WHERE id=$1")
+            .bind(release_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row, ("manual".into(), None, None));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn user_authorisation_schema_replaces_legacy_credentials(pool: sqlx::PgPool) {
     for table in ["users", "organization_memberships", "user_sessions"] {
         let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")

@@ -13,6 +13,8 @@ message AgentMessage {
     EventBatch event_batch = 11;
     Heartbeat heartbeat = 12;
     ControlResult control_result = 13;
+    WorkloadRevisionEvidence revision_evidence = 14;
+    RevisionReadinessSnapshot readiness_snapshot = 15;
   }
 }
 
@@ -96,6 +98,48 @@ message KubernetesAttribution {
   string workload_kind = 10;
   string workload_name = 11;
   optional string release = 12;
+  ReleaseIdentity release_identity = 13;
+}
+
+message ReleaseIdentity {
+  uint32 version = 1;
+  bytes digest = 2;
+  repeated ContainerImageIdentity containers = 3;
+}
+
+message ContainerImageIdentity {
+  ContainerCategory category = 1;
+  string name = 2;
+  bytes digest = 3;
+  optional string image = 4;
+}
+
+enum ContainerCategory { CONTAINER_CATEGORY_UNSPECIFIED = 0; CONTAINER_CATEGORY_INIT = 1; CONTAINER_CATEGORY_APPLICATION = 2; }
+
+message WorkloadRevisionEvidence {
+  string evidence_id = 1;
+  int64 observed_at_unix_nanos = 2;
+  string namespace = 3;
+  string workload_uid = 4;
+  string workload_kind = 5;
+  string workload_name = 6;
+  string replica_set_uid = 7;
+  string replica_set_name = 8;
+  string pod_uid = 9;
+  optional string pod_template_hash = 10;
+  ReleaseIdentity release_identity = 11;
+  bool ready = 12;
+}
+
+message RevisionReadinessSnapshot {
+  string snapshot_id = 1;
+  int64 observed_at_unix_nanos = 2;
+  bool initialized = 3;
+  bool continuous = 4;
+  bytes revision_digest = 5;
+  uint32 pod_count = 6;
+  uint32 ready_pod_count = 7;
+  uint32 workload_ready_pod_count = 8;
 }
 
 message ProcessIdentity {
@@ -368,6 +412,13 @@ message DropCounters {
   uint64 lifecycle_invalid_status = 54;
   uint64 lifecycle_deduplicated = 55;
   uint64 lifecycle_attribution_failed = 56;
+  uint64 release_evidence_complete = 57;
+  uint64 release_evidence_incomplete = 58;
+  uint64 release_evidence_duplicate = 59;
+  uint64 release_evidence_conflict = 60;
+  uint64 release_evidence_sent = 61;
+  uint64 release_evidence_replayed = 62;
+  uint64 release_evidence_dropped = 63;
 }
 
 message ControlMessage {

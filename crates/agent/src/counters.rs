@@ -61,6 +61,13 @@ pub struct Counters {
     pub sent: AtomicU64,
     pub retried: AtomicU64,
     pub acknowledged: AtomicU64,
+    pub release_evidence_complete: AtomicU64,
+    pub release_evidence_incomplete: AtomicU64,
+    pub release_evidence_duplicate: AtomicU64,
+    pub release_evidence_conflict: AtomicU64,
+    pub release_evidence_sent: AtomicU64,
+    pub release_evidence_replayed: AtomicU64,
+    pub release_evidence_dropped: AtomicU64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -124,6 +131,13 @@ pub struct CounterSnapshot {
     pub sent: u64,
     pub retried: u64,
     pub acknowledged: u64,
+    pub release_evidence_complete: u64,
+    pub release_evidence_incomplete: u64,
+    pub release_evidence_duplicate: u64,
+    pub release_evidence_conflict: u64,
+    pub release_evidence_sent: u64,
+    pub release_evidence_replayed: u64,
+    pub release_evidence_dropped: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -296,6 +310,13 @@ impl Counters {
             sent: load(&self.sent),
             retried: load(&self.retried),
             acknowledged: load(&self.acknowledged),
+            release_evidence_complete: load(&self.release_evidence_complete),
+            release_evidence_incomplete: load(&self.release_evidence_incomplete),
+            release_evidence_duplicate: load(&self.release_evidence_duplicate),
+            release_evidence_conflict: load(&self.release_evidence_conflict),
+            release_evidence_sent: load(&self.release_evidence_sent),
+            release_evidence_replayed: load(&self.release_evidence_replayed),
+            release_evidence_dropped: load(&self.release_evidence_dropped),
         }
     }
 }

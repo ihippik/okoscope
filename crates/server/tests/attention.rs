@@ -98,6 +98,7 @@ fn event(
             workload_kind: "Deployment".into(),
             workload_name: "app".into(),
             release: Some(release.into()),
+            release_identity: None,
         },
         process: ProcessIdentity {
             cgroup_id: 1,

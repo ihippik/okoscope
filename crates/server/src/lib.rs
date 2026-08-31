@@ -21,6 +21,7 @@ pub mod policy_api;
 pub mod policy_projection;
 pub mod policy_recompute;
 pub mod provisioning;
+pub mod release_discovery;
 pub mod releases;
 pub mod repository;
 pub mod session;

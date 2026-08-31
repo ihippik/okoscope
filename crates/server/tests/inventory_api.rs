@@ -55,6 +55,7 @@ fn event(ids: &BootstrapIds, payload: EventPayload, release: Option<&str>) -> Ru
             workload_kind: "Deployment".into(),
             workload_name: "app".into(),
             release: release.map(str::to_owned),
+            release_identity: None,
         },
         process: ProcessIdentity {
             cgroup_id: 1,

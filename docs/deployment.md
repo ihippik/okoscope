@@ -187,19 +187,11 @@ Inspect delivery health through `/metrics`, the Project delivery APIs, and `ops/
 
 To recover from a worker outage, restore outbound connectivity and restart the server; expired leases are reclaimed automatically. To roll back, set delivery enabled to false and deploy the prior image. Pending outbox and delivery rows remain durable. Do not drop migration `0004` during a service rollback.
 
-## Release runtime diff
+## Automatic release discovery and runtime diff
 
-Migration `0005_release_runtime_diff.sql` is additive. Create an Application release before configuring agents to emit its version:
+Migration `0019_automatic_release_discovery.sql` is additive. For an Application mapped to one Deployment, the agent derives the Release from the immutable image digests reported in Pod status. It sends revision evidence on the existing authenticated Application stream before buffered runtime events. The server creates or reuses the observed Release atomically; operators do not call the Release API or edit a release value during normal Kubernetes rollout.
 
-```sh
-curl -X POST \
-  -H 'Authorization: Bearer <api-credential>' \
-  -H 'Content-Type: application/json' \
-  http://localhost:8080/api/v1/projects/<project-uuid>/applications/<application-uuid>/releases \
-  -d '{"version":"1.7.2","deployed_at":"2026-08-16T20:00:00Z"}'
-```
-
-Then set the optional value on the matching workload selector and restart the agent DaemonSet:
+The selector only identifies the workload:
 
 ```yaml
 scope:
@@ -208,10 +200,15 @@ scope:
       namespace: production
       kind: Deployment
       name: payment-api
-      release: 1.7.2
 ```
 
-Agents without `release` remain compatible. Unknown versions do not reject events: they are stored without release attribution and counted by `okoscope_release_unknown_total`. Create releases before rolling out agent configuration to avoid gaps.
+`scope.workloads[].release` remains accepted as a deprecated legacy fallback for older rollout procedures. When complete Pod digest evidence exists it takes precedence. Incomplete image status never blocks workload observation: the event is accepted without automatic Release attribution and the bounded reason is observable.
+
+The authenticated manual Release API remains available during compatibility for non-observed and older agents. Manual rows are preserved with `source: manual` and are never merged into an observed Release by version text alone.
+
+Deploy the migration and compatible server before agents advertise `kubernetes.release-discovery/v1`. New agents negotiate the capability before sending evidence; an older server must not receive the new typed messages. Evidence and readiness snapshots are idempotent and replay after reconnect. Episode closure requires an initialized continuous watch plus confirmed absence for `OKOSCOPE_RELEASE_EPISODE_STABILIZATION_SECONDS` (default 120, allowed 30–3600); watch gaps cannot close or promote an episode.
+
+One immutable Release can have multiple deployment episodes. Returning to an older digest opens a new episode classified as `rollback_candidate`; simultaneous revisions remain active independently. `ready_pod_share` is the share of Ready Pods in one snapshot, not traffic allocation or declared canary/A/B intent.
 
 List releases and compare a target with its automatically selected previous release:
 
@@ -224,3 +221,5 @@ curl -H 'Authorization: Bearer <api-credential>' \
 ```
 
 Pass `baseline_id=<release-uuid>` for an explicit comparison. Entries are `new`, `disappeared`, or `unchanged`; baseline and target counts are returned separately. Inspect attribution and summary state with `ops/queries/release-runtime-diff.sql`. Rollback can deploy the prior binaries while leaving migration `0005` in place; do not drop its nullable columns or tables while attributed data exists.
+
+Without `baseline_id`, episode transition evidence selects the replaced Release, including rollback to an older immutable Release. Responses identify `explicit`, `transition`, `concurrent_transition_fallback`, `legacy_deployment_order`, or `none` as the selection source. Application rollback may restore prior agent/server images but must leave migrations 0005 and 0019, Releases, episodes, runtime data, Secrets, and PostgreSQL storage intact.

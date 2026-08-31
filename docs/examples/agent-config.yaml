@@ -19,7 +19,7 @@ data:
           namespace: production
           kind: Deployment
           name: payment-api
-          # release: 1.7.2 # Optional; create the release through the server API first.
+          # release: 1.7.2 # Deprecated legacy fallback; Kubernetes image digests take precedence.
           labels:
             app.kubernetes.io/name: payment-api
     observation:

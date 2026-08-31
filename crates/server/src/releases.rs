@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
+use event_model::BaselineSelectionSource;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{FromRow, PgPool};
@@ -35,6 +36,10 @@ pub fn router(pool: PgPool) -> Router {
         .route(
             "/api/v1/projects/{project_id}/applications/{application_id}/releases/{release_id}",
             get(get_release),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/applications/{application_id}/releases/{release_id}/episodes",
+            get(list_episodes),
         )
         .route(
             "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
@@ -116,6 +121,39 @@ pub struct Release {
     pub description: Option<String>,
     pub deployed_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    pub source: String,
+    pub identity_version: Option<i16>,
+    pub identity_digest: Option<String>,
+    pub identity_components: Option<Value>,
+    pub revision_count: i64,
+    pub active_episode_count: i64,
+}
+
+#[derive(Clone, Debug, FromRow, Serialize)]
+struct DeploymentEpisode {
+    id: Uuid,
+    release_id: Uuid,
+    revision_id: Uuid,
+    cluster_id: Uuid,
+    occurrence_number: i64,
+    state: String,
+    transition_kind: String,
+    first_observed_at: DateTime<Utc>,
+    first_ready_at: Option<DateTime<Utc>>,
+    last_observed_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
+    pod_count: i32,
+    ready_pod_count: i32,
+    workload_ready_pod_count: i32,
+    ready_pod_share: Option<f64>,
+    snapshot_observed_at: Option<DateTime<Utc>>,
+    predecessors: Value,
+}
+
+#[derive(Debug, Serialize)]
+struct EpisodeList {
+    items: Vec<DeploymentEpisode>,
+    next_cursor: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,6 +202,7 @@ struct RuntimeDiff {
     target: Release,
     items: Vec<DiffEntry>,
     next_cursor: Option<Uuid>,
+    baseline_selection_source: BaselineSelectionSource,
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,6 +235,7 @@ struct RuntimeDiffSummary {
     total_item_count: i64,
     classifications: Vec<DiffClassificationCount>,
     largest_changes: Vec<DiffChangeEntry>,
+    baseline_selection_source: BaselineSelectionSource,
 }
 
 async fn principal(
@@ -274,7 +314,7 @@ async fn create_release(
             "description must not exceed 2000 bytes".into(),
         ));
     }
-    let result = sqlx::query_as::<_, Release>("INSERT INTO releases (id,organization_id,project_id,application_id,version,description,deployed_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id,project_id,application_id,version,description,deployed_at,created_at")
+    let result = sqlx::query_as::<_, Release>("INSERT INTO releases (id,organization_id,project_id,application_id,version,description,deployed_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id,project_id,application_id,version,description,deployed_at,created_at,source,identity_version,encode(identity_digest,'hex') identity_digest,identity_components,0::bigint revision_count,0::bigint active_episode_count")
         .bind(Uuid::new_v4()).bind(principal.organization_id).bind(project_id).bind(application_id)
         .bind(version).bind(input.description).bind(input.deployed_at).fetch_one(&state.pool).await;
     match result {
@@ -317,7 +357,7 @@ async fn list_releases(
         None
     };
     let (cursor_time, cursor_id) = cursor.unzip();
-    let mut items = sqlx::query_as::<_, Release>("SELECT id,project_id,application_id,version,description,deployed_at,created_at FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND ($4::timestamptz IS NULL OR (deployed_at,id)<($4,$5)) ORDER BY deployed_at DESC,id DESC LIMIT $6")
+    let mut items = sqlx::query_as::<_, Release>("SELECT r.id,r.project_id,r.application_id,r.version,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,(SELECT count(*) FROM kubernetes_workload_revisions v WHERE v.release_id=r.id)::bigint revision_count,(SELECT count(*) FROM deployment_episodes e WHERE e.release_id=r.id AND e.state<>'inactive')::bigint active_episode_count FROM releases r WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND ($4::timestamptz IS NULL OR (r.deployed_at,r.id)<($4,$5)) ORDER BY r.deployed_at DESC,r.id DESC LIMIT $6")
         .bind(principal.organization_id).bind(project_id).bind(application_id).bind(cursor_time).bind(cursor_id).bind(limit+1)
         .fetch_all(&state.pool).await?;
     let next_cursor = if i64::try_from(items.len()).unwrap_or(i64::MAX) > limit {
@@ -348,6 +388,35 @@ async fn get_release(
     ))
 }
 
+async fn list_episodes(
+    State(state): State<ReleaseState>,
+    headers: HeaderMap,
+    Path((project_id, application_id, release_id)): Path<(Uuid, Uuid, Uuid)>,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<EpisodeList>, ReleaseError> {
+    let principal = principal(&headers, &state).await?;
+    fetch_release(
+        &state.pool,
+        principal.organization_id,
+        project_id,
+        application_id,
+        release_id,
+    )
+    .await?
+    .ok_or(ReleaseError::NotFound)?;
+    let limit = limit(query.limit)?;
+    let mut items = sqlx::query_as::<_, DeploymentEpisode>("SELECT e.id,e.release_id,e.revision_id,e.cluster_id,e.occurrence_number,e.state,e.transition_kind,e.first_observed_at,e.first_ready_at,e.last_observed_at,e.ended_at,e.pod_count,e.ready_pod_count,e.workload_ready_pod_count,CASE WHEN e.workload_ready_pod_count>0 THEN e.ready_pod_count::double precision/e.workload_ready_pod_count::double precision END ready_pod_share,e.snapshot_observed_at,COALESCE((SELECT jsonb_agg(jsonb_build_object('episode_id',p.predecessor_episode_id,'observed_at',p.observed_at,'concurrent',p.concurrent) ORDER BY p.observed_at DESC,p.predecessor_episode_id DESC) FROM deployment_episode_predecessors p WHERE p.episode_id=e.id),'[]'::jsonb) predecessors FROM deployment_episodes e WHERE e.organization_id=$1 AND e.project_id=$2 AND e.application_id=$3 AND e.release_id=$4 AND ($5::uuid IS NULL OR e.id<$5) ORDER BY e.first_observed_at DESC,e.id DESC LIMIT $6")
+        .bind(principal.organization_id).bind(project_id).bind(application_id).bind(release_id)
+        .bind(query.cursor).bind(limit+1).fetch_all(&state.pool).await?;
+    let next_cursor = if i64::try_from(items.len()).unwrap_or(i64::MAX) > limit {
+        items.pop();
+        items.last().map(|item| item.id)
+    } else {
+        None
+    };
+    Ok(Json(EpisodeList { items, next_cursor }))
+}
+
 async fn fetch_release(
     pool: &PgPool,
     organization_id: Uuid,
@@ -355,7 +424,7 @@ async fn fetch_release(
     application_id: Uuid,
     release_id: Uuid,
 ) -> Result<Option<Release>, sqlx::Error> {
-    sqlx::query_as("SELECT id,project_id,application_id,version,description,deployed_at,created_at FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND id=$4")
+    sqlx::query_as("SELECT r.id,r.project_id,r.application_id,r.version,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,(SELECT count(*) FROM kubernetes_workload_revisions v WHERE v.release_id=r.id)::bigint revision_count,(SELECT count(*) FROM deployment_episodes e WHERE e.release_id=r.id AND e.state<>'inactive')::bigint active_episode_count FROM releases r WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND r.id=$4")
         .bind(organization_id).bind(project_id).bind(application_id).bind(release_id).fetch_optional(pool).await
 }
 
@@ -366,21 +435,44 @@ async fn resolve_diff_releases(
     application_id: Uuid,
     target_id: Uuid,
     baseline_id: Option<Uuid>,
-) -> Result<(Release, Option<Release>), ReleaseError> {
+) -> Result<(Release, Option<Release>, BaselineSelectionSource), ReleaseError> {
     let target = fetch_release(pool, organization_id, project_id, application_id, target_id)
         .await?
         .ok_or(ReleaseError::NotFound)?;
-    let baseline = if let Some(id) = baseline_id {
-        Some(
-            fetch_release(pool, organization_id, project_id, application_id, id)
-                .await?
-                .ok_or(ReleaseError::NotFound)?,
+    let (baseline, source) = if let Some(id) = baseline_id {
+        (
+            Some(
+                fetch_release(pool, organization_id, project_id, application_id, id)
+                    .await?
+                    .ok_or(ReleaseError::NotFound)?,
+            ),
+            BaselineSelectionSource::Explicit,
         )
     } else {
-        sqlx::query_as::<_, Release>("SELECT id,project_id,application_id,version,description,deployed_at,created_at FROM releases WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND (deployed_at,id)<($4,$5) ORDER BY deployed_at DESC,id DESC LIMIT 1")
-            .bind(organization_id).bind(project_id).bind(application_id).bind(target.deployed_at).bind(target.id).fetch_optional(pool).await?
+        let predecessors: Vec<Uuid> = sqlx::query_scalar("SELECT p.release_id FROM deployment_episodes t JOIN deployment_episode_predecessors x ON x.episode_id=t.id JOIN deployment_episodes p ON p.id=x.predecessor_episode_id WHERE t.organization_id=$1 AND t.project_id=$2 AND t.application_id=$3 AND t.release_id=$4 ORDER BY t.first_observed_at DESC,t.id DESC,x.observed_at DESC,p.id DESC LIMIT 2")
+            .bind(organization_id).bind(project_id).bind(application_id).bind(target.id).fetch_all(pool).await?;
+        if let Some(id) = predecessors.first() {
+            let source = if predecessors.len() == 1 {
+                BaselineSelectionSource::Transition
+            } else {
+                BaselineSelectionSource::ConcurrentTransitionFallback
+            };
+            (
+                fetch_release(pool, organization_id, project_id, application_id, *id).await?,
+                source,
+            )
+        } else {
+            let legacy = sqlx::query_as::<_, Release>("SELECT r.id,r.project_id,r.application_id,r.version,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,(SELECT count(*) FROM kubernetes_workload_revisions v WHERE v.release_id=r.id)::bigint revision_count,(SELECT count(*) FROM deployment_episodes e WHERE e.release_id=r.id AND e.state<>'inactive')::bigint active_episode_count FROM releases r WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND (r.deployed_at,r.id)<($4,$5) ORDER BY r.deployed_at DESC,r.id DESC LIMIT 1")
+                .bind(organization_id).bind(project_id).bind(application_id).bind(target.deployed_at).bind(target.id).fetch_optional(pool).await?;
+            let source = if legacy.is_some() {
+                BaselineSelectionSource::LegacyDeploymentOrder
+            } else {
+                BaselineSelectionSource::None
+            };
+            (legacy, source)
+        }
     };
-    Ok((target, baseline))
+    Ok((target, baseline, source))
 }
 
 async fn runtime_diff(
@@ -392,7 +484,7 @@ async fn runtime_diff(
     crate::metrics::record_api_request();
     let principal = principal(&headers, &state).await?;
     let limit = limit(query.limit)?;
-    let (target, baseline) = resolve_diff_releases(
+    let (target, baseline, baseline_selection_source) = resolve_diff_releases(
         &state.pool,
         principal.organization_id,
         project_id,
@@ -417,6 +509,7 @@ async fn runtime_diff(
         target,
         items,
         next_cursor,
+        baseline_selection_source,
     }))
 }
 
@@ -430,7 +523,7 @@ async fn runtime_diff_summary(
     crate::metrics::record_api_request();
     let principal = principal(&headers, &state).await?;
     let limit = summary_limit(query.limit)?;
-    let (target, baseline) = resolve_diff_releases(
+    let (target, baseline, baseline_selection_source) = resolve_diff_releases(
         &state.pool,
         principal.organization_id,
         project_id,
@@ -449,6 +542,7 @@ async fn runtime_diff_summary(
             total_item_count: 0,
             classifications: Vec::new(),
             largest_changes: Vec::new(),
+            baseline_selection_source,
         }));
     };
     let mut transaction = state.pool.begin().await?;
@@ -487,6 +581,7 @@ async fn runtime_diff_summary(
         total_item_count,
         classifications,
         largest_changes,
+        baseline_selection_source,
     }))
 }
 
