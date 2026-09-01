@@ -2145,6 +2145,15 @@ components:
           properties:
             representative_event: { $ref: '#/components/schemas/EventOccurrence' }
             notification: { $ref: '#/components/schemas/FirstSeenNotificationSummary' }
+    ReleaseIdentityComponent:
+      type: object
+      additionalProperties: false
+      required: [name, image, category, digest]
+      properties:
+        name: { type: string }
+        image: { type: string }
+        category: { type: string }
+        digest: { type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$' }
     Release:
       type: object
       additionalProperties: false
@@ -2161,7 +2170,7 @@ components:
         source: { type: string, enum: [manual, observed] }
         identity_version: { type: [integer, 'null'], minimum: 1 }
         identity_digest: { type: [string, 'null'], pattern: '^[0-9a-f]{64}$' }
-        identity_components: { type: [array, 'null'], maxItems: 64, items: { type: object } }
+        identity_components: { type: [array, 'null'], maxItems: 64, items: { $ref: '#/components/schemas/ReleaseIdentityComponent' } }
         revision_count: { type: integer, format: int64, minimum: 0 }
         active_episode_count: { type: integer, format: int64, minimum: 0 }
     DeploymentEpisode:

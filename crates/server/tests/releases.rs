@@ -502,11 +502,47 @@ async fn observed_release_name_tracks_application_rename_without_changing_identi
         .unwrap();
     let app = releases::router(pool.clone());
     let before = fetch_release(&app, &ids, &session, release_id).await;
+    let component_digest = before["identity_components"][0]["digest"]
+        .as_str()
+        .expect("component digest is a string");
+    assert_eq!(component_digest, image_digest);
+    assert_eq!(component_digest.len(), 64);
+    assert!(
+        component_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    );
+    assert!(component_digest.starts_with("a81f4c2e00"));
+    assert!(
+        before["identity_components"][0]["digest"]
+            .as_array()
+            .is_none()
+    );
     assert!(
         before["display_name"]
             .as_str()
             .unwrap()
             .starts_with("payment-api · 1 image · ")
+    );
+
+    let list = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            &format!(
+                "/api/v1/projects/{}/applications/{}/releases",
+                ids.project_id, ids.application_id
+            ),
+            &session,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let list = json(list).await;
+    assert_eq!(
+        list["items"][0]["identity_components"][0]["digest"],
+        image_digest
     );
 
     sqlx::query("UPDATE applications SET name='payments' WHERE id=$1")

@@ -312,6 +312,28 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     assert_secret_and_runtime_diff_contract(&document);
 }
 
+#[test]
+fn release_identity_components_have_a_typed_hex_digest_contract() {
+    let source = include_str!("../../../openapi/okoscope-v1.yaml");
+    let document: serde_json::Value = serde_yaml::from_str(source).expect("valid OpenAPI YAML");
+    let component = &document["components"]["schemas"]["ReleaseIdentityComponent"];
+    assert_eq!(
+        component["required"],
+        serde_json::json!(["name", "image", "category", "digest"])
+    );
+    assert_eq!(component["properties"]["name"]["type"], "string");
+    assert_eq!(component["properties"]["image"]["type"], "string");
+    assert_eq!(component["properties"]["category"]["type"], "string");
+    assert_eq!(component["properties"]["digest"]["type"], "string");
+    assert_eq!(component["properties"]["digest"]["minLength"], 64);
+    assert_eq!(component["properties"]["digest"]["maxLength"], 64);
+    assert_eq!(
+        document["components"]["schemas"]["Release"]["properties"]["identity_components"]["items"]
+            ["$ref"],
+        "#/components/schemas/ReleaseIdentityComponent"
+    );
+}
+
 fn assert_secret_and_runtime_diff_contract(document: &serde_json::Value) {
     assert_eq!(
         document["components"]["schemas"]["IssuedApplicationCredential"]["properties"]["token"]["writeOnly"],

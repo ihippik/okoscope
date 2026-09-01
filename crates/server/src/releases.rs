@@ -7,7 +7,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use event_model::BaselineSelectionSource;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
@@ -125,9 +125,32 @@ pub struct Release {
     pub source: String,
     pub identity_version: Option<i16>,
     pub identity_digest: Option<String>,
-    pub identity_components: Option<Value>,
+    pub identity_components: Option<sqlx::types::Json<Vec<ReleaseIdentityComponent>>>,
     pub revision_count: i64,
     pub active_episode_count: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ReleaseIdentityComponent {
+    pub name: String,
+    pub image: String,
+    pub category: String,
+    #[serde(deserialize_with = "deserialize_component_digest")]
+    pub digest: String,
+}
+
+fn deserialize_component_digest<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let bytes = <Vec<u8>>::deserialize(deserializer)?;
+    if bytes.len() != 32 {
+        return Err(serde::de::Error::invalid_length(
+            bytes.len(),
+            &"exactly 32 digest bytes",
+        ));
+    }
+    Ok(hex::encode(bytes))
 }
 
 #[derive(Clone, Debug, FromRow, Serialize)]
@@ -590,6 +613,40 @@ async fn runtime_diff_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn component_digest_serializes_as_fixed_width_lowercase_hex() {
+        let mut bytes = vec![0_u8, 1, 10, 15];
+        bytes.extend(std::iter::repeat_n(255, 28));
+        let component: ReleaseIdentityComponent = serde_json::from_value(serde_json::json!({
+            "name": "file-activity",
+            "image": "busybox:1.37",
+            "category": "application",
+            "digest": bytes,
+        }))
+        .unwrap();
+
+        let value = serde_json::to_value(component).unwrap();
+        let digest = value["digest"].as_str().unwrap();
+        assert_eq!(digest.len(), 64);
+        assert_eq!(digest, format!("00010a0f{}", "ff".repeat(28)));
+        assert!(
+            digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        );
+    }
+
+    #[test]
+    fn component_digest_rejects_non_sha256_byte_lengths() {
+        let result = serde_json::from_value::<ReleaseIdentityComponent>(serde_json::json!({
+            "name": "app",
+            "image": "app:latest",
+            "category": "application",
+            "digest": [0, 1],
+        }));
+        assert!(result.is_err());
+    }
 
     #[test]
     fn diff_summary_limit_is_bounded() {
