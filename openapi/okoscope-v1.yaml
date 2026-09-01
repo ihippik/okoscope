@@ -1156,8 +1156,8 @@ components:
     AttentionReleaseRef:
       type: object
       additionalProperties: false
-      required: [id, version, deployed_at]
-      properties: { id: { $ref: '#/components/schemas/Uuid' }, version: { type: string }, deployed_at: { $ref: '#/components/schemas/Timestamp' } }
+      required: [id, version, display_name, deployed_at]
+      properties: { id: { $ref: '#/components/schemas/Uuid' }, version: { type: string }, display_name: { type: string, minLength: 1 }, deployed_at: { $ref: '#/components/schemas/Timestamp' } }
     AttentionFacts:
       type: object
       additionalProperties: false
@@ -1213,8 +1213,8 @@ components:
     AttentionRuntimeDiffResourceRef:
       type: object
       additionalProperties: false
-      required: [type, project_id, application_id, target_release_id, baseline_release_id]
-      properties: { type: { type: string, const: runtime_diff }, project_id: { $ref: '#/components/schemas/Uuid' }, application_id: { $ref: '#/components/schemas/Uuid' }, target_release_id: { $ref: '#/components/schemas/Uuid' }, baseline_release_id: { $ref: '#/components/schemas/Uuid' } }
+      required: [type, project_id, application_id, target_release_id, target_release_display_name, baseline_release_id, baseline_release_display_name]
+      properties: { type: { type: string, const: runtime_diff }, project_id: { $ref: '#/components/schemas/Uuid' }, application_id: { $ref: '#/components/schemas/Uuid' }, target_release_id: { $ref: '#/components/schemas/Uuid' }, target_release_display_name: { type: string, minLength: 1 }, baseline_release_id: { $ref: '#/components/schemas/Uuid' }, baseline_release_display_name: { type: string, minLength: 1 } }
     AttentionPriorityItem:
       type: object
       additionalProperties: false
@@ -1321,7 +1321,7 @@ components:
         service_version: { type: string, example: 0.1.0 }
         git_commit: { type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a }
         api_version: { type: string, const: v1 }
-        required_database_migration: { type: integer, format: int64, example: 19 }
+        required_database_migration: { type: integer, format: int64, example: 20 }
     Organization:
       type: object
       additionalProperties: false
@@ -1591,6 +1591,7 @@ components:
           related_evidence,
           release_id,
           release_version,
+          release_display_name,
         ]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
@@ -1608,6 +1609,7 @@ components:
         related_evidence: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RelatedEvidence' } }
         release_id: { $ref: '#/components/schemas/NullableUuid' }
         release_version: { type: [string, 'null'] }
+        release_display_name: { type: string, minLength: 1 }
     OccurrencePage:
       type: object
       additionalProperties: false
@@ -2146,12 +2148,13 @@ components:
     Release:
       type: object
       additionalProperties: false
-      required: [id, project_id, application_id, version, description, deployed_at, created_at, source, identity_version, identity_digest, identity_components, revision_count, active_episode_count]
+      required: [id, project_id, application_id, version, display_name, description, deployed_at, created_at, source, identity_version, identity_digest, identity_components, revision_count, active_episode_count]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         project_id: { $ref: '#/components/schemas/Uuid' }
         application_id: { $ref: '#/components/schemas/Uuid' }
         version: { type: string, minLength: 1, maxLength: 200 }
+        display_name: { type: string, minLength: 1 }
         description: { type: [string, 'null'], maxLength: 2000 }
         deployed_at: { $ref: '#/components/schemas/Timestamp' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
@@ -2164,10 +2167,11 @@ components:
     DeploymentEpisode:
       type: object
       additionalProperties: false
-      required: [id, release_id, revision_id, cluster_id, occurrence_number, state, transition_kind, first_observed_at, first_ready_at, last_observed_at, ended_at, pod_count, ready_pod_count, workload_ready_pod_count, ready_pod_share, snapshot_observed_at, predecessors]
+      required: [id, release_id, release_display_name, revision_id, cluster_id, occurrence_number, state, transition_kind, first_observed_at, first_ready_at, last_observed_at, ended_at, pod_count, ready_pod_count, workload_ready_pod_count, ready_pod_share, snapshot_observed_at, predecessors]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         release_id: { $ref: '#/components/schemas/Uuid' }
+        release_display_name: { type: string, minLength: 1 }
         revision_id: { $ref: '#/components/schemas/Uuid' }
         cluster_id: { $ref: '#/components/schemas/Uuid' }
         occurrence_number: { type: integer, format: int64, minimum: 1 }
@@ -2876,6 +2880,7 @@ components:
       required:
         [
           release_id,
+          release_display_name,
           version,
           deployed_at,
           presence,
@@ -2886,6 +2891,7 @@ components:
         ]
       properties:
         release_id: { $ref: '#/components/schemas/Uuid' }
+        release_display_name: { type: string, minLength: 1 }
         version: { type: string, minLength: 1, maxLength: 200 }
         deployed_at: { $ref: '#/components/schemas/Timestamp' }
         presence: { $ref: '#/components/schemas/InventoryReleasePresence' }
@@ -3000,6 +3006,7 @@ components:
           payload,
           release_id,
           release_version,
+          release_display_name,
         ]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
@@ -3016,6 +3023,7 @@ components:
         payload: { $ref: '#/components/schemas/RuntimeEventPayload' }
         release_id: { $ref: '#/components/schemas/NullableUuid' }
         release_version: { type: [string, 'null'] }
+        release_display_name: { type: string, minLength: 1 }
     InventoryOccurrencePage:
       type: object
       additionalProperties: false

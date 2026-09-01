@@ -488,6 +488,7 @@ impl EvidenceLinks {
 #[derive(Clone, Debug, FromRow, Serialize)]
 struct ReleasePresence {
     release_id: Uuid,
+    release_display_name: String,
     version: String,
     deployed_at: DateTime<Utc>,
     presence: String,
@@ -573,6 +574,7 @@ struct InventoryOccurrence {
     payload: Value,
     release_id: Option<Uuid>,
     release_version: Option<String>,
+    release_display_name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1155,7 +1157,7 @@ async fn item_releases(
         None
     };
     let (cursor_time, cursor_id) = cursor.map_or((None, None), |(time, id)| (Some(time), Some(id)));
-    let mut items = sqlx::query_as::<_, ReleasePresence>("SELECT r.id release_id,r.version,r.deployed_at,CASE WHEN ir.release_id IS NOT NULL THEN 'observed' WHEN EXISTS(SELECT 1 FROM runtime_events e WHERE e.organization_id=r.organization_id AND e.project_id=r.project_id AND e.application_id=r.application_id AND e.release_id=r.id) THEN 'not_observed' ELSE 'unknown' END presence,ir.occurrence_count,ir.first_seen_at,ir.last_seen_at,(SELECT count(*) FROM runtime_events e WHERE e.organization_id=r.organization_id AND e.project_id=r.project_id AND e.application_id=r.application_id AND e.release_id=r.id) release_evidence_count FROM releases r LEFT JOIN runtime_inventory_releases ir ON ir.release_id=r.id AND ir.item_id=$4 WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND ($5::timestamptz IS NULL OR (r.deployed_at,r.id)<($5,$6)) ORDER BY r.deployed_at DESC,r.id DESC LIMIT $7")
+    let mut items = sqlx::query_as::<_, ReleasePresence>("SELECT r.id release_id,release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) release_display_name,r.version,r.deployed_at,CASE WHEN ir.release_id IS NOT NULL THEN 'observed' WHEN EXISTS(SELECT 1 FROM runtime_events e WHERE e.organization_id=r.organization_id AND e.project_id=r.project_id AND e.application_id=r.application_id AND e.release_id=r.id) THEN 'not_observed' ELSE 'unknown' END presence,ir.occurrence_count,ir.first_seen_at,ir.last_seen_at,(SELECT count(*) FROM runtime_events e WHERE e.organization_id=r.organization_id AND e.project_id=r.project_id AND e.application_id=r.application_id AND e.release_id=r.id) release_evidence_count FROM releases r JOIN applications a ON a.id=r.application_id LEFT JOIN runtime_inventory_releases ir ON ir.release_id=r.id AND ir.item_id=$4 WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND ($5::timestamptz IS NULL OR (r.deployed_at,r.id)<($5,$6)) ORDER BY r.deployed_at DESC,r.id DESC LIMIT $7")
         .bind(principal.organization_id).bind(project_id).bind(application_id).bind(item_id).bind(cursor_time).bind(cursor_id).bind(limit + 1)
         .fetch_all(&state.pool).await?;
     let next_cursor = if items.len() > usize::try_from(limit).unwrap_or(usize::MAX) {
@@ -1257,7 +1259,7 @@ async fn item_occurrences(
         None
     };
     let (cursor_time, cursor_id) = cursor.map_or((None, None), |(time, id)| (Some(time), Some(id)));
-    let mut items = sqlx::query_as::<_, InventoryOccurrence>("SELECT e.id,e.event_id,e.observed_at,e.cluster_id,e.node_name,e.namespace,e.pod_uid,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,e.release_id,r.version release_version FROM runtime_inventory_event_memberships m JOIN runtime_events e ON e.id=m.event_id LEFT JOIN releases r ON r.id=e.release_id WHERE m.organization_id=$1 AND m.project_id=$2 AND m.application_id=$3 AND m.item_id=$4 AND m.identity_version=$5 AND ($6::timestamptz IS NULL OR (e.observed_at,e.id)<($6,$7)) ORDER BY e.observed_at DESC,e.id DESC LIMIT $8")
+    let mut items = sqlx::query_as::<_, InventoryOccurrence>("SELECT e.id,e.event_id,e.observed_at,e.cluster_id,e.node_name,e.namespace,e.pod_uid,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,e.release_id,r.version release_version,COALESCE(release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components),'Unattributed') release_display_name FROM runtime_inventory_event_memberships m JOIN runtime_events e ON e.id=m.event_id LEFT JOIN releases r ON r.id=e.release_id LEFT JOIN applications a ON a.id=r.application_id WHERE m.organization_id=$1 AND m.project_id=$2 AND m.application_id=$3 AND m.item_id=$4 AND m.identity_version=$5 AND ($6::timestamptz IS NULL OR (e.observed_at,e.id)<($6,$7)) ORDER BY e.observed_at DESC,e.id DESC LIMIT $8")
         .bind(principal.organization_id).bind(project_id).bind(application_id).bind(item_id).bind(CURRENT_INVENTORY_IDENTITY_VERSION.get()).bind(cursor_time).bind(cursor_id).bind(limit + 1)
         .fetch_all(&state.pool).await?;
     let next_cursor = if items.len() > usize::try_from(limit).unwrap_or(usize::MAX) {

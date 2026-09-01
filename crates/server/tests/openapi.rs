@@ -305,9 +305,14 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     assert_inventory_contract(&document);
     assert_policy_seed_contract(&document);
     assert_behavior_matcher_discriminator(&document);
+    assert_release_display_name_contract(&document);
     assert_notification_health_contract(&document);
     assert_delivery_contract(&document);
     assert_recovery_contract(&document);
+    assert_secret_and_runtime_diff_contract(&document);
+}
+
+fn assert_secret_and_runtime_diff_contract(document: &serde_json::Value) {
     assert_eq!(
         document["components"]["schemas"]["IssuedApplicationCredential"]["properties"]["token"]["writeOnly"],
         true
@@ -321,11 +326,49 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         );
     }
     assert_query_parameters(
-        &document,
+        document,
         "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff",
         "get",
         &["baseline_id", "cursor", "limit"],
     );
+}
+
+fn assert_release_display_name_contract(document: &serde_json::Value) {
+    let schemas = &document["components"]["schemas"];
+    for (schema, field) in [
+        ("Release", "display_name"),
+        ("AttentionReleaseRef", "display_name"),
+        ("DeploymentEpisode", "release_display_name"),
+        ("InventoryReleaseEvidence", "release_display_name"),
+        ("InventoryOccurrence", "release_display_name"),
+        ("EventOccurrence", "release_display_name"),
+    ] {
+        assert!(
+            schemas[schema]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == field),
+            "{schema}.{field} must be required"
+        );
+        assert_eq!(schemas[schema]["properties"][field]["type"], "string");
+        assert_eq!(schemas[schema]["properties"][field]["minLength"], 1);
+    }
+    for field in [
+        "target_release_display_name",
+        "baseline_release_display_name",
+    ] {
+        let schema = &schemas["AttentionRuntimeDiffResourceRef"];
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == field)
+        );
+        assert_eq!(schema["properties"][field]["type"], "string");
+        assert_eq!(schema["properties"][field]["minLength"], 1);
+    }
 }
 
 fn assert_behavior_matcher_discriminator(document: &serde_json::Value) {

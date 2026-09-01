@@ -118,6 +118,7 @@ pub struct Release {
     pub project_id: Uuid,
     pub application_id: Uuid,
     pub version: String,
+    pub display_name: String,
     pub description: Option<String>,
     pub deployed_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
@@ -133,6 +134,7 @@ pub struct Release {
 struct DeploymentEpisode {
     id: Uuid,
     release_id: Uuid,
+    release_display_name: String,
     revision_id: Uuid,
     cluster_id: Uuid,
     occurrence_number: i64,
@@ -300,9 +302,9 @@ async fn create_release(
         return Err(ReleaseError::NotFound);
     }
     let version = input.version.trim();
-    if version.is_empty() || version.len() > 200 || version != input.version {
+    if version.is_empty() || version.len() > 200 {
         return Err(ReleaseError::Invalid(
-            "version must be trimmed and contain 1..=200 bytes".into(),
+            "version must contain 1..=200 bytes after trimming".into(),
         ));
     }
     if input
@@ -314,7 +316,7 @@ async fn create_release(
             "description must not exceed 2000 bytes".into(),
         ));
     }
-    let result = sqlx::query_as::<_, Release>("INSERT INTO releases (id,organization_id,project_id,application_id,version,description,deployed_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id,project_id,application_id,version,description,deployed_at,created_at,source,identity_version,encode(identity_digest,'hex') identity_digest,identity_components,0::bigint revision_count,0::bigint active_episode_count")
+    let result = sqlx::query_as::<_, Release>("WITH inserted AS (INSERT INTO releases (id,organization_id,project_id,application_id,version,description,deployed_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *) SELECT r.id,r.project_id,r.application_id,r.version,release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) display_name,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,0::bigint revision_count,0::bigint active_episode_count FROM inserted r JOIN applications a ON a.id=r.application_id")
         .bind(Uuid::new_v4()).bind(principal.organization_id).bind(project_id).bind(application_id)
         .bind(version).bind(input.description).bind(input.deployed_at).fetch_one(&state.pool).await;
     match result {
@@ -357,7 +359,7 @@ async fn list_releases(
         None
     };
     let (cursor_time, cursor_id) = cursor.unzip();
-    let mut items = sqlx::query_as::<_, Release>("SELECT r.id,r.project_id,r.application_id,r.version,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,(SELECT count(*) FROM kubernetes_workload_revisions v WHERE v.release_id=r.id)::bigint revision_count,(SELECT count(*) FROM deployment_episodes e WHERE e.release_id=r.id AND e.state<>'inactive')::bigint active_episode_count FROM releases r WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND ($4::timestamptz IS NULL OR (r.deployed_at,r.id)<($4,$5)) ORDER BY r.deployed_at DESC,r.id DESC LIMIT $6")
+    let mut items = sqlx::query_as::<_, Release>("SELECT r.id,r.project_id,r.application_id,r.version,release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) display_name,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,(SELECT count(*) FROM kubernetes_workload_revisions v WHERE v.release_id=r.id)::bigint revision_count,(SELECT count(*) FROM deployment_episodes e WHERE e.release_id=r.id AND e.state<>'inactive')::bigint active_episode_count FROM releases r JOIN applications a ON a.id=r.application_id WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND ($4::timestamptz IS NULL OR (r.deployed_at,r.id)<($4,$5)) ORDER BY r.deployed_at DESC,r.id DESC LIMIT $6")
         .bind(principal.organization_id).bind(project_id).bind(application_id).bind(cursor_time).bind(cursor_id).bind(limit+1)
         .fetch_all(&state.pool).await?;
     let next_cursor = if i64::try_from(items.len()).unwrap_or(i64::MAX) > limit {
@@ -405,7 +407,7 @@ async fn list_episodes(
     .await?
     .ok_or(ReleaseError::NotFound)?;
     let limit = limit(query.limit)?;
-    let mut items = sqlx::query_as::<_, DeploymentEpisode>("SELECT e.id,e.release_id,e.revision_id,e.cluster_id,e.occurrence_number,e.state,e.transition_kind,e.first_observed_at,e.first_ready_at,e.last_observed_at,e.ended_at,e.pod_count,e.ready_pod_count,e.workload_ready_pod_count,CASE WHEN e.workload_ready_pod_count>0 THEN e.ready_pod_count::double precision/e.workload_ready_pod_count::double precision END ready_pod_share,e.snapshot_observed_at,COALESCE((SELECT jsonb_agg(jsonb_build_object('episode_id',p.predecessor_episode_id,'observed_at',p.observed_at,'concurrent',p.concurrent) ORDER BY p.observed_at DESC,p.predecessor_episode_id DESC) FROM deployment_episode_predecessors p WHERE p.episode_id=e.id),'[]'::jsonb) predecessors FROM deployment_episodes e WHERE e.organization_id=$1 AND e.project_id=$2 AND e.application_id=$3 AND e.release_id=$4 AND ($5::uuid IS NULL OR e.id<$5) ORDER BY e.first_observed_at DESC,e.id DESC LIMIT $6")
+    let mut items = sqlx::query_as::<_, DeploymentEpisode>("SELECT e.id,e.release_id,release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) release_display_name,e.revision_id,e.cluster_id,e.occurrence_number,e.state,e.transition_kind,e.first_observed_at,e.first_ready_at,e.last_observed_at,e.ended_at,e.pod_count,e.ready_pod_count,e.workload_ready_pod_count,CASE WHEN e.workload_ready_pod_count>0 THEN e.ready_pod_count::double precision/e.workload_ready_pod_count::double precision END ready_pod_share,e.snapshot_observed_at,COALESCE((SELECT jsonb_agg(jsonb_build_object('episode_id',p.predecessor_episode_id,'observed_at',p.observed_at,'concurrent',p.concurrent) ORDER BY p.observed_at DESC,p.predecessor_episode_id DESC) FROM deployment_episode_predecessors p WHERE p.episode_id=e.id),'[]'::jsonb) predecessors FROM deployment_episodes e JOIN releases r ON r.id=e.release_id JOIN applications a ON a.id=e.application_id WHERE e.organization_id=$1 AND e.project_id=$2 AND e.application_id=$3 AND e.release_id=$4 AND ($5::uuid IS NULL OR e.id<$5) ORDER BY e.first_observed_at DESC,e.id DESC LIMIT $6")
         .bind(principal.organization_id).bind(project_id).bind(application_id).bind(release_id)
         .bind(query.cursor).bind(limit+1).fetch_all(&state.pool).await?;
     let next_cursor = if i64::try_from(items.len()).unwrap_or(i64::MAX) > limit {
@@ -424,7 +426,7 @@ async fn fetch_release(
     application_id: Uuid,
     release_id: Uuid,
 ) -> Result<Option<Release>, sqlx::Error> {
-    sqlx::query_as("SELECT r.id,r.project_id,r.application_id,r.version,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,(SELECT count(*) FROM kubernetes_workload_revisions v WHERE v.release_id=r.id)::bigint revision_count,(SELECT count(*) FROM deployment_episodes e WHERE e.release_id=r.id AND e.state<>'inactive')::bigint active_episode_count FROM releases r WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND r.id=$4")
+    sqlx::query_as("SELECT r.id,r.project_id,r.application_id,r.version,release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) display_name,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,(SELECT count(*) FROM kubernetes_workload_revisions v WHERE v.release_id=r.id)::bigint revision_count,(SELECT count(*) FROM deployment_episodes e WHERE e.release_id=r.id AND e.state<>'inactive')::bigint active_episode_count FROM releases r JOIN applications a ON a.id=r.application_id WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND r.id=$4")
         .bind(organization_id).bind(project_id).bind(application_id).bind(release_id).fetch_optional(pool).await
 }
 
@@ -462,7 +464,7 @@ async fn resolve_diff_releases(
                 source,
             )
         } else {
-            let legacy = sqlx::query_as::<_, Release>("SELECT r.id,r.project_id,r.application_id,r.version,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,(SELECT count(*) FROM kubernetes_workload_revisions v WHERE v.release_id=r.id)::bigint revision_count,(SELECT count(*) FROM deployment_episodes e WHERE e.release_id=r.id AND e.state<>'inactive')::bigint active_episode_count FROM releases r WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND (r.deployed_at,r.id)<($4,$5) ORDER BY r.deployed_at DESC,r.id DESC LIMIT 1")
+            let legacy = sqlx::query_as::<_, Release>("SELECT r.id,r.project_id,r.application_id,r.version,release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) display_name,r.description,r.deployed_at,r.created_at,r.source,r.identity_version,encode(r.identity_digest,'hex') identity_digest,r.identity_components,(SELECT count(*) FROM kubernetes_workload_revisions v WHERE v.release_id=r.id)::bigint revision_count,(SELECT count(*) FROM deployment_episodes e WHERE e.release_id=r.id AND e.state<>'inactive')::bigint active_episode_count FROM releases r JOIN applications a ON a.id=r.application_id WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND (r.deployed_at,r.id)<($4,$5) ORDER BY r.deployed_at DESC,r.id DESC LIMIT 1")
                 .bind(organization_id).bind(project_id).bind(application_id).bind(target.deployed_at).bind(target.id).fetch_optional(pool).await?;
             let source = if legacy.is_some() {
                 BaselineSelectionSource::LegacyDeploymentOrder

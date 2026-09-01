@@ -153,6 +153,7 @@ pub struct ApplicationRef {
 pub struct ReleaseRef {
     id: Uuid,
     version: String,
+    display_name: String,
     deployed_at: DateTime<Utc>,
 }
 #[derive(Clone, Debug, Serialize)]
@@ -245,7 +246,9 @@ enum ResourceRef {
         project_id: Uuid,
         application_id: Uuid,
         target_release_id: Uuid,
+        target_release_display_name: String,
         baseline_release_id: Uuid,
+        baseline_release_display_name: String,
     },
 }
 #[derive(Clone, Debug, Serialize)]
@@ -296,9 +299,11 @@ struct ChangedRow {
     application_slug: String,
     target_id: Uuid,
     target_version: String,
+    target_display_name: String,
     target_deployed_at: DateTime<Utc>,
     baseline_id: Uuid,
     baseline_version: String,
+    baseline_display_name: String,
     baseline_deployed_at: DateTime<Utc>,
     new_count: i64,
     disappeared_count: i64,
@@ -516,7 +521,7 @@ async fn load_changed(
     limit: i64,
 ) -> Result<Vec<ChangedRow>, sqlx::Error> {
     let sql = format!(
-        "{CHANGED_CTE} SELECT a.project_id,p.name project_name,p.slug project_slug,a.application_id,app.name application_name,app.slug application_slug,a.target_id,a.target_version,a.target_deployed_at,a.baseline_id,a.baseline_version,a.baseline_deployed_at,a.new_count,a.disappeared_count,a.unchanged_count,a.total_item_count,a.absolute_occurrence_delta_sum,a.max_absolute_occurrence_delta FROM agg a JOIN projects p ON p.organization_id=$1 AND p.id=a.project_id JOIN applications app ON app.organization_id=$1 AND app.id=a.application_id WHERE a.new_count+a.disappeared_count>0 ORDER BY a.new_count+a.disappeared_count DESC,a.target_deployed_at DESC,a.application_id LIMIT $2"
+        "{CHANGED_CTE} SELECT a.project_id,p.name project_name,p.slug project_slug,a.application_id,app.name application_name,app.slug application_slug,a.target_id,a.target_version,release_display_name(app.name,rt.source,rt.version,rt.identity_digest,rt.identity_components) target_display_name,a.target_deployed_at,a.baseline_id,a.baseline_version,release_display_name(app.name,rb.source,rb.version,rb.identity_digest,rb.identity_components) baseline_display_name,a.baseline_deployed_at,a.new_count,a.disappeared_count,a.unchanged_count,a.total_item_count,a.absolute_occurrence_delta_sum,a.max_absolute_occurrence_delta FROM agg a JOIN projects p ON p.organization_id=$1 AND p.id=a.project_id JOIN applications app ON app.organization_id=$1 AND app.id=a.application_id JOIN releases rt ON rt.id=a.target_id JOIN releases rb ON rb.id=a.baseline_id WHERE a.new_count+a.disappeared_count>0 ORDER BY a.new_count+a.disappeared_count DESC,a.target_deployed_at DESC,a.application_id LIMIT $2"
     );
     sqlx::query_as(&sql)
         .bind(organization_id)
@@ -531,7 +536,7 @@ async fn load_application_changed(
     application_id: Uuid,
 ) -> Result<Option<ChangedRow>, sqlx::Error> {
     let sql = format!(
-        "{CHANGED_CTE} SELECT a.project_id,p.name project_name,p.slug project_slug,a.application_id,app.name application_name,app.slug application_slug,a.target_id,a.target_version,a.target_deployed_at,a.baseline_id,a.baseline_version,a.baseline_deployed_at,a.new_count,a.disappeared_count,a.unchanged_count,a.total_item_count,a.absolute_occurrence_delta_sum,a.max_absolute_occurrence_delta FROM agg a JOIN projects p ON p.organization_id=$1 AND p.id=a.project_id JOIN applications app ON app.organization_id=$1 AND app.id=a.application_id WHERE a.application_id=$2"
+        "{CHANGED_CTE} SELECT a.project_id,p.name project_name,p.slug project_slug,a.application_id,app.name application_name,app.slug application_slug,a.target_id,a.target_version,release_display_name(app.name,rt.source,rt.version,rt.identity_digest,rt.identity_components) target_display_name,a.target_deployed_at,a.baseline_id,a.baseline_version,release_display_name(app.name,rb.source,rb.version,rb.identity_digest,rb.identity_components) baseline_display_name,a.baseline_deployed_at,a.new_count,a.disappeared_count,a.unchanged_count,a.total_item_count,a.absolute_occurrence_delta_sum,a.max_absolute_occurrence_delta FROM agg a JOIN projects p ON p.organization_id=$1 AND p.id=a.project_id JOIN applications app ON app.organization_id=$1 AND app.id=a.application_id JOIN releases rt ON rt.id=a.target_id JOIN releases rb ON rb.id=a.baseline_id WHERE a.application_id=$2"
     );
     sqlx::query_as(&sql)
         .bind(organization_id)
@@ -922,7 +927,9 @@ fn changed_item(r: &ChangedRow) -> PriorityItem {
             project_id: r.project_id,
             application_id: r.application_id,
             target_release_id: r.target_id,
+            target_release_display_name: r.target_display_name.clone(),
             baseline_release_id: r.baseline_id,
+            baseline_release_display_name: r.baseline_display_name.clone(),
         },
         stable_id: r.application_id,
     }
@@ -943,11 +950,13 @@ fn changed_response(r: ChangedRow, largest_changes: Vec<LargestChange>) -> Chang
             target_release: ReleaseRef {
                 id: r.target_id,
                 version: r.target_version,
+                display_name: r.target_display_name,
                 deployed_at: r.target_deployed_at,
             },
             baseline_release: Some(ReleaseRef {
                 id: r.baseline_id,
                 version: r.baseline_version,
+                display_name: r.baseline_display_name,
                 deployed_at: r.baseline_deployed_at,
             }),
             new_count: r.new_count,
@@ -1432,9 +1441,11 @@ mod tests {
             application_slug: "a".into(),
             target_id: Uuid::from_u128(8),
             target_version: "2".into(),
+            target_display_name: "2".into(),
             target_deployed_at: now,
             baseline_id: Uuid::from_u128(9),
             baseline_version: "1".into(),
+            baseline_display_name: "1".into(),
             baseline_deployed_at: now - Duration::hours(1),
             new_count: 2,
             disappeared_count: 1,
@@ -1478,9 +1489,11 @@ mod tests {
                     application_slug: "a".into(),
                     target_id: Uuid::from_u128(8),
                     target_version: "2".into(),
+                    target_display_name: "2".into(),
                     target_deployed_at: now,
                     baseline_id: Uuid::from_u128(9),
                     baseline_version: "1".into(),
+                    baseline_display_name: "1".into(),
                     baseline_deployed_at: now,
                     new_count: 1,
                     disappeared_count: 0,

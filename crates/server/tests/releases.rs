@@ -9,10 +9,12 @@ use event_model::{
     WorkloadRevisionEvidence, revision_digest,
 };
 use server::{
+    api,
     application_credentials::ApplicationCredentialScope,
     auth::{SESSION_COOKIE, SessionScope, SessionToken},
     bootstrap::{BootstrapConfig, BootstrapIds, bootstrap},
     ingestion::{IngestionContext, persist_batch},
+    inventory_api,
     release_discovery::{persist_readiness_snapshot, persist_revision_evidence},
     releases,
 };
@@ -84,6 +86,101 @@ async fn create_release(
         .unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
     Uuid::parse_str(json(response).await["id"].as_str().unwrap()).unwrap()
+}
+
+async fn fetch_release(
+    app: &axum::Router,
+    ids: &BootstrapIds,
+    credential: &str,
+    release_id: Uuid,
+) -> serde_json::Value {
+    let response = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            &format!(
+                "/api/v1/projects/{}/applications/{}/releases/{release_id}",
+                ids.project_id, ids.application_id
+            ),
+            credential,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    json(response).await
+}
+
+async fn assert_nested_release_names(
+    pool: &sqlx::PgPool,
+    ids: &BootstrapIds,
+    credential: &str,
+    release_id: Uuid,
+) {
+    let release_api = releases::router(pool.clone());
+    let expected = fetch_release(&release_api, ids, credential, release_id).await["display_name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let group_id: Uuid = sqlx::query_scalar(
+        "SELECT group_id FROM runtime_event_group_releases WHERE release_id=$1 LIMIT 1",
+    )
+    .bind(release_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let occurrences = api::router(pool.clone())
+        .oneshot(request(
+            "GET",
+            &format!("/api/v1/runtime-groups/{group_id}/occurrences?limit=200"),
+            credential,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(occurrences.status(), StatusCode::OK);
+    let occurrences = json(occurrences).await;
+    let attributed = occurrences["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["release_id"] == release_id.to_string())
+        .unwrap();
+    assert_eq!(attributed["release_display_name"], expected);
+
+    let item_id: Uuid = sqlx::query_scalar(
+        "SELECT item_id FROM runtime_inventory_releases WHERE release_id=$1 LIMIT 1",
+    )
+    .bind(release_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let inventory_base = format!(
+        "/api/v1/projects/{}/applications/{}/runtime-inventory/{item_id}",
+        ids.project_id, ids.application_id
+    );
+    let inventory = inventory_api::router(pool.clone());
+    for suffix in ["/releases", "/occurrences"] {
+        let response = inventory
+            .clone()
+            .oneshot(request(
+                "GET",
+                &format!("{inventory_base}{suffix}?limit=200"),
+                credential,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = json(response).await;
+        let attributed = response["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["release_id"] == release_id.to_string())
+            .unwrap();
+        assert_eq!(attributed["release_display_name"], expected);
+    }
 }
 
 fn event(
@@ -194,6 +291,10 @@ async fn release_api_is_paginated_conflict_safe_and_tenant_scoped(pool: sqlx::Pg
     let app = releases::router(pool.clone());
     let now = Utc::now();
     let first_id = create_release(&app, &first, &first_session, "1.0.0", now).await;
+    assert_eq!(
+        fetch_release(&app, &first, &first_session, first_id).await["display_name"],
+        "1.0.0"
+    );
     let first_diff = app
         .clone()
         .oneshot(request(
@@ -247,6 +348,23 @@ async fn release_api_is_paginated_conflict_safe_and_tenant_scoped(pool: sqlx::Pg
         .await
         .unwrap();
     assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+    for invalid_version in ["", "   "] {
+        let invalid = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                &duplicate_uri,
+                &first_session,
+                Some(serde_json::json!({"version": invalid_version, "deployed_at": now})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    }
+    let trimmed_id = create_release(&app, &first, &first_session, "  1.0.2  ", now).await;
+    let trimmed = fetch_release(&app, &first, &first_session, trimmed_id).await;
+    assert_eq!(trimmed["version"], "1.0.2");
+    assert_eq!(trimmed["display_name"], "1.0.2");
     create_release(&app, &first, &first_session, "1.0.1", now).await;
     let foreign_release_id = create_release(&app, &second, &second_session, "1.0.0", now).await;
     let foreign_baseline = app
@@ -292,9 +410,128 @@ async fn release_api_is_paginated_conflict_safe_and_tenant_scoped(pool: sqlx::Pg
         .await
         .unwrap();
     assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
-    assert_eq!(server::database::REQUIRED_MIGRATION, 19);
+    assert_eq!(server::database::REQUIRED_MIGRATION, 20);
     let columns: i64 = sqlx::query_scalar("SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND ((table_name='runtime_events' AND column_name='release_id') OR (table_name='runtime_event_group_memberships' AND column_name='release_id'))").fetch_one(&pool).await.unwrap();
     assert_eq!(columns, 2);
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn release_display_name_formats_identity_components_and_manual_versions(pool: sqlx::PgPool) {
+    let digest = hex::decode(format!("a81f4c2e{}", "00".repeat(28))).unwrap();
+    let observed: String = sqlx::query_scalar(
+        "SELECT release_display_name('payment-api','observed',NULL,$1,$2::jsonb)",
+    )
+    .bind(&digest)
+    .bind(r#"[{"category":"application"}]"#)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(observed, "payment-api · 1 image · a81f4c2e");
+
+    let multiple: String = sqlx::query_scalar(
+        "SELECT release_display_name('payment-api','observed',NULL,$1,$2::jsonb)",
+    )
+    .bind(&digest)
+    .bind(
+        r#"[{"category":"application","digest":"same"},{"category":"application","digest":"same"},{"category":"init","digest":"other"}]"#,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(multiple, "payment-api · 3 images · a81f4c2e");
+
+    let duplicate_components: String = sqlx::query_scalar(
+        "SELECT release_display_name('payment-api','observed',NULL,$1,$2::jsonb)",
+    )
+    .bind(&digest)
+    .bind(r#"[{"digest":"same"},{"digest":"same"}]"#)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(duplicate_components, "payment-api · 2 images · a81f4c2e");
+
+    let manual: String = sqlx::query_scalar(
+        "SELECT release_display_name('payment-api','manual','  1.2.3  ',NULL,NULL)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(manual, "1.2.3");
+
+    let empty = sqlx::query_scalar::<_, String>(
+        "SELECT release_display_name('payment-api','manual','   ',NULL,NULL)",
+    )
+    .fetch_one(&pool)
+    .await;
+    assert!(empty.is_err());
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn observed_release_name_tracks_application_rename_without_changing_identity(
+    pool: sqlx::PgPool,
+) {
+    let mut cfg = config("release-display-name-rename");
+    cfg.application_name = "payment-api".into();
+    let ids = bootstrap(&pool, &cfg).await.unwrap();
+    let session = owner_session(&pool, &ids).await;
+    let scope = SessionScope {
+        organization_id: ids.organization_id,
+        cluster_id: ids.cluster_id,
+    };
+    let application = ApplicationCredentialScope {
+        credential_id: Uuid::new_v4(),
+        organization_id: ids.organization_id,
+        project_id: ids.project_id,
+        application_id: ids.application_id,
+    };
+    let image_digest = "a81f4c2e".to_owned() + &"00".repeat(28);
+    persist_revision_evidence(
+        &pool,
+        scope,
+        application,
+        &revision_evidence(&image_digest, "rs-name", Utc::now()),
+    )
+    .await
+    .unwrap();
+    let release_id: Uuid = sqlx::query_scalar("SELECT id FROM releases WHERE application_id=$1")
+        .bind(ids.application_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let app = releases::router(pool.clone());
+    let before = fetch_release(&app, &ids, &session, release_id).await;
+    assert!(
+        before["display_name"]
+            .as_str()
+            .unwrap()
+            .starts_with("payment-api · 1 image · ")
+    );
+
+    sqlx::query("UPDATE applications SET name='payments' WHERE id=$1")
+        .bind(ids.application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let after = fetch_release(&app, &ids, &session, release_id).await;
+    assert!(
+        after["display_name"]
+            .as_str()
+            .unwrap()
+            .starts_with("payments · 1 image · ")
+    );
+    for field in [
+        "id",
+        "identity_digest",
+        "revision_count",
+        "active_episode_count",
+    ] {
+        assert_eq!(
+            after[field], before[field],
+            "field {field} changed after rename"
+        );
+    }
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
@@ -403,7 +640,16 @@ async fn ingestion_builds_idempotent_release_summaries_and_complete_diff(pool: s
     assert_eq!(response.status(), StatusCode::OK);
     let body = json(response).await;
     assert_eq!(body["baseline"]["id"], baseline_id.to_string());
+    assert_eq!(
+        body["baseline"]["display_name"],
+        fetch_release(&app, &ids, &session, baseline_id).await["display_name"]
+    );
+    assert_eq!(
+        body["target"]["display_name"],
+        fetch_release(&app, &ids, &session, target_id).await["display_name"]
+    );
     assert_eq!(body["baseline_selection_source"], "legacy_deployment_order");
+    assert_nested_release_names(&pool, &ids, &session, target_id).await;
     let mut classes: Vec<_> = body["items"]
         .as_array()
         .unwrap()
