@@ -43,6 +43,26 @@ async fn migration_only_is_idempotent_when_current(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn navigation_latest_observation_index_exists(pool: sqlx::PgPool) {
+    let definition: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='runtime_events' AND indexname='runtime_events_application_observed_idx'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("navigation latest-observation index exists");
+
+    for column in [
+        "organization_id",
+        "project_id",
+        "application_id",
+        "observed_at DESC",
+    ] {
+        assert!(definition.contains(column), "index must include {column}");
+    }
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn migration_only_reports_a_failed_migration(pool: sqlx::PgPool) {
     sqlx::query("UPDATE _sqlx_migrations SET success = false WHERE version = $1")
         .bind(REQUIRED_MIGRATION)
