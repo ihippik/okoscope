@@ -4,9 +4,9 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use event_model::{
-    ContainerCategory, EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, ProcessExec,
-    ProcessIdentity, ReleaseIdentity, RevisionReadinessSnapshot, RuntimeEvent,
-    WorkloadRevisionEvidence, revision_digest,
+    ContainerCategory, EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAccept,
+    NetworkAddressFamily, NetworkListen, ProcessExec, ProcessIdentity, ReleaseIdentity,
+    RevisionReadinessSnapshot, RuntimeEvent, WorkloadRevisionEvidence, revision_digest,
 };
 use server::{
     api,
@@ -219,6 +219,37 @@ fn event(
             parent_command: None,
         }),
     }
+}
+
+fn inbound_event(
+    ids: &BootstrapIds,
+    release: &str,
+    local_port: u16,
+    accepted_remote_port: Option<u16>,
+) -> RuntimeEvent {
+    let mut value = event(ids, Some(release), "/app/server", Utc::now());
+    value.payload = if let Some(remote_port) = accepted_remote_port {
+        EventPayload::NetworkAccept(
+            NetworkAccept::new(
+                NetworkAddressFamily::Ipv4,
+                "0.0.0.0".parse().unwrap(),
+                local_port,
+                "203.0.113.9".parse().unwrap(),
+                remote_port,
+            )
+            .unwrap(),
+        )
+    } else {
+        EventPayload::NetworkListen(
+            NetworkListen::new(
+                NetworkAddressFamily::Ipv4,
+                "0.0.0.0".parse().unwrap(),
+                local_port,
+            )
+            .unwrap(),
+        )
+    };
+    value
 }
 
 async fn agent(pool: &sqlx::PgPool, ids: &BootstrapIds) -> Uuid {
@@ -755,6 +786,97 @@ async fn ingestion_builds_idempotent_release_summaries_and_complete_diff(pool: s
     assert_eq!(
         json(second_page).await["items"].as_array().unwrap().len(),
         1
+    );
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn listener_release_diff_covers_all_evidence_states_and_ignores_accept_traffic(
+    pool: sqlx::PgPool,
+) {
+    let cfg = config("listener-release-diff");
+    let ids = bootstrap(&pool, &cfg).await.unwrap();
+    let session = owner_session(&pool, &ids).await;
+    let app = releases::router(pool.clone());
+    let baseline = create_release(
+        &app,
+        &ids,
+        &session,
+        "baseline",
+        Utc::now() - Duration::hours(2),
+    )
+    .await;
+    let target = create_release(
+        &app,
+        &ids,
+        &session,
+        "target",
+        Utc::now() - Duration::hours(1),
+    )
+    .await;
+    let unobserved = create_release(&app, &ids, &session, "unobserved", Utc::now()).await;
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id: agent(&pool, &ids).await,
+    };
+    let events = [
+        inbound_event(&ids, "baseline", 8080, None),
+        inbound_event(&ids, "target", 8080, None),
+        inbound_event(&ids, "baseline", 8081, None),
+        inbound_event(&ids, "target", 8082, None),
+        inbound_event(&ids, "baseline", 8080, Some(51_000)),
+        inbound_event(&ids, "target", 8080, Some(52_000)),
+    ];
+    assert_eq!(persist_batch(&pool, context, &events).await.unwrap(), 6);
+    let base = format!(
+        "/api/v1/projects/{}/applications/{}/releases",
+        ids.project_id, ids.application_id
+    );
+    let response = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            &format!("{base}/{target}/runtime-diff?baseline_id={baseline}"),
+            &session,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json(response).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    assert!(
+        items
+            .iter()
+            .all(|item| item["event_kind"] == "network.listen")
+    );
+    let mut classes: Vec<_> = items
+        .iter()
+        .map(|item| item["classification"].as_str().unwrap())
+        .collect();
+    classes.sort_unstable();
+    assert_eq!(classes, ["disappeared", "new", "unchanged"]);
+
+    let unknown = app
+        .oneshot(request(
+            "GET",
+            &format!("{base}/{unobserved}/runtime-diff?baseline_id={baseline}"),
+            &session,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), StatusCode::OK);
+    assert!(
+        json(unknown).await["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["classification"] == "unknown")
     );
 }
 

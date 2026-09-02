@@ -2,8 +2,12 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
 };
-use server::{admin_auth::AdminAuthenticator, health, web_api::WebApiConfig};
-use sha2::{Digest, Sha256};
+use server::{
+    admin_auth::AdminAuthenticator,
+    auth::{SESSION_COOKIE, SessionToken},
+    health,
+    web_api::WebApiConfig,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -31,6 +35,15 @@ fn request(method: &str, uri: &str, credential: Option<&str>, body: &str) -> Req
         builder = builder.header(header::AUTHORIZATION, format!("Bearer {credential}"));
     }
     builder.body(Body::from(body.to_owned())).unwrap()
+}
+
+fn tenant_request(method: &str, uri: &str, token: &str, body: &str) -> Request<Body> {
+    let mut request = request(method, uri, None, body);
+    request.headers_mut().insert(
+        header::COOKIE,
+        format!("{SESSION_COOKIE}={token}").parse().unwrap(),
+    );
+    request
 }
 
 fn idempotent_request(
@@ -356,21 +369,34 @@ async fn tenant_provisions_only_its_owned_hierarchy(pool: sqlx::PgPool) {
         organization_ids.push(organization_id);
     }
 
-    let tenant_token = "owned-tenant-api-credential";
-    sqlx::query("INSERT INTO api_credentials(id,organization_id,credential_hash) VALUES($1,$2,$3)")
-        .bind(Uuid::new_v4())
-        .bind(Uuid::parse_str(&organization_ids[0]).unwrap())
-        .bind(Sha256::digest(tenant_token.as_bytes()).to_vec())
+    let organization_id = Uuid::parse_str(&organization_ids[0]).unwrap();
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)")
+        .bind(user_id)
+        .bind(format!("{user_id}@example.test"))
+        .bind("x".repeat(32))
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner')",
+    )
+    .bind(organization_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let tenant_token = SessionToken::generate();
+    sqlx::query("INSERT INTO user_sessions(id,user_id,organization_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')")
+        .bind(Uuid::new_v4()).bind(user_id).bind(organization_id)
+        .bind(tenant_token.digest().as_slice()).execute(&pool).await.unwrap();
 
     let tenant_cannot_create_organization = app
         .clone()
-        .oneshot(request(
+        .oneshot(tenant_request(
             "POST",
             "/api/v1/organizations",
-            Some(tenant_token),
+            tenant_token.expose(),
             r#"{"slug":"forbidden","name":"Forbidden"}"#,
         ))
         .await
@@ -386,10 +412,10 @@ async fn tenant_provisions_only_its_owned_hierarchy(pool: sqlx::PgPool) {
 
     let owned_project = app
         .clone()
-        .oneshot(request(
+        .oneshot(tenant_request(
             "POST",
             &format!("/api/v1/organizations/{}/projects", organization_ids[0]),
-            Some(tenant_token),
+            tenant_token.expose(),
             r#"{"slug":"tenant-project","name":"Tenant Project"}"#,
         ))
         .await
@@ -398,10 +424,10 @@ async fn tenant_provisions_only_its_owned_hierarchy(pool: sqlx::PgPool) {
 
     let cross_tenant_project = app
         .clone()
-        .oneshot(request(
+        .oneshot(tenant_request(
             "POST",
             &format!("/api/v1/organizations/{}/projects", organization_ids[1]),
-            Some(tenant_token),
+            tenant_token.expose(),
             r#"{"slug":"intruder","name":"Intruder"}"#,
         ))
         .await
@@ -410,10 +436,10 @@ async fn tenant_provisions_only_its_owned_hierarchy(pool: sqlx::PgPool) {
 
     let application = app
         .clone()
-        .oneshot(request(
+        .oneshot(tenant_request(
             "POST",
             &format!("/api/v1/projects/{}/applications", project_ids[0]),
-            Some(tenant_token),
+            tenant_token.expose(),
             r#"{"slug":"tenant-app","name":"Tenant App"}"#,
         ))
         .await
@@ -431,13 +457,13 @@ async fn tenant_provisions_only_its_owned_hierarchy(pool: sqlx::PgPool) {
         };
         let response = app
             .clone()
-            .oneshot(request(
+            .oneshot(tenant_request(
                 method,
                 &format!(
                     "/api/v1/projects/{}/applications/{application_id}/credentials",
                     project_ids[0]
                 ),
-                Some(tenant_token),
+                tenant_token.expose(),
                 body,
             ))
             .await
@@ -449,13 +475,13 @@ async fn tenant_provisions_only_its_owned_hierarchy(pool: sqlx::PgPool) {
     }
     let revoked = app
         .clone()
-        .oneshot(request(
+        .oneshot(tenant_request(
             "DELETE",
             &format!(
                 "/api/v1/projects/{}/applications/{application_id}/credentials/{credential_id}",
                 project_ids[0]
             ),
-            Some(tenant_token),
+            tenant_token.expose(),
             "",
         ))
         .await
@@ -478,13 +504,13 @@ async fn tenant_provisions_only_its_owned_hierarchy(pool: sqlx::PgPool) {
         .to_owned();
     let cross_tenant_credentials = app
         .clone()
-        .oneshot(request(
+        .oneshot(tenant_request(
             "GET",
             &format!(
                 "/api/v1/projects/{}/applications/{foreign_application_id}/credentials",
                 project_ids[1]
             ),
-            Some(tenant_token),
+            tenant_token.expose(),
             "",
         ))
         .await
@@ -492,10 +518,10 @@ async fn tenant_provisions_only_its_owned_hierarchy(pool: sqlx::PgPool) {
     assert_eq!(cross_tenant_credentials.status(), StatusCode::NOT_FOUND);
 
     let cross_tenant_application = app
-        .oneshot(request(
+        .oneshot(tenant_request(
             "POST",
             &format!("/api/v1/projects/{}/applications", project_ids[1]),
-            Some(tenant_token),
+            tenant_token.expose(),
             r#"{"slug":"intruder","name":"Intruder"}"#,
         ))
         .await

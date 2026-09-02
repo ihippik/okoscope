@@ -72,3 +72,34 @@ LIMIT 100;
 ```
 
 Rollback is configuration-first: disable `accept` and `listen`, then roll back the agent if necessary. The additive server remains compatible with older agents and can retain already accepted evidence.
+
+## Canary evidence and acceptance thresholds
+
+The `aliens` canary was rechecked on 2026-09-02. Agents on Ubuntu kernels
+`5.15.0-138`, `5.15.0-139`, and `6.8.0-137` attached the required hooks and
+advertised both inbound capabilities. The selected `payment-api` workload on
+`6.8.0-137` produced an IPv6 wildcard listener, accepted-connection evidence
+with trusted workload/process attribution, and an IPv4 loopback listener bound
+to port zero whose effective kernel-assigned port was `35919`. Multiple accepted
+remote ports converged on one group per local endpoint and remote endpoints were
+retained only in raw occurrences.
+
+The canary also exposed a pre-filter accounting defect: ordinary TCP state
+transitions with a zero local port incremented `inbound_decode_failed`. The
+transition classifier now ignores irrelevant states before endpoint validation.
+Do not expand a deployment until a 15-minute steady-state window meets all of
+these thresholds:
+
+- `inbound_decode_failed`, `inbound_attribution_failed`,
+  `inbound_unsupported_family`, and `inbound_kernel_lost` have zero delta;
+- `inbound_correlation_miss` has zero delta under ordinary traffic and remains
+  below 0.1% of accepted events during a stress run;
+- `inbound_rate_limited` is zero below the configured limit and matches the
+  expected excess above it;
+- raw events, group occurrence totals, and inventory occurrence totals reconcile;
+- the number of accepted-connection groups and inbound inventory items remains
+  equal to local endpoint cardinality, independent of remote client cardinality.
+
+If any threshold fails, disable `accept` first, then `listen`, verify that the
+capabilities disappear after the agent rollout, and retain the additive server
+schema while the agent is rolled back.

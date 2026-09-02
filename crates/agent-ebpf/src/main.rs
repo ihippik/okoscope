@@ -16,11 +16,12 @@ use agent_ebpf_common::{
     FILE_OPERATION_DELETE, FILE_OPERATION_MODIFY, FILE_OPERATION_OPEN, FILE_OPERATION_RENAME,
     FILE_PATH_LEN, FileDescriptorKey, FileKernelEvent, INBOUND_COUNTER_ATTRIBUTION_FAILED,
     INBOUND_COUNTER_CORRELATION_MISS, INBOUND_COUNTER_COUNT, INBOUND_COUNTER_DECODE_FAILED,
-    INBOUND_COUNTER_KERNEL_LOST, INBOUND_COUNTER_UNSUPPORTED_FAMILY, InboundEndpoints,
-    InboundKernelEvent, KernelEvent, NETWORK_ADDRESS_LEN, NETWORK_COUNTER_CAPACITY,
+    INBOUND_COUNTER_KERNEL_LOST, INBOUND_COUNTER_UNSUPPORTED_FAMILY,
+    INBOUND_PENDING_ACCEPT_CAPACITY, INBOUND_RING_BYTES, InboundEndpoints, InboundKernelEvent,
+    InboundTransition, KernelEvent, NETWORK_ADDRESS_LEN, NETWORK_COUNTER_CAPACITY,
     NETWORK_COUNTER_CORRELATION_MISS, NETWORK_COUNTER_COUNT, NETWORK_COUNTER_DECODE_FAILED,
     NETWORK_COUNTER_KERNEL_LOST, NETWORK_COUNTER_UNSUPPORTED_FAMILY, PendingConnect,
-    PendingFileOperation, TrackedFileDescriptor,
+    PendingFileOperation, TrackedFileDescriptor, classify_inbound_transition,
 };
 use aya_ebpf::{
     EbpfContext,
@@ -48,11 +49,11 @@ static mut NETWORK_COUNTERS: PerCpuArray<u64> =
     PerCpuArray::with_max_entries(NETWORK_COUNTER_COUNT, 0);
 
 #[map]
-static mut INBOUND_EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
+static mut INBOUND_EVENTS: RingBuf = RingBuf::with_byte_size(INBOUND_RING_BYTES, 0);
 
 #[map]
 static mut PENDING_ACCEPTS: LruHashMap<u64, InboundEndpoints> =
-    LruHashMap::with_max_entries(16_384, 0);
+    LruHashMap::with_max_entries(INBOUND_PENDING_ACCEPT_CAPACITY, 0);
 
 #[map]
 static mut INBOUND_COUNTERS: PerCpuArray<u64> =
@@ -94,10 +95,6 @@ const AF_INET6_U32: u32 = 10;
 const IPPROTO_TCP: u8 = 6;
 const IPPROTO_UDP: u8 = 17;
 const DNS_PORT: u16 = 53;
-const TCP_ESTABLISHED: i32 = 1;
-const TCP_SYN_RECV: i32 = 3;
-const TCP_LISTEN: i32 = 10;
-const TCP_NEW_SYN_RECV: i32 = 12;
 const O_CREAT: u64 = 0o100;
 const O_EXCL: u64 = 0o200;
 const O_TRUNC: u64 = 0o1000;
@@ -846,10 +843,18 @@ fn try_inet_sock_set_state(ctx: &TracePointContext) -> Result<(), u32> {
     let remote_port: u16 = unsafe { ctx.read_at(26).map_err(|_| 1_u32)? };
     let family: u16 = unsafe { ctx.read_at(28).map_err(|_| 1_u32)? };
     let protocol: u16 = unsafe { ctx.read_at(30).map_err(|_| 1_u32)? };
-    if protocol != u16::from(IPPROTO_TCP) {
+    let transition = classify_inbound_transition(
+        protocol,
+        skaddr,
+        old_state,
+        new_state,
+        local_port,
+        remote_port,
+    );
+    if transition == InboundTransition::Ignore {
         return Ok(());
     }
-    if local_port == 0 || skaddr == 0 {
+    if transition == InboundTransition::Invalid {
         increment_inbound_counter(INBOUND_COUNTER_DECODE_FAILED);
         return Ok(());
     }
@@ -882,15 +887,10 @@ fn try_inet_sock_set_state(ctx: &TracePointContext) -> Result<(), u32> {
         address_family,
         padding: [0; 3],
     };
-    if new_state == TCP_LISTEN {
+    if transition == InboundTransition::Listen {
         return emit_inbound(EVENT_KIND_NETWORK_LISTEN, &endpoints);
     }
-    if new_state == TCP_ESTABLISHED && (old_state == TCP_SYN_RECV || old_state == TCP_NEW_SYN_RECV)
-    {
-        if remote_port == 0 {
-            increment_inbound_counter(INBOUND_COUNTER_DECODE_FAILED);
-            return Ok(());
-        }
+    if transition == InboundTransition::PendingAccept {
         let _ = unsafe { PENDING_ACCEPTS.insert(&skaddr, &endpoints, 0) };
     }
     Ok(())

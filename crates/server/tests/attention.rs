@@ -1,6 +1,6 @@
 use axum::{
     body::{Body, to_bytes},
-    http::{Request, StatusCode, header::AUTHORIZATION},
+    http::{Request, StatusCode, header::COOKIE},
 };
 use chrono::{Duration, Utc};
 use event_model::{
@@ -8,7 +8,7 @@ use event_model::{
     RuntimeEvent,
 };
 use server::{
-    auth::SessionScope,
+    auth::{SESSION_COOKIE, SessionScope, SessionToken},
     bootstrap::{BootstrapConfig, BootstrapIds, bootstrap},
     health,
     ingestion::{IngestionContext, persist_batch},
@@ -53,9 +53,37 @@ fn notifications(pool: sqlx::PgPool) -> NotificationService {
 fn request(uri: &str, credential: Option<&str>) -> Request<Body> {
     let mut b = Request::builder().uri(uri);
     if let Some(c) = credential {
-        b = b.header(AUTHORIZATION, format!("Bearer {c}"));
+        b = b.header(COOKIE, format!("{SESSION_COOKIE}={c}"));
     }
     b.body(Body::empty()).unwrap()
+}
+async fn owner_session(pool: &sqlx::PgPool, ids: &BootstrapIds) -> String {
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)")
+        .bind(user_id)
+        .bind(format!("{user_id}@example.test"))
+        .bind(server::auth::hash_password("attention-test-password").unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner')",
+    )
+    .bind(ids.organization_id)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let token = SessionToken::generate();
+    sqlx::query("INSERT INTO user_sessions(id,user_id,organization_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')")
+        .bind(Uuid::new_v4())
+        .bind(user_id)
+        .bind(ids.organization_id)
+        .bind(token.digest().as_slice())
+        .execute(pool)
+        .await
+        .unwrap();
+    token.expose().to_owned()
 }
 async fn json(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
@@ -118,6 +146,7 @@ fn event(
 async fn summaries_are_complete_ranked_and_tenant_isolated(pool: sqlx::PgPool) {
     let first_cfg = config("attention-first");
     let first = bootstrap(&pool, &first_cfg).await.unwrap();
+    let first_session = owner_session(&pool, &first).await;
     let second_cfg = config("attention-second");
     let second = bootstrap(&pool, &second_cfg).await.unwrap();
     let now = Utc::now();
@@ -170,7 +199,7 @@ async fn summaries_are_complete_ranked_and_tenant_isolated(pool: sqlx::PgPool) {
         .clone()
         .oneshot(request(
             "/api/v1/attention-summary?limit=1&changed_application_limit=1&recommendation_limit=5",
-            Some(&first_cfg.api_credential),
+            Some(&first_session),
         ))
         .await
         .unwrap();
@@ -219,7 +248,7 @@ async fn summaries_are_complete_ranked_and_tenant_isolated(pool: sqlx::PgPool) {
     );
     let application = app
         .clone()
-        .oneshot(request(&application_uri, Some(&first_cfg.api_credential)))
+        .oneshot(request(&application_uri, Some(&first_session)))
         .await
         .unwrap();
     assert_eq!(application.status(), StatusCode::OK);
@@ -250,7 +279,7 @@ async fn summaries_are_complete_ranked_and_tenant_isolated(pool: sqlx::PgPool) {
         .clone()
         .oneshot(request(
             &format!("{application_uri}&window=7d&limit=50&recommendation_limit=10"),
-            Some(&first_cfg.api_credential),
+            Some(&first_session),
         ))
         .await
         .unwrap();
@@ -263,7 +292,7 @@ async fn summaries_are_complete_ranked_and_tenant_isolated(pool: sqlx::PgPool) {
     ] {
         assert_eq!(
             app.clone()
-                .oneshot(request(invalid, Some(&first_cfg.api_credential)))
+                .oneshot(request(invalid, Some(&first_session)))
                 .await
                 .unwrap()
                 .status(),
@@ -275,7 +304,7 @@ async fn summaries_are_complete_ranked_and_tenant_isolated(pool: sqlx::PgPool) {
         second.project_id, first.application_id
     );
     assert_eq!(
-        app.oneshot(request(&mismatch, Some(&first_cfg.api_credential)))
+        app.oneshot(request(&mismatch, Some(&first_session)))
             .await
             .unwrap()
             .status(),
@@ -288,6 +317,7 @@ async fn summaries_are_complete_ranked_and_tenant_isolated(pool: sqlx::PgPool) {
 async fn empty_and_baseline_less_states_are_explicit(pool: sqlx::PgPool) {
     let cfg = config("attention-empty");
     let ids = bootstrap(&pool, &cfg).await.unwrap();
+    let session = owner_session(&pool, &ids).await;
     let app = health::router(
         pool.clone(),
         true,
@@ -300,7 +330,7 @@ async fn empty_and_baseline_less_states_are_explicit(pool: sqlx::PgPool) {
     );
     let no_release = app
         .clone()
-        .oneshot(request(&uri, Some(&cfg.api_credential)))
+        .oneshot(request(&uri, Some(&session)))
         .await
         .unwrap();
     assert_eq!(no_release.status(), StatusCode::OK);
@@ -308,7 +338,7 @@ async fn empty_and_baseline_less_states_are_explicit(pool: sqlx::PgPool) {
     release(&pool, &ids, "1.0", Utc::now()).await;
     let response = app
         .clone()
-        .oneshot(request(&uri, Some(&cfg.api_credential)))
+        .oneshot(request(&uri, Some(&session)))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -321,10 +351,7 @@ async fn empty_and_baseline_less_states_are_explicit(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let failed = app
-        .oneshot(request(
-            "/api/v1/attention-summary",
-            Some(&cfg.api_credential),
-        ))
+        .oneshot(request("/api/v1/attention-summary", Some(&session)))
         .await
         .unwrap();
     assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -338,6 +365,7 @@ async fn empty_and_baseline_less_states_are_explicit(pool: sqlx::PgPool) {
 async fn organization_response_and_query_plan_remain_bounded(pool: sqlx::PgPool) {
     let cfg = config("attention-performance");
     let ids = bootstrap(&pool, &cfg).await.unwrap();
+    let session = owner_session(&pool, &ids).await;
     for index in 0..100 {
         sqlx::query("INSERT INTO projects(id,organization_id,slug,name) VALUES($1,$2,$3,$4)")
             .bind(Uuid::new_v4())
@@ -363,7 +391,7 @@ async fn organization_response_and_query_plan_remain_bounded(pool: sqlx::PgPool)
     let response = app
         .oneshot(request(
             "/api/v1/attention-summary?limit=5&changed_application_limit=3&recommendation_limit=4",
-            Some(&cfg.api_credential),
+            Some(&session),
         ))
         .await
         .unwrap();
@@ -375,5 +403,5 @@ async fn organization_response_and_query_plan_remain_bounded(pool: sqlx::PgPool)
     assert_eq!(body["recommendations"].as_array().unwrap().len(), 4);
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
     assert_eq!(server::attention::ORGANIZATION_ATTENTION_QUERY_BUDGET, 9);
-    assert_eq!(server::attention::APPLICATION_ATTENTION_QUERY_BUDGET, 8);
+    assert_eq!(server::attention::APPLICATION_ATTENTION_QUERY_BUDGET, 9);
 }

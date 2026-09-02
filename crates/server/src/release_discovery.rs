@@ -96,7 +96,7 @@ pub(crate) async fn resolve_observed_release(
 ) -> Result<Uuid, sqlx::Error> {
     let version = format!("sha256:{}", hex::encode(identity.digest));
     sqlx::query_scalar(
-        "INSERT INTO releases(id,organization_id,project_id,application_id,version,deployed_at,source,identity_version,identity_digest,identity_components) VALUES($1,$2,$3,$4,$5,$6,'observed',$7,$8,$9) ON CONFLICT(organization_id,project_id,application_id,identity_version,identity_digest) WHERE source='observed' DO UPDATE SET identity_components=EXCLUDED.identity_components RETURNING id",
+        "INSERT INTO releases(id,organization_id,project_id,application_id,version,deployed_at,source,identity_version,identity_digest,identity_components) VALUES($1,$2,$3,$4,$5,$6,'observed',$7,$8,$9) ON CONFLICT(application_id,version) DO UPDATE SET identity_components=EXCLUDED.identity_components WHERE releases.organization_id=EXCLUDED.organization_id AND releases.project_id=EXCLUDED.project_id AND releases.source='observed' AND releases.identity_version=EXCLUDED.identity_version AND releases.identity_digest=EXCLUDED.identity_digest RETURNING id",
     ).bind(Uuid::new_v4()).bind(organization_id).bind(project_id)
       .bind(application_id).bind(version).bind(observed_at)
       .bind(i16::try_from(identity.version).unwrap_or(i16::MAX)).bind(identity.digest.as_slice())

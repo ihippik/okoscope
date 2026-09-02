@@ -705,6 +705,35 @@ mod tests {
             panic!("expected listener");
         };
         assert_eq!(listener.local_port, 8080);
+
+        let mut ipv6 = decoded;
+        ipv6.address_family = agent_ebpf_common::ADDRESS_FAMILY_IPV6;
+        ipv6.local_address = Ipv6Addr::UNSPECIFIED.octets();
+        ipv6.remote_address = Ipv6Addr::LOCALHOST.octets();
+        let EventPayload::NetworkAccept(ipv6) = inbound_payload(&ipv6).unwrap() else {
+            panic!("expected IPv6 accepted connection");
+        };
+        assert_eq!(ipv6.local_address, IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+        assert_eq!(ipv6.remote_address, IpAddr::V6(Ipv6Addr::LOCALHOST));
+
+        let mut malformed = decoded;
+        malformed.address_family = 99;
+        assert_eq!(
+            inbound_payload(&malformed),
+            Err(NetworkDecodeError::UnsupportedFamily(99))
+        );
+        malformed = decoded;
+        malformed.event_kind = 99;
+        assert_eq!(
+            inbound_payload(&malformed),
+            Err(NetworkDecodeError::UnsupportedInboundKind(99))
+        );
+        malformed = decoded;
+        malformed.remote_port = 0;
+        assert!(matches!(
+            inbound_payload(&malformed),
+            Err(NetworkDecodeError::InvalidInbound(_))
+        ));
     }
 
     #[test]

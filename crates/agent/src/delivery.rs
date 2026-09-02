@@ -134,6 +134,19 @@ mod tests {
     };
     use uuid::Uuid;
 
+    #[cfg(unix)]
+    fn resident_kib() -> u64 {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
     fn event() -> RuntimeEvent {
         RuntimeEvent {
             id: Uuid::new_v4(),
@@ -165,6 +178,35 @@ mod tests {
                 parent_command: None,
             }),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "acceptance benchmark; set OKOSCOPE_BENCHMARK_STREAMS"]
+    fn application_queue_memory_is_bounded() {
+        let streams = std::env::var("OKOSCOPE_BENCHMARK_STREAMS")
+            .unwrap_or_else(|_| "32".into())
+            .parse::<usize>()
+            .unwrap();
+        let capacity = 4096;
+        let before = resident_kib();
+        let counters = Counters::default();
+        let mut buffers: Vec<_> = (0..streams)
+            .map(|_| EventBuffer::new(capacity, 256))
+            .collect();
+        for buffer in &mut buffers {
+            for _ in 0..capacity {
+                assert!(buffer.push(event(), &counters));
+            }
+            assert!(!buffer.push(event(), &counters));
+        }
+        let after = resident_kib();
+        println!(
+            "application queue benchmark: streams={streams} capacity={capacity} queued={} rss_delta_kib={}",
+            streams * capacity,
+            after.saturating_sub(before)
+        );
+        assert_eq!(counters.snapshot().capacity_dropped, streams as u64);
     }
 
     #[test]

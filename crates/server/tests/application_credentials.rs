@@ -5,6 +5,8 @@ use server::{
 };
 use uuid::Uuid;
 
+use std::time::Instant;
+
 fn config(name: &str) -> BootstrapConfig {
     BootstrapConfig {
         organization_id: Uuid::new_v4(),
@@ -169,4 +171,47 @@ async fn credential_name_and_tenant_scope_are_enforced(pool: sqlx::PgPool) {
         .is_err()
     );
     cross_tenant_tx.rollback().await.unwrap();
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+#[ignore = "acceptance benchmark requiring PostgreSQL"]
+async fn credential_check_overhead_is_bounded(pool: sqlx::PgPool) {
+    let ids = bootstrap(&pool, &config("credential-check-benchmark"))
+        .await
+        .unwrap();
+    let mut tokens = Vec::with_capacity(32);
+    for index in 0..32 {
+        let mut tx = pool.begin().await.unwrap();
+        let credential = issue(
+            &mut tx,
+            ids.organization_id,
+            ids.project_id,
+            ids.application_id,
+            &format!("benchmark-{index}"),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        tokens.push(credential.token().to_owned());
+    }
+
+    for stream_count in [1_usize, 8, 16, 32] {
+        let started = Instant::now();
+        let checks = 1_000;
+        for index in 0..checks {
+            let scope = authenticate(&pool, &tokens[index % stream_count])
+                .await
+                .unwrap()
+                .unwrap();
+            let mut tx = pool.begin().await.unwrap();
+            assert!(remains_active(&mut tx, scope).await.unwrap());
+            tx.rollback().await.unwrap();
+        }
+        let elapsed = started.elapsed();
+        println!(
+            "credential check benchmark: streams={stream_count} checks={checks} elapsed_ms={} average_us={}",
+            elapsed.as_millis(),
+            elapsed.as_micros() / checks as u128
+        );
+    }
 }

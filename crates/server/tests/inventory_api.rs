@@ -1,16 +1,17 @@
 use axum::{
     body::{Body, to_bytes},
-    http::{Request, StatusCode, header::AUTHORIZATION},
+    http::{Request, StatusCode, header::COOKIE},
 };
 use chrono::{Duration, Utc};
 use event_model::{
     ContainerRestart, ContainerTermination, DnsDirection, DnsName, DnsQueryType, DnsTransport,
-    EVENT_SCHEMA_VERSION, EventPayload, GenerationCorrelation, KubernetesAttribution,
-    NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery, ProcessExec,
-    ProcessExit, ProcessIdentity, ProcessTermination, RuntimeEvent, SyscallEvent,
+    EVENT_SCHEMA_VERSION, EventPayload, FileActivityPath, FileModify, GenerationCorrelation,
+    KubernetesAttribution, NetworkAccept, NetworkAddressFamily, NetworkConnect,
+    NetworkConnectOutcome, NetworkDnsQuery, NetworkListen, ProcessExec, ProcessExit,
+    ProcessIdentity, ProcessTermination, RuntimeEvent, SyscallEvent,
 };
 use server::{
-    auth::SessionScope,
+    auth::{SESSION_COOKIE, SessionScope, SessionToken},
     bootstrap::{BootstrapConfig, BootstrapIds, bootstrap},
     ingestion::{IngestionContext, persist_batch},
     inventory_api,
@@ -70,9 +71,38 @@ fn event(ids: &BootstrapIds, payload: EventPayload, release: Option<&str>) -> Ru
 fn request(uri: &str, credential: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
-        .header(AUTHORIZATION, format!("Bearer {credential}"))
+        .header(COOKIE, format!("{SESSION_COOKIE}={credential}"))
         .body(Body::empty())
         .unwrap()
+}
+
+async fn owner_session(pool: &sqlx::PgPool, ids: &BootstrapIds) -> String {
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)")
+        .bind(user_id)
+        .bind(format!("{user_id}@example.test"))
+        .bind(server::auth::hash_password("inventory-test-password").unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner')",
+    )
+    .bind(ids.organization_id)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let token = SessionToken::generate();
+    sqlx::query("INSERT INTO user_sessions(id,user_id,organization_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')")
+        .bind(Uuid::new_v4())
+        .bind(user_id)
+        .bind(ids.organization_id)
+        .bind(token.digest().as_slice())
+        .execute(pool)
+        .await
+        .unwrap();
+    token.expose().to_owned()
 }
 
 async fn json(response: axum::response::Response) -> serde_json::Value {
@@ -106,10 +136,12 @@ async fn release(pool: &sqlx::PgPool, ids: &BootstrapIds, version: &str, age_day
 async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isolation(
     pool: sqlx::PgPool,
 ) {
-    let first_config = config("inventory-api-first");
+    let mut first_config = config("inventory-api-first");
     let first = bootstrap(&pool, &first_config).await.unwrap();
-    let second_config = config("inventory-api-second");
+    first_config.api_credential = owner_session(&pool, &first).await;
+    let mut second_config = config("inventory-api-second");
     let second = bootstrap(&pool, &second_config).await.unwrap();
+    second_config.api_credential = owner_session(&pool, &second).await;
     let observed_release = release(&pool, &first, "v1", 3).await;
     let other_evidence_release = release(&pool, &first, "v2", 2).await;
     let unknown_release = release(&pool, &first, "v3", 1).await;
@@ -187,6 +219,35 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         ),
         event(
             &first,
+            EventPayload::NetworkListen(
+                NetworkListen::new(NetworkAddressFamily::Ipv4, "0.0.0.0".parse().unwrap(), 8080)
+                    .unwrap(),
+            ),
+            Some("v1"),
+        ),
+        event(
+            &first,
+            EventPayload::NetworkAccept(
+                NetworkAccept::new(
+                    NetworkAddressFamily::Ipv4,
+                    "0.0.0.0".parse().unwrap(),
+                    8080,
+                    "203.0.113.9".parse().unwrap(),
+                    51_234,
+                )
+                .unwrap(),
+            ),
+            Some("v1"),
+        ),
+        event(
+            &first,
+            EventPayload::FileModify(FileModify {
+                path: FileActivityPath::new("/app/data/state.json").unwrap(),
+            }),
+            Some("v1"),
+        ),
+        event(
+            &first,
             EventPayload::Syscall(SyscallEvent {
                 name: "epoll_wait".into(),
             }),
@@ -231,7 +292,7 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         .unwrap();
     assert_eq!(summary_response.status(), StatusCode::OK);
     let summary = json(summary_response).await;
-    assert_eq!(summary["item_count"], 9);
+    assert_eq!(summary["item_count"], 11);
     assert_summary_count_invariants(&summary);
     assert_eq!(summary["kinds"].as_array().unwrap().len(), 7);
     assert_eq!(
@@ -251,6 +312,23 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
             "syscall",
         ]
     );
+
+    let inbound = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}?kind=inbound_endpoint&limit=1"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(inbound.status(), StatusCode::OK);
+    let inbound = json(inbound).await;
+    let endpoint = &inbound["items"][0];
+    assert_eq!(endpoint["semantic_summary"]["local_address"], "0.0.0.0");
+    assert_eq!(endpoint["semantic_summary"]["local_port"], 8080);
+    assert_eq!(endpoint["semantic_summary"]["listener_observed"], true);
+    assert_eq!(endpoint["semantic_summary"]["accept_observed"], true);
+    assert!(endpoint["semantic_summary"].get("remote_address").is_none());
 
     for kind in ["process", "destination", "domain", "syscall", "lifecycle"] {
         let response = app
@@ -544,8 +622,9 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn inventory_summary_normalizes_legacy_lifecycle_kinds(pool: sqlx::PgPool) {
-    let test_config = config("inventory-summary-legacy-lifecycle");
+    let mut test_config = config("inventory-summary-legacy-lifecycle");
     let ids = bootstrap(&pool, &test_config).await.unwrap();
+    test_config.api_credential = owner_session(&pool, &ids).await;
     let observed_at = Utc::now();
     for (index, (kind, occurrence_count)) in [
         ("process_exit", 2_i64),

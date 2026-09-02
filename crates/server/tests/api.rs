@@ -1,16 +1,16 @@
 use axum::{
     body::{Body, to_bytes},
-    http::{Method, Request, StatusCode, header::AUTHORIZATION},
+    http::{Method, Request, StatusCode, header::COOKIE},
 };
 use chrono::Utc;
 use event_model::{
-    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAddressFamily,
+    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAccept, NetworkAddressFamily,
     NetworkConnect, NetworkConnectOutcome, ProcessExec, ProcessIdentity, RuntimeEvent,
 };
 use server::{
     api,
-    auth::SessionScope,
-    bootstrap::{BootstrapConfig, bootstrap},
+    auth::{SESSION_COOKIE, SessionScope, SessionToken},
+    bootstrap::{BootstrapConfig, BootstrapIds, bootstrap},
     ingestion::{IngestionContext, persist_batch},
 };
 use tower::ServiceExt;
@@ -68,13 +68,39 @@ fn event(project_id: Uuid, application_id: Uuid) -> RuntimeEvent {
     }
 }
 
+async fn owner_session(pool: &sqlx::PgPool, ids: &BootstrapIds) -> String {
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)")
+        .bind(user_id)
+        .bind(format!("{user_id}@example.test"))
+        .bind(server::auth::hash_password("api-test-password").unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner')",
+    )
+    .bind(ids.organization_id)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let token = SessionToken::generate();
+    sqlx::query("INSERT INTO user_sessions(id,user_id,organization_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')")
+        .bind(Uuid::new_v4()).bind(user_id).bind(ids.organization_id)
+        .bind(token.digest().as_slice()).execute(pool).await.unwrap();
+    token.expose().to_owned()
+}
+
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx::PgPool) {
-    let first_config = config("first-api");
+    let mut first_config = config("first-api");
     let first = bootstrap(&pool, &first_config).await.unwrap();
-    let second_config = config("second-api");
+    first_config.api_credential = owner_session(&pool, &first).await;
+    let mut second_config = config("second-api");
     let second = bootstrap(&pool, &second_config).await.unwrap();
+    second_config.api_credential = owner_session(&pool, &second).await;
     let release_id = Uuid::new_v4();
     sqlx::query("INSERT INTO releases (id,organization_id,project_id,application_id,version,deployed_at) VALUES ($1,$2,$3,$4,'v1',now())")
         .bind(release_id)
@@ -133,8 +159,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
             Request::builder()
                 .uri(list_uri)
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", first_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", first_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -157,8 +183,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
             Request::builder()
                 .uri(format!("/api/v1/runtime-groups/{group_id}"))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", first_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", first_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -187,8 +213,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
             Request::builder()
                 .uri(format!("/api/v1/runtime-groups/{group_id}"))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", first_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", first_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -219,8 +245,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
             Request::builder()
                 .uri(format!("/api/v1/runtime-groups/{group_id}"))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", first_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", first_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -252,8 +278,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
                     "/api/v1/runtime-groups/{group_id}/occurrences?limit=1"
                 ))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", first_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", first_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -279,8 +305,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
                     .method(Method::POST)
                     .uri(format!("/api/v1/runtime-groups/{group_id}/{action}"))
                     .header(
-                        AUTHORIZATION,
-                        format!("Bearer {}", first_config.api_credential),
+                        COOKIE,
+                        format!("{SESSION_COOKIE}={}", first_config.api_credential),
                     )
                     .body(Body::empty())
                     .unwrap(),
@@ -303,8 +329,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
                 .method(Method::POST)
                 .uri(format!("/api/v1/runtime-groups/{group_id}/reopen"))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", first_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", first_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -324,8 +350,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
                 .method(Method::POST)
                 .uri(format!("/api/v1/runtime-groups/{group_id}/reopen"))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", first_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", first_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -339,8 +365,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
             .method(Method::POST)
             .uri(format!("/api/v1/runtime-groups/{group_id}/acknowledge"))
             .header(
-                AUTHORIZATION,
-                format!("Bearer {}", first_config.api_credential),
+                COOKIE,
+                format!("{SESSION_COOKIE}={}", first_config.api_credential),
             )
             .body(Body::empty())
             .unwrap()
@@ -359,8 +385,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
                 .method(Method::POST)
                 .uri(format!("/api/v1/runtime-groups/{group_id}/resolve"))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", first_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", first_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -408,8 +434,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
                 .method(Method::POST)
                 .uri(format!("/api/v1/runtime-groups/{group_id}/acknowledge"))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", first_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", first_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -425,8 +451,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
                 .method(Method::POST)
                 .uri(format!("/api/v1/runtime-groups/{group_id}/reopen"))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", second_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", second_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -440,7 +466,7 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
             .fetch_one(&pool)
             .await
             .unwrap(),
-        1
+        0
     );
 
     let hidden = app
@@ -448,8 +474,8 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
             Request::builder()
                 .uri(format!("/api/v1/runtime-groups/{group_id}"))
                 .header(
-                    AUTHORIZATION,
-                    format!("Bearer {}", second_config.api_credential),
+                    COOKIE,
+                    format!("{SESSION_COOKIE}={}", second_config.api_credential),
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -458,4 +484,93 @@ async fn list_and_detail_are_authenticated_paginated_and_tenant_safe(pool: sqlx:
         .unwrap();
     assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
     assert_ne!(first.organization_id, second.organization_id);
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn accepted_connection_summary_is_safe_and_occurrences_are_bounded(pool: sqlx::PgPool) {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let cfg = config("inbound-api");
+    let ids = bootstrap(&pool, &cfg).await.unwrap();
+    let session = owner_session(&pool, &ids).await;
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,'node-1','test')")
+        .bind(agent_id).bind(ids.organization_id).bind(ids.cluster_id)
+        .execute(&pool).await.unwrap();
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id,
+    };
+    let mut first = event(ids.project_id, ids.application_id);
+    first.payload = EventPayload::NetworkAccept(
+        NetworkAccept::new(
+            NetworkAddressFamily::Ipv4,
+            "0.0.0.0".parse().unwrap(),
+            8443,
+            "203.0.113.7".parse().unwrap(),
+            51_000,
+        )
+        .unwrap(),
+    );
+    let mut second = first.clone();
+    second.id = Uuid::new_v4();
+    second.payload = EventPayload::NetworkAccept(
+        NetworkAccept::new(
+            NetworkAddressFamily::Ipv4,
+            "0.0.0.0".parse().unwrap(),
+            8443,
+            "198.51.100.8".parse().unwrap(),
+            52_000,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        persist_batch(&pool, context, &[first, second])
+            .await
+            .unwrap(),
+        2
+    );
+    let group_id: Uuid = sqlx::query_scalar("SELECT id FROM runtime_event_groups")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let app = api::router(pool.clone());
+    let list = app.clone().oneshot(
+        Request::builder()
+            .uri(format!("/api/v1/runtime-groups?project_id={}&application_id={}&event_kind=network.accept", ids.project_id, ids.application_id))
+            .header(COOKIE, format!("{SESSION_COOKIE}={session}"))
+            .body(Body::empty()).unwrap(),
+    ).await.unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let list: serde_json::Value =
+        serde_json::from_slice(&to_bytes(list.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let summary = &list["items"][0]["semantic_summary"];
+    assert_eq!(summary["local_address"], "0.0.0.0");
+    assert_eq!(summary["local_port"], 8443);
+    assert!(summary.get("remote_address").is_none());
+    assert!(summary.get("remote_port").is_none());
+
+    let occurrences = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/runtime-groups/{group_id}/occurrences?limit=1"
+                ))
+                .header(COOKIE, format!("{SESSION_COOKIE}={session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = occurrences.status();
+    let occurrences: serde_json::Value =
+        serde_json::from_slice(&to_bytes(occurrences.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert_eq!(status, StatusCode::OK, "{occurrences}");
+    assert_eq!(occurrences["items"].as_array().unwrap().len(), 1);
+    assert!(occurrences["next_cursor"].is_string());
+    assert!(occurrences["items"][0]["payload"]["data"]["remote_address"].is_string());
 }

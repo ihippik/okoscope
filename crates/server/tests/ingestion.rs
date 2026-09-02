@@ -2,8 +2,9 @@ use chrono::{Duration, Utc};
 use event_model::{
     ContainerCategory, DnsAddressAnswer, DnsContext, DnsDirection, DnsName, DnsQueryType,
     DnsResponseCode, DnsTransport, EVENT_SCHEMA_VERSION, EventPayload, FileActivityPath,
-    FileModify, KubernetesAttribution, NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome,
-    NetworkDnsResponse, ProcessExec, ProcessIdentity, ReleaseIdentity, RuntimeEvent, SyscallEvent,
+    FileModify, KubernetesAttribution, NetworkAccept, NetworkAddressFamily, NetworkConnect,
+    NetworkConnectOutcome, NetworkDnsResponse, NetworkListen, ProcessExec, ProcessIdentity,
+    ReleaseIdentity, RuntimeEvent, SyscallEvent,
 };
 use server::{
     application_credentials::{issue, revoke},
@@ -904,6 +905,153 @@ async fn network_events_persist_canonically_replay_and_share_safe_group(pool: sq
             "dns_context": dns_context
         })
     );
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn inbound_events_are_transactional_replay_safe_and_group_only_by_local_endpoint(
+    pool: sqlx::PgPool,
+) {
+    let ids = bootstrap(&pool, &config("inbound-network-storage"))
+        .await
+        .unwrap();
+    let foreign = bootstrap(&pool, &config("inbound-network-foreign"))
+        .await
+        .unwrap();
+    let release_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO releases(id,organization_id,project_id,application_id,version,deployed_at) VALUES($1,$2,$3,$4,'v1',now())")
+        .bind(release_id).bind(ids.organization_id).bind(ids.project_id).bind(ids.application_id)
+        .execute(&pool).await.unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,'node-1','test')")
+        .bind(agent_id).bind(ids.organization_id).bind(ids.cluster_id)
+        .execute(&pool).await.unwrap();
+    let context = IngestionContext {
+        scope: SessionScope {
+            organization_id: ids.organization_id,
+            cluster_id: ids.cluster_id,
+        },
+        agent_id,
+    };
+    let mut listener = event(ids.project_id, ids.application_id);
+    listener.attribution.release = Some("v1".into());
+    listener.payload = EventPayload::NetworkListen(
+        NetworkListen::new(NetworkAddressFamily::Ipv6, "::".parse().unwrap(), 8080).unwrap(),
+    );
+    let mut first_accept = listener.clone();
+    first_accept.id = Uuid::new_v4();
+    first_accept.payload = EventPayload::NetworkAccept(
+        NetworkAccept::new(
+            NetworkAddressFamily::Ipv6,
+            "::".parse().unwrap(),
+            8080,
+            "2001:db8::1".parse().unwrap(),
+            51_000,
+        )
+        .unwrap(),
+    );
+    let mut second_accept = first_accept.clone();
+    second_accept.id = Uuid::new_v4();
+    second_accept.observed_at -= Duration::minutes(5);
+    second_accept.payload = EventPayload::NetworkAccept(
+        NetworkAccept::new(
+            NetworkAddressFamily::Ipv6,
+            "::".parse().unwrap(),
+            8080,
+            "2001:db8::2".parse().unwrap(),
+            52_000,
+        )
+        .unwrap(),
+    );
+    let mut other_local = first_accept.clone();
+    other_local.id = Uuid::new_v4();
+    other_local.payload = EventPayload::NetworkAccept(
+        NetworkAccept::new(
+            NetworkAddressFamily::Ipv6,
+            "::1".parse().unwrap(),
+            9090,
+            "2001:db8::1".parse().unwrap(),
+            51_000,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(
+        persist_batch(
+            &pool,
+            context,
+            &[
+                listener.clone(),
+                first_accept.clone(),
+                second_accept.clone(),
+                other_local
+            ],
+        )
+        .await
+        .unwrap(),
+        4
+    );
+    assert_eq!(persist_batch(&pool, context, &[listener]).await.unwrap(), 0);
+
+    let groups: Vec<(String, i64, serde_json::Value)> = sqlx::query_as(
+        "SELECT event_kind,occurrence_count,semantic_summary FROM runtime_event_groups ORDER BY event_kind,occurrence_count DESC",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(groups.len(), 3);
+    let shared_accept = groups
+        .iter()
+        .find(|(kind, count, _)| kind == "network.accept" && *count == 2)
+        .unwrap();
+    assert_eq!(shared_accept.2["local_address"], "::");
+    assert_eq!(shared_accept.2["local_port"], 8080);
+    assert!(shared_accept.2.get("remote_address").is_none());
+    assert!(shared_accept.2.get("remote_port").is_none());
+    let raw_remotes: Vec<String> = sqlx::query_scalar(
+        "SELECT payload->'data'->>'remote_address' FROM runtime_events WHERE event_kind='network.accept' AND payload->'data'->>'local_port'='8080' ORDER BY payload->'data'->>'remote_address'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(raw_remotes, ["2001:db8::1", "2001:db8::2"]);
+    let release_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM runtime_event_group_releases WHERE release_id=$1")
+            .bind(release_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(release_rows, 3);
+
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM runtime_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let mut valid = first_accept;
+    valid.id = Uuid::new_v4();
+    let mut invalid = second_accept;
+    invalid.id = Uuid::new_v4();
+    invalid.attribution.project_id = foreign.project_id;
+    invalid.attribution.application_id = foreign.application_id;
+    assert!(matches!(
+        persist_batch(&pool, context, &[valid, invalid]).await,
+        Err(IngestionError::InvalidOwnership)
+    ));
+    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM runtime_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(after, before);
+    let reconciliation = reconcile_inventory(
+        &pool,
+        ids.organization_id,
+        ids.project_id,
+        ids.application_id,
+        1,
+    )
+    .await
+    .unwrap();
+    assert!(reconciliation.is_consistent());
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]

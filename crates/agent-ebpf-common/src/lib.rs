@@ -24,6 +24,13 @@ pub const INBOUND_COUNTER_UNSUPPORTED_FAMILY: u32 = 2;
 pub const INBOUND_COUNTER_KERNEL_LOST: u32 = 3;
 pub const INBOUND_COUNTER_CORRELATION_MISS: u32 = 4;
 pub const INBOUND_COUNTER_COUNT: u32 = 5;
+pub const INBOUND_PENDING_ACCEPT_CAPACITY: u32 = 16_384;
+pub const INBOUND_RING_BYTES: u32 = 256 * 1024;
+pub const IP_PROTOCOL_TCP: u16 = 6;
+pub const TCP_STATE_ESTABLISHED: i32 = 1;
+pub const TCP_STATE_SYN_RECV: i32 = 3;
+pub const TCP_STATE_LISTEN: i32 = 10;
+pub const TCP_STATE_NEW_SYN_RECV: i32 = 12;
 pub const DNS_CAPTURE_BYTES: usize = 1232;
 pub const DNS_ADDRESS_LEN: usize = 16;
 pub const DNS_TRANSPORT_UDP: u8 = 1;
@@ -122,6 +129,10 @@ pub struct InboundEndpoints {
     pub padding: [u8; 3],
 }
 
+impl InboundEndpoints {
+    pub const SIZE: usize = core::mem::size_of::<Self>();
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct InboundKernelEvent {
@@ -140,6 +151,44 @@ pub struct InboundKernelEvent {
 
 impl InboundKernelEvent {
     pub const SIZE: usize = core::mem::size_of::<Self>();
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InboundTransition {
+    Ignore,
+    Invalid,
+    Listen,
+    PendingAccept,
+}
+
+pub const fn classify_inbound_transition(
+    protocol: u16,
+    socket_address: u64,
+    old_state: i32,
+    new_state: i32,
+    local_port: u16,
+    remote_port: u16,
+) -> InboundTransition {
+    if protocol != IP_PROTOCOL_TCP {
+        return InboundTransition::Ignore;
+    }
+    if new_state == TCP_STATE_LISTEN && old_state != TCP_STATE_LISTEN {
+        return if socket_address == 0 || local_port == 0 {
+            InboundTransition::Invalid
+        } else {
+            InboundTransition::Listen
+        };
+    }
+    if new_state == TCP_STATE_ESTABLISHED
+        && (old_state == TCP_STATE_SYN_RECV || old_state == TCP_STATE_NEW_SYN_RECV)
+    {
+        return if socket_address == 0 || local_port == 0 || remote_port == 0 {
+            InboundTransition::Invalid
+        } else {
+            InboundTransition::PendingAccept
+        };
+    }
+    InboundTransition::Ignore
 }
 
 /// Fixed kernel/userspace ABI for one bounded plaintext DNS packet candidate.
@@ -237,3 +286,75 @@ const _: [(); 1312] = [(); core::mem::size_of::<DnsPacketRecord>()];
 const _: [(); 8] = [(); core::mem::align_of::<DnsPacketRecord>()];
 const _: [(); 2112] = [(); core::mem::size_of::<FileKernelEvent>()];
 const _: [(); 8] = [(); core::mem::align_of::<FileKernelEvent>()];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inbound_transition_predicates_are_bounded_and_deduplicated() {
+        assert_eq!(
+            classify_inbound_transition(IP_PROTOCOL_TCP, 1, 7, TCP_STATE_LISTEN, 8080, 0),
+            InboundTransition::Listen
+        );
+        assert_eq!(
+            classify_inbound_transition(
+                IP_PROTOCOL_TCP,
+                1,
+                TCP_STATE_LISTEN,
+                TCP_STATE_LISTEN,
+                8080,
+                0,
+            ),
+            InboundTransition::Ignore
+        );
+        for old_state in [TCP_STATE_SYN_RECV, TCP_STATE_NEW_SYN_RECV] {
+            assert_eq!(
+                classify_inbound_transition(
+                    IP_PROTOCOL_TCP,
+                    1,
+                    old_state,
+                    TCP_STATE_ESTABLISHED,
+                    8080,
+                    51_000,
+                ),
+                InboundTransition::PendingAccept
+            );
+        }
+        assert_eq!(
+            classify_inbound_transition(17, 1, 7, TCP_STATE_LISTEN, 53, 0),
+            InboundTransition::Ignore
+        );
+        assert_eq!(
+            classify_inbound_transition(IP_PROTOCOL_TCP, 0, 7, TCP_STATE_LISTEN, 8080, 0),
+            InboundTransition::Invalid
+        );
+        assert_eq!(
+            classify_inbound_transition(IP_PROTOCOL_TCP, 1, 7, TCP_STATE_LISTEN, 0, 0),
+            InboundTransition::Invalid
+        );
+        assert_eq!(
+            classify_inbound_transition(IP_PROTOCOL_TCP, 1, 7, 7, 0, 0),
+            InboundTransition::Ignore
+        );
+        assert_eq!(
+            classify_inbound_transition(
+                IP_PROTOCOL_TCP,
+                1,
+                TCP_STATE_SYN_RECV,
+                TCP_STATE_ESTABLISHED,
+                8080,
+                0,
+            ),
+            InboundTransition::Invalid
+        );
+    }
+
+    #[test]
+    fn inbound_capacity_and_abi_stay_fixed() {
+        assert_eq!(INBOUND_PENDING_ACCEPT_CAPACITY, 16_384);
+        assert_eq!(INBOUND_RING_BYTES, 256 * 1024);
+        assert_eq!(InboundEndpoints::SIZE, 48);
+        assert_eq!(InboundKernelEvent::SIZE, 80);
+    }
+}

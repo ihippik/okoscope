@@ -230,6 +230,9 @@ pub struct SafetyLimits {
     pub max_application_streams: usize,
 }
 
+pub const MAX_QUEUE_CAPACITY: usize = 4096;
+pub const MAX_APPLICATION_STREAMS: usize = 32;
+
 impl Default for SafetyLimits {
     fn default() -> Self {
         Self {
@@ -314,10 +317,12 @@ impl AgentConfig {
             || self.safety.batch_size == 0
             || self.safety.batch_size > self.safety.queue_capacity
             || self.safety.max_application_streams == 0
+            || self.safety.queue_capacity > MAX_QUEUE_CAPACITY
+            || self.safety.max_application_streams > MAX_APPLICATION_STREAMS
         {
-            return Err(ConfigError::InvalidSelector(
-                "safety limits must be non-zero and batchSize must not exceed queueCapacity".into(),
-            ));
+            return Err(ConfigError::InvalidSelector(format!(
+                "safety limits must be non-zero, batchSize must not exceed queueCapacity, queueCapacity must not exceed {MAX_QUEUE_CAPACITY}, and maxApplicationStreams must not exceed {MAX_APPLICATION_STREAMS}"
+            )));
         }
         let dns = &self.observation.network.dns;
         let files = &self.observation.files;
@@ -508,6 +513,20 @@ observation:
             "safety:\n  maxApplicationStreams: 1\nobservation:\n",
         );
         assert!(AgentConfig::from_yaml(&limited, Architecture::X86_64).is_err());
+    }
+
+    #[test]
+    fn rejects_safety_limits_above_benchmarked_maxima() {
+        for limits in [
+            format!("queueCapacity: {}", MAX_QUEUE_CAPACITY + 1),
+            format!("maxApplicationStreams: {}", MAX_APPLICATION_STREAMS + 1),
+        ] {
+            let yaml = VALID.replace(
+                "observation:\n",
+                &format!("safety:\n  {limits}\nobservation:\n"),
+            );
+            assert!(AgentConfig::from_yaml(&yaml, Architecture::X86_64).is_err());
+        }
     }
 
     #[tokio::test]

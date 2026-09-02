@@ -89,7 +89,8 @@ fn attach_configured_programs(ebpf: &mut Ebpf, programs: ObservationPrograms) ->
             "sys_exit_connect",
         )?;
     }
-    if programs.network_listen.is_enabled() || programs.network_accept.is_enabled() {
+    let (state_hook, accept_hook) = inbound_hook_requirements(programs);
+    if state_hook {
         attach(
             ebpf,
             "okoscope_inet_sock_set_state",
@@ -97,7 +98,7 @@ fn attach_configured_programs(ebpf: &mut Ebpf, programs: ObservationPrograms) ->
             "inet_sock_set_state",
         )?;
     }
-    if programs.network_accept.is_enabled() {
+    if accept_hook {
         attach_kretprobe(ebpf, "okoscope_inet_csk_accept_return", "inet_csk_accept")?;
     }
     if programs.dns.is_enabled() {
@@ -142,6 +143,13 @@ fn attach_configured_programs(ebpf: &mut Ebpf, programs: ObservationPrograms) ->
         }
     }
     Ok(())
+}
+
+const fn inbound_hook_requirements(programs: ObservationPrograms) -> (bool, bool) {
+    (
+        programs.network_listen.is_enabled() || programs.network_accept.is_enabled(),
+        programs.network_accept.is_enabled(),
+    )
 }
 
 impl Observer {
@@ -395,4 +403,39 @@ fn attach_kretprobe(ebpf: &mut Ebpf, program_name: &str, function: &str) -> Resu
         .attach(function, 0)
         .with_context(|| format!("attach {program_name} to {function}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn programs(listen: bool, accept: bool) -> ObservationPrograms {
+        ObservationPrograms {
+            network_connect: ProgramState::Disabled,
+            network_listen: listen.into(),
+            network_accept: accept.into(),
+            dns: ProgramState::Disabled,
+            files: ProgramState::Disabled,
+        }
+    }
+
+    #[test]
+    fn inbound_hooks_are_independently_required() {
+        assert_eq!(
+            inbound_hook_requirements(programs(false, false)),
+            (false, false)
+        );
+        assert_eq!(
+            inbound_hook_requirements(programs(true, false)),
+            (true, false)
+        );
+        assert_eq!(
+            inbound_hook_requirements(programs(false, true)),
+            (true, true)
+        );
+        assert_eq!(
+            inbound_hook_requirements(programs(true, true)),
+            (true, true)
+        );
+    }
 }

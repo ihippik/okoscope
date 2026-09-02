@@ -6,8 +6,8 @@ use axum::{
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use event_model::{
-    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, ProcessExec, ProcessIdentity,
-    RuntimeEvent,
+    EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, NetworkAccept, NetworkAddressFamily,
+    ProcessExec, ProcessIdentity, RuntimeEvent,
 };
 use server::{
     auth::SessionScope,
@@ -226,6 +226,88 @@ async fn inventory_projection_and_read_queries_meet_documented_acceptance_limits
         max_response_bytes,
         plans,
         diff_plan,
+    );
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL; run explicitly for acceptance"]
+async fn inbound_remote_cardinality_does_not_expand_inventory_identity(pool: sqlx::PgPool) {
+    const ACCEPT_COUNT: usize = 10_000;
+    const ENDPOINT_COUNT: usize = 100;
+    let ids = bootstrap(&pool, &config()).await.unwrap();
+    let agent_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO agents(id,organization_id,cluster_id,node_name,agent_version) VALUES($1,$2,$3,'benchmark-node','benchmark')")
+        .bind(agent_id).bind(ids.organization_id).bind(ids.cluster_id)
+        .execute(&pool).await.unwrap();
+    let events: Vec<_> = (0..ACCEPT_COUNT)
+        .map(|index| RuntimeEvent {
+            id: Uuid::new_v4(),
+            observed_at: Utc::now(),
+            schema_version: EVENT_SCHEMA_VERSION,
+            attribution: KubernetesAttribution {
+                project_id: ids.project_id,
+                application_id: ids.application_id,
+                node_name: "benchmark-node".into(),
+                namespace: "production".into(),
+                pod_uid: format!("pod-{}", index % POD_COUNT),
+                pod_name: format!("benchmark-{}", index % POD_COUNT),
+                container_id: format!("container-{}", index % POD_COUNT),
+                container_name: "benchmark".into(),
+                workload_uid: "benchmark-workload".into(),
+                workload_kind: "Deployment".into(),
+                workload_name: "benchmark".into(),
+                release: None,
+                release_identity: None,
+            },
+            process: ProcessIdentity {
+                cgroup_id: 1,
+                pid: 1,
+                tgid: 1,
+                command: "benchmark".into(),
+            },
+            payload: EventPayload::NetworkAccept(
+                NetworkAccept::new(
+                    NetworkAddressFamily::Ipv4,
+                    "0.0.0.0".parse().unwrap(),
+                    u16::try_from(10_000 + index % ENDPOINT_COUNT).unwrap(),
+                    format!("198.51.{}.{}", (index / 254) % 254, index % 254 + 1)
+                        .parse()
+                        .unwrap(),
+                    u16::try_from(20_000 + index % 40_000).unwrap(),
+                )
+                .unwrap(),
+            ),
+        })
+        .collect();
+    let started = Instant::now();
+    let accepted = persist_batch(
+        &pool,
+        IngestionContext {
+            scope: SessionScope {
+                organization_id: ids.organization_id,
+                cluster_id: ids.cluster_id,
+            },
+            agent_id,
+        },
+        &events,
+    )
+    .await
+    .unwrap();
+    assert_eq!(usize::try_from(accepted).unwrap(), ACCEPT_COUNT);
+    assert!(started.elapsed() <= MAX_PROJECTION_DURATION);
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM runtime_inventory_items WHERE inventory_kind='inbound_endpoint'),(SELECT count(*) FROM runtime_event_groups WHERE event_kind='network.accept'),(SELECT count(*) FROM runtime_events WHERE event_kind='network.accept')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        counts,
+        (
+            i64::try_from(ENDPOINT_COUNT).unwrap(),
+            i64::try_from(ENDPOINT_COUNT).unwrap(),
+            i64::try_from(ACCEPT_COUNT).unwrap()
+        )
     );
 }
 
