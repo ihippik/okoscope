@@ -28,6 +28,10 @@ pub fn router(pool: PgPool) -> Router {
         .route("/api/v1/runtime-groups", get(list_groups))
         .route("/api/v1/runtime-groups/{group_id}", get(get_group))
         .route(
+            "/api/v1/runtime-groups/{group_id}/snapshots",
+            get(list_snapshots),
+        )
+        .route(
             "/api/v1/runtime-groups/{group_id}/occurrences",
             get(list_occurrences),
         )
@@ -135,10 +139,10 @@ struct GroupSummary {
     semantic_summary: Value,
     status: String,
     first_seen_at: DateTime<Utc>,
-    first_seen_event_id: Uuid,
+    first_seen_event_id: Option<Uuid>,
     last_seen_at: DateTime<Utc>,
     occurrence_count: i64,
-    representative_event_id: Uuid,
+    representative_event_id: Option<Uuid>,
     status_changed_at: Option<DateTime<Utc>>,
     status_changed_by: Option<Uuid>,
     #[sqlx(skip)]
@@ -147,6 +151,8 @@ struct GroupSummary {
     active_suppression: Option<Value>,
     #[sqlx(skip)]
     actionable: bool,
+    #[sqlx(skip)]
+    coverage: crate::runtime_retention::history::Coverage,
 }
 
 #[derive(Debug, Serialize)]
@@ -206,7 +212,7 @@ struct NotificationSummary {
 struct GroupDetail {
     #[serde(flatten)]
     group: GroupSummary,
-    representative_event: EventOccurrence,
+    representative_event: Option<EventOccurrence>,
     notification: NotificationSummary,
 }
 
@@ -324,6 +330,15 @@ async fn list_groups(
     } else {
         None
     };
+    let coverage = crate::runtime_retention::history::coverage(
+        &state.pool,
+        principal.organization_id,
+        query.project_id,
+    )
+    .await?;
+    for item in &mut items {
+        item.coverage = coverage.clone();
+    }
     Ok(Json(GroupList { items, next_cursor }))
 }
 
@@ -344,30 +359,31 @@ async fn get_group(
         std::slice::from_mut(&mut group),
     )
     .await?;
-    let mut representative_event = event_by_id(
+    group.coverage = crate::runtime_retention::history::coverage(
         &state.pool,
         principal.organization_id,
-        group.representative_event_id,
-    )
-    .await?
-    .ok_or(ApiError::NotFound)?;
-    if group.event_kind == "container.restart_loop" {
-        representative_event
-            .event_kind
-            .clone_from(&group.event_kind);
-        representative_event.payload = serde_json::json!({
-            "type": "ContainerRestartLoop",
-            "data": group.semantic_summary.clone(),
-        });
-    }
-    representative_event.related_evidence = load_related_evidence(
-        &state.pool,
-        principal.organization_id,
-        group_id,
-        representative_event.id,
-        &representative_event.event_kind,
+        group.project_id,
     )
     .await?;
+    let mut representative_event = match group.representative_event_id {
+        Some(id) => event_by_id(&state.pool, principal.organization_id, id).await?,
+        None => None,
+    };
+    if let Some(event) = &mut representative_event {
+        if group.event_kind == "container.restart_loop" {
+            event.event_kind.clone_from(&group.event_kind);
+            event.payload =
+                serde_json::json!({"type":"ContainerRestartLoop","data":group.semantic_summary});
+        }
+        event.related_evidence = load_related_evidence(
+            &state.pool,
+            principal.organization_id,
+            group_id,
+            event.id,
+            &event.event_kind,
+        )
+        .await?;
+    }
     let notification =
         notification_summary(&state.pool, principal.organization_id, group_id).await?;
     Ok(Json(GroupDetail {
@@ -425,7 +441,7 @@ async fn list_occurrences(
             (Some(received_at), Some(observed_at), Some(id))
         });
     let mut items = sqlx::query_as::<_, EventOccurrence>(
-        "SELECT e.id,e.event_id,e.observed_at,e.received_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,CASE WHEN g.event_kind='container.restart_loop' THEN g.event_kind ELSE e.event_kind END event_kind,CASE WHEN g.event_kind='container.restart_loop' THEN jsonb_build_object('type','ContainerRestartLoop','data',g.semantic_summary) ELSE e.payload END payload,COALESCE((SELECT jsonb_build_object('status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version,CASE WHEN r.id IS NULL THEN 'Unattributed' ELSE release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) END release_display_name FROM runtime_event_group_memberships m JOIN runtime_event_groups g ON g.id=m.group_id AND g.organization_id=m.organization_id JOIN runtime_events e ON e.id=m.event_id AND e.organization_id=m.organization_id LEFT JOIN releases r ON r.id=e.release_id LEFT JOIN applications a ON a.id=r.application_id WHERE m.organization_id=$1 AND m.group_id=$2 AND ($3::timestamptz IS NULL OR (e.received_at,e.observed_at,e.id)<($3,$4,$5)) ORDER BY e.received_at DESC,e.observed_at DESC,e.id DESC LIMIT $6",
+        "SELECT e.id,e.event_id,e.observed_at,e.received_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,CASE WHEN g.event_kind='container.restart_loop' THEN g.event_kind ELSE e.event_kind END event_kind,CASE WHEN g.event_kind='container.restart_loop' THEN jsonb_build_object('type','ContainerRestartLoop','data',g.semantic_summary) ELSE e.payload END payload,COALESCE((SELECT jsonb_build_object('retention_incomplete',o.retention_incomplete,'status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version,CASE WHEN r.id IS NULL THEN 'Unattributed' ELSE release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) END release_display_name FROM runtime_event_group_memberships m JOIN runtime_event_groups g ON g.id=m.group_id AND g.organization_id=m.organization_id JOIN runtime_events e ON e.id=m.event_id AND e.organization_id=m.organization_id LEFT JOIN releases r ON r.id=e.release_id LEFT JOIN applications a ON a.id=r.application_id WHERE m.organization_id=$1 AND m.group_id=$2 AND ($3::timestamptz IS NULL OR (e.received_at,e.observed_at,e.id)<($3,$4,$5)) ORDER BY e.received_at DESC,e.observed_at DESC,e.id DESC LIMIT $6",
     )
     .bind(principal.organization_id)
     .bind(group_id)
@@ -551,7 +567,7 @@ async fn event_by_id(
     event_id: Uuid,
 ) -> Result<Option<EventOccurrence>, sqlx::Error> {
     sqlx::query_as::<_, EventOccurrence>(
-        "SELECT e.id,e.event_id,e.observed_at,e.received_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,COALESCE((SELECT jsonb_build_object('status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version,CASE WHEN r.id IS NULL THEN 'Unattributed' ELSE release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) END release_display_name FROM runtime_events e LEFT JOIN releases r ON r.id=e.release_id LEFT JOIN applications a ON a.id=r.application_id WHERE e.organization_id=$1 AND e.id=$2",
+        "SELECT e.id,e.event_id,e.observed_at,e.received_at,e.node_name,e.namespace,e.pod_name,e.container_name,e.process_command,e.event_kind,e.payload,COALESCE((SELECT jsonb_build_object('retention_incomplete',o.retention_incomplete,'status',o.status,'candidate_count',o.candidate_count,'tolerance_seconds',o.tolerance_seconds,'related_event_ids',COALESCE((SELECT jsonb_agg(c.kernel_event_id) FROM runtime_event_correlations c WHERE c.lifecycle_event_id=e.id),'[]'::jsonb)) FROM runtime_event_correlation_outcomes o WHERE o.event_id=e.id),jsonb_build_object('status','absent','candidate_count',0,'related_event_ids','[]'::jsonb)) correlation,e.release_id,r.version release_version,CASE WHEN r.id IS NULL THEN 'Unattributed' ELSE release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) END release_display_name FROM runtime_events e LEFT JOIN releases r ON r.id=e.release_id LEFT JOIN applications a ON a.id=r.application_id WHERE e.organization_id=$1 AND e.id=$2",
     )
     .bind(organization_id).bind(event_id).fetch_optional(pool).await
 }
@@ -583,6 +599,40 @@ async fn load_related_evidence(
     .bind(RELATED_EVIDENCE_LIMIT)
     .fetch_all(pool)
     .await
+}
+
+async fn list_snapshots(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(group_id): Path<Uuid>,
+    Query(query): Query<crate::runtime_retention::history::Query>,
+) -> Result<Json<crate::runtime_retention::history::Page>, ApiError> {
+    let principal = principal(&headers, &state).await?;
+    let project: Uuid = sqlx::query_scalar(
+        "SELECT project_id FROM runtime_event_groups WHERE organization_id=$1 AND id=$2",
+    )
+    .bind(principal.organization_id)
+    .bind(group_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    if query
+        .day_from
+        .zip(query.day_to)
+        .is_some_and(|(from, to)| from >= to)
+    {
+        return Err(ApiError::Invalid("day_from must precede day_to".into()));
+    }
+    Ok(Json(
+        crate::runtime_retention::history::page(
+            &state.pool,
+            principal.organization_id,
+            project,
+            group_id,
+            query,
+        )
+        .await?,
+    ))
 }
 
 #[cfg(test)]

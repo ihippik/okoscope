@@ -223,6 +223,7 @@ struct DiffEntry {
 
 #[derive(Debug, Serialize)]
 struct RuntimeDiff {
+    coverage: crate::runtime_retention::history::Coverage,
     baseline: Option<Release>,
     target: Release,
     items: Vec<DiffEntry>,
@@ -255,6 +256,7 @@ struct DiffChangeEntry {
 
 #[derive(Debug, Serialize)]
 struct RuntimeDiffSummary {
+    coverage: crate::runtime_retention::history::Coverage,
     baseline: Option<Release>,
     target: Release,
     total_item_count: i64,
@@ -520,7 +522,7 @@ async fn runtime_diff(
     .await?;
     let baseline_id = baseline.as_ref().map(|release| release.id);
     let mut items = sqlx::query_as::<_, DiffEntry>(
-        "WITH b AS (SELECT * FROM runtime_event_group_releases WHERE release_id=$1), t AS (SELECT * FROM runtime_event_group_releases WHERE release_id=$2), evidence AS (SELECT EXISTS(SELECT 1 FROM runtime_events WHERE release_id=$2) target_observed) SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL AND NOT evidence.target_observed THEN 'unknown' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification,g.event_kind,g.semantic_summary,b.occurrence_count baseline_occurrence_count,b.first_seen_at baseline_first_seen_at,b.last_seen_at baseline_last_seen_at,t.occurrence_count target_occurrence_count,t.first_seen_at target_first_seen_at,t.last_seen_at target_last_seen_at FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) CROSS JOIN evidence WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5 AND g.event_kind <> 'network.accept' AND ($6::uuid IS NULL OR g.id>$6) ORDER BY g.id LIMIT $7",
+        "WITH b AS (SELECT * FROM runtime_event_group_releases WHERE release_id=$1 AND occurrence_count>0), t AS (SELECT * FROM runtime_event_group_releases WHERE release_id=$2 AND occurrence_count>0), evidence AS (SELECT (EXISTS(SELECT 1 FROM runtime_events WHERE release_id=$2) OR EXISTS(SELECT 1 FROM runtime_event_group_releases WHERE release_id=$2 AND occurrence_count>0)) target_observed,EXISTS(SELECT 1 FROM releases r JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND r.deployed_at<p.runtime_history_expired_before) baseline_expired,EXISTS(SELECT 1 FROM releases r JOIN projects p ON p.id=r.project_id WHERE r.id=$2 AND r.deployed_at<p.runtime_history_expired_before) target_expired) SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL AND evidence.baseline_expired THEN 'unknown' WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL AND (NOT evidence.target_observed OR evidence.target_expired) THEN 'unknown' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification,g.event_kind,g.semantic_summary,b.occurrence_count baseline_occurrence_count,b.first_seen_at baseline_first_seen_at,b.last_seen_at baseline_last_seen_at,t.occurrence_count target_occurrence_count,t.first_seen_at target_first_seen_at,t.last_seen_at target_last_seen_at FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) CROSS JOIN evidence WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5 AND g.event_kind <> 'network.accept' AND ($6::uuid IS NULL OR g.id>$6) ORDER BY g.id LIMIT $7",
     ).bind(baseline_id).bind(target.id).bind(principal.organization_id).bind(project_id).bind(application_id).bind(query.cursor).bind(limit+1).fetch_all(&state.pool).await?;
     let next_cursor = if i64::try_from(items.len()).unwrap_or(i64::MAX) > limit {
         items.pop();
@@ -530,6 +532,12 @@ async fn runtime_diff(
     };
     crate::metrics::record_release_diff();
     Ok(Json(RuntimeDiff {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
         baseline,
         target,
         items,
@@ -562,6 +570,12 @@ async fn runtime_diff_summary(
             u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
         );
         return Ok(Json(RuntimeDiffSummary {
+            coverage: crate::runtime_retention::history::coverage(
+                &state.pool,
+                principal.organization_id,
+                project_id,
+            )
+            .await?,
             baseline: None,
             target,
             total_item_count: 0,
@@ -575,7 +589,7 @@ async fn runtime_diff_summary(
         .execute(&mut *transaction)
         .await?;
     let classifications = sqlx::query_as::<_, DiffClassificationCount>(
-        "WITH b AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$1), t AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$2), evidence AS (SELECT EXISTS(SELECT 1 FROM runtime_events WHERE release_id=$2) target_observed), compared AS (SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL AND NOT evidence.target_observed THEN 'unknown' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) CROSS JOIN evidence WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5 AND g.event_kind <> 'network.accept') SELECT classification,count(*)::bigint item_count FROM compared GROUP BY classification ORDER BY CASE classification WHEN 'new' THEN 1 WHEN 'disappeared' THEN 2 WHEN 'unchanged' THEN 3 ELSE 4 END",
+        "WITH b AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$1 AND occurrence_count>0), t AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$2 AND occurrence_count>0), evidence AS (SELECT (EXISTS(SELECT 1 FROM runtime_events WHERE release_id=$2) OR EXISTS(SELECT 1 FROM runtime_event_group_releases WHERE release_id=$2 AND occurrence_count>0)) target_observed,EXISTS(SELECT 1 FROM releases r JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND r.deployed_at<p.runtime_history_expired_before) baseline_expired,EXISTS(SELECT 1 FROM releases r JOIN projects p ON p.id=r.project_id WHERE r.id=$2 AND r.deployed_at<p.runtime_history_expired_before) target_expired), compared AS (SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL AND evidence.baseline_expired THEN 'unknown' WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL AND (NOT evidence.target_observed OR evidence.target_expired) THEN 'unknown' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) CROSS JOIN evidence WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5 AND g.event_kind <> 'network.accept') SELECT classification,count(*)::bigint item_count FROM compared GROUP BY classification ORDER BY CASE classification WHEN 'new' THEN 1 WHEN 'disappeared' THEN 2 WHEN 'unchanged' THEN 3 ELSE 4 END",
     )
     .bind(baseline_id)
     .bind(target.id)
@@ -585,7 +599,7 @@ async fn runtime_diff_summary(
     .fetch_all(&mut *transaction)
     .await?;
     let largest_changes = sqlx::query_as::<_, DiffChangeEntry>(
-        "WITH b AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$1), t AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$2), evidence AS (SELECT EXISTS(SELECT 1 FROM runtime_events WHERE release_id=$2) target_observed) SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL AND NOT evidence.target_observed THEN 'unknown' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification,g.event_kind,g.semantic_summary,COALESCE(b.occurrence_count,0)::bigint baseline_occurrence_count,COALESCE(t.occurrence_count,0)::bigint target_occurrence_count,(COALESCE(t.occurrence_count,0)-COALESCE(b.occurrence_count,0))::bigint occurrence_delta FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) CROSS JOIN evidence WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5 AND g.event_kind <> 'network.accept' ORDER BY ABS(COALESCE(t.occurrence_count,0)-COALESCE(b.occurrence_count,0)) DESC,g.id ASC LIMIT $6",
+        "WITH b AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$1 AND occurrence_count>0), t AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$2 AND occurrence_count>0), evidence AS (SELECT (EXISTS(SELECT 1 FROM runtime_events WHERE release_id=$2) OR EXISTS(SELECT 1 FROM runtime_event_group_releases WHERE release_id=$2 AND occurrence_count>0)) target_observed,EXISTS(SELECT 1 FROM releases r JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND r.deployed_at<p.runtime_history_expired_before) baseline_expired,EXISTS(SELECT 1 FROM releases r JOIN projects p ON p.id=r.project_id WHERE r.id=$2 AND r.deployed_at<p.runtime_history_expired_before) target_expired) SELECT COALESCE(t.group_id,b.group_id) group_id,CASE WHEN b.group_id IS NULL AND evidence.baseline_expired THEN 'unknown' WHEN b.group_id IS NULL THEN 'new' WHEN t.group_id IS NULL AND (NOT evidence.target_observed OR evidence.target_expired) THEN 'unknown' WHEN t.group_id IS NULL THEN 'disappeared' ELSE 'unchanged' END classification,g.event_kind,g.semantic_summary,COALESCE(b.occurrence_count,0)::bigint baseline_occurrence_count,COALESCE(t.occurrence_count,0)::bigint target_occurrence_count,(COALESCE(t.occurrence_count,0)-COALESCE(b.occurrence_count,0))::bigint occurrence_delta FROM b FULL OUTER JOIN t ON t.group_id=b.group_id JOIN runtime_event_groups g ON g.id=COALESCE(t.group_id,b.group_id) CROSS JOIN evidence WHERE g.organization_id=$3 AND g.project_id=$4 AND g.application_id=$5 AND g.event_kind <> 'network.accept' ORDER BY ABS(COALESCE(t.occurrence_count,0)-COALESCE(b.occurrence_count,0)) DESC,g.id ASC LIMIT $6",
     )
     .bind(baseline_id)
     .bind(target.id)
@@ -601,6 +615,12 @@ async fn runtime_diff_summary(
         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
     );
     Ok(Json(RuntimeDiffSummary {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
         baseline,
         target,
         total_item_count,

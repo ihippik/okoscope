@@ -83,6 +83,10 @@ async fn serve(
             ))
         });
     metrics::configure_notification_retention(options.retention.enabled);
+    let runtime_retention_task = tokio::spawn(server::runtime_retention::worker::run(
+        pool.clone(),
+        shutdown_receiver.clone(),
+    ));
     let retention_task = tokio::spawn(server::notification::retention::run(
         pool.clone(),
         options.retention,
@@ -116,6 +120,7 @@ async fn serve(
         health_server.await.context("health server")
     })?;
     let _ = shutdown_sender.send(true);
+    let _ = runtime_retention_task.await;
     signal_task.abort();
     if let Some(worker_task) = worker_task {
         metrics::record_notification_drain_started();

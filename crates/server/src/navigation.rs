@@ -186,6 +186,7 @@ struct ApplicationWorker {
 
 #[derive(Debug, Serialize)]
 struct WorkerPage {
+    coverage: crate::runtime_retention::history::Coverage,
     items: Vec<ApplicationWorker>,
     next_cursor: Option<String>,
 }
@@ -289,7 +290,7 @@ async fn applications(
         ));
     }
     let (cursor_time, cursor_id) = cursor.unzip();
-    let mut items = sqlx::query_as::<_, ApplicationSummary>("SELECT a.id,a.project_id,a.slug,a.name,a.created_at,(SELECT count(*) FROM releases r WHERE r.organization_id=a.organization_id AND r.project_id=a.project_id AND r.application_id=a.id) release_count,(SELECT count(*) FROM runtime_event_groups g WHERE g.organization_id=a.organization_id AND g.project_id=a.project_id AND g.application_id=a.id) runtime_group_count,(SELECT max(e.observed_at) FROM runtime_events e WHERE e.organization_id=a.organization_id AND e.project_id=a.project_id AND e.application_id=a.id) latest_observed_at FROM applications a WHERE a.organization_id=$1 AND a.project_id=$2 AND ($3::timestamptz IS NULL OR (a.created_at,a.id)>($3,$4)) ORDER BY a.created_at,a.id LIMIT $5")
+    let mut items = sqlx::query_as::<_, ApplicationSummary>("SELECT a.id,a.project_id,a.slug,a.name,a.created_at,(SELECT count(*) FROM releases r WHERE r.organization_id=a.organization_id AND r.project_id=a.project_id AND r.application_id=a.id) release_count,(SELECT count(*) FROM runtime_event_groups g WHERE g.organization_id=a.organization_id AND g.project_id=a.project_id AND g.application_id=a.id AND g.occurrence_count>0) runtime_group_count,(SELECT max(e.last_seen_at) FROM runtime_event_groups e WHERE e.organization_id=a.organization_id AND e.project_id=a.project_id AND e.application_id=a.id AND e.occurrence_count>0) latest_observed_at FROM applications a WHERE a.organization_id=$1 AND a.project_id=$2 AND ($3::timestamptz IS NULL OR (a.created_at,a.id)>($3,$4)) ORDER BY a.created_at,a.id LIMIT $5")
         .bind(principal.organization_id).bind(project_id).bind(cursor_time).bind(cursor_id).bind(limit+1).fetch_all(&state.pool).await.map_err(|error| NavigationError::database(&error, &request_id))?;
     Ok(Json(page(&mut items, limit, |item| item.id)))
 }
@@ -301,7 +302,7 @@ async fn application(
     Path((project_id, application_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<ApplicationSummary>, NavigationError> {
     let principal = principal(&headers, &state, &request_id).await?;
-    let item = sqlx::query_as::<_, ApplicationSummary>("SELECT a.id,a.project_id,a.slug,a.name,a.created_at,(SELECT count(*) FROM releases r WHERE r.organization_id=a.organization_id AND r.project_id=a.project_id AND r.application_id=a.id) release_count,(SELECT count(*) FROM runtime_event_groups g WHERE g.organization_id=a.organization_id AND g.project_id=a.project_id AND g.application_id=a.id) runtime_group_count,(SELECT max(e.observed_at) FROM runtime_events e WHERE e.organization_id=a.organization_id AND e.project_id=a.project_id AND e.application_id=a.id) latest_observed_at FROM applications a WHERE a.organization_id=$1 AND a.project_id=$2 AND a.id=$3")
+    let item = sqlx::query_as::<_, ApplicationSummary>("SELECT a.id,a.project_id,a.slug,a.name,a.created_at,(SELECT count(*) FROM releases r WHERE r.organization_id=a.organization_id AND r.project_id=a.project_id AND r.application_id=a.id) release_count,(SELECT count(*) FROM runtime_event_groups g WHERE g.organization_id=a.organization_id AND g.project_id=a.project_id AND g.application_id=a.id AND g.occurrence_count>0) runtime_group_count,(SELECT max(e.last_seen_at) FROM runtime_event_groups e WHERE e.organization_id=a.organization_id AND e.project_id=a.project_id AND e.application_id=a.id AND e.occurrence_count>0) latest_observed_at FROM applications a WHERE a.organization_id=$1 AND a.project_id=$2 AND a.id=$3")
         .bind(principal.organization_id).bind(project_id).bind(application_id).fetch_optional(&state.pool).await.map_err(|error| NavigationError::database(&error, &request_id))?.ok_or_else(|| NavigationError::not_found(&request_id))?;
     Ok(Json(item))
 }
@@ -375,7 +376,18 @@ async fn application_workers(
     } else {
         None
     };
-    Ok(Json(WorkerPage { items, next_cursor }))
+    let coverage = crate::runtime_retention::history::coverage(
+        &state.pool,
+        principal.organization_id,
+        project_id,
+    )
+    .await
+    .map_err(|error| NavigationError::database(&error, &request_id))?;
+    Ok(Json(WorkerPage {
+        coverage,
+        items,
+        next_cursor,
+    }))
 }
 
 fn encode_worker_cursor(cursor: &WorkerCursor) -> Result<String, &'static str> {

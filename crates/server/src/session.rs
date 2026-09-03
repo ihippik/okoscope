@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::{
     application_credentials::{ApplicationCredentialScope, authenticate},
     auth::SessionScope,
-    ingestion::persist_application_batch,
+    ingestion::persist_application_batch_outcome,
 };
 
 #[derive(Clone, Debug)]
@@ -98,11 +98,11 @@ impl AgentService for AgentSessionService {
                                 | event_model::EventPayload::FileRename(_))) {
                                 return Err(Status::failed_precondition("file activity event requires file.activity.syscall-path/v1 capability"));
                             }
-                            let accepted = persist_application_batch(&pool, scope, application_scope, agent_id, &mut events).await.map_err(|error| match error {
+                            let (accepted, retention_expired_events) = persist_application_batch_outcome(&pool, scope, application_scope, agent_id, &mut events).await.map_err(|error| match error {
                                 crate::ingestion::IngestionError::RevokedCredential => Status::unauthenticated("application credential was revoked"),
                                 other => internal(other),
                             })?;
-                            sender.send(Ok(ServerMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(server_message::Message::BatchAcknowledgement(BatchAcknowledgement { sequence: batch.sequence, accepted_events: accepted })) })).await.map_err(|_| Status::unavailable("session response channel closed"))?;
+                            sender.send(Ok(ServerMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(server_message::Message::BatchAcknowledgement(BatchAcknowledgement { sequence: batch.sequence, accepted_events: accepted, retention_expired_events })) })).await.map_err(|_| Status::unavailable("session response channel closed"))?;
                         }
                         Some(agent_message::Message::Heartbeat(_)) => { touch_agent(&pool, agent_id).await.map_err(internal)?; }
                         Some(agent_message::Message::ControlResult(result)) => { tracing::info!(agent_id=%agent_id, request_id=%result.request_id, status=result.status, "agent control result"); }

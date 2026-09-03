@@ -1,6 +1,6 @@
 use axum::{
     body::{Body, to_bytes},
-    http::{Request, StatusCode, header::AUTHORIZATION},
+    http::{Request, StatusCode, header::COOKIE},
 };
 use chrono::{Duration, Utc};
 use event_model::{
@@ -71,7 +71,10 @@ fn event(project_id: Uuid, application_id: Uuid, node_name: &str, offset: i64) -
 fn request(uri: &str, credential: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
-        .header(AUTHORIZATION, format!("Bearer {credential}"))
+        .header(
+            COOKIE,
+            format!("{}={credential}", server::auth::SESSION_COOKIE),
+        )
         .body(Body::empty())
         .unwrap()
 }
@@ -83,11 +86,13 @@ async fn json(response: axum::response::Response) -> serde_json::Value {
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn workers_are_evidence_based_paginated_and_tenant_safe(pool: sqlx::PgPool) {
-    let first_config = config("worker-first");
+    let mut first_config = config("worker-first");
     let first = bootstrap(&pool, &first_config).await.unwrap();
-    let second_config = config("worker-second");
+    let mut second_config = config("worker-second");
     let second = bootstrap(&pool, &second_config).await.unwrap();
 
+    first_config.api_credential = owner_session(&pool, first.organization_id).await;
+    second_config.api_credential = owner_session(&pool, second.organization_id).await;
     let rich_agent = Uuid::new_v4();
     let sparse_agent = Uuid::new_v4();
     let no_evidence_agent = Uuid::new_v4();
@@ -133,7 +138,9 @@ async fn workers_are_evidence_based_paginated_and_tenant_safe(pool: sqlx::PgPool
     .await
     .unwrap();
 
-    let app = navigation::router(pool.clone());
+    let app = navigation::router(pool.clone()).layer(axum::Extension(server::web_api::RequestId(
+        "worker-test".into(),
+    )));
     let base = format!(
         "/api/v1/projects/{}/applications/{}/workers",
         first.project_id, first.application_id
@@ -211,4 +218,26 @@ async fn workers_are_evidence_based_paginated_and_tenant_safe(pool: sqlx::PgPool
         .await
         .unwrap();
     assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+}
+
+async fn owner_session(pool: &sqlx::PgPool, organization: Uuid) -> String {
+    let user = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)")
+        .bind(user)
+        .bind(format!("{user}@example.test"))
+        .bind(server::auth::hash_password("worker-test-password").unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner')",
+    )
+    .bind(organization)
+    .bind(user)
+    .execute(pool)
+    .await
+    .unwrap();
+    let token = server::auth::SessionToken::generate();
+    sqlx::query("INSERT INTO user_sessions(id,user_id,organization_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')").bind(Uuid::new_v4()).bind(user).bind(organization).bind(token.digest().as_slice()).execute(pool).await.unwrap();
+    token.expose().to_owned()
 }

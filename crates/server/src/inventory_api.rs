@@ -315,6 +315,7 @@ struct DistributionOther {
 
 #[derive(Debug, Serialize)]
 struct InventoryDistribution {
+    coverage: crate::runtime_retention::history::Coverage,
     identity_version: i16,
     kind: String,
     total_item_count: i64,
@@ -334,6 +335,16 @@ enum InventoryFacet {
 }
 
 impl InventoryFacet {
+    fn clear_selected_filter(self, scope: &mut InventoryScope) {
+        match self {
+            Self::Cluster => scope.cluster_id = None,
+            Self::Namespace => scope.namespace = None,
+            Self::WorkloadKind => scope.workload_kind = None,
+            Self::WorkloadName => scope.workload_name = None,
+            Self::ContainerName => scope.container_name = None,
+        }
+    }
+
     fn parse(value: &str) -> Result<Self, InventoryApiError> {
         match value {
             "cluster" => Ok(Self::Cluster),
@@ -387,6 +398,7 @@ struct FacetOption {
 
 #[derive(Debug, Serialize)]
 struct FacetPage {
+    coverage: crate::runtime_retention::history::Coverage,
     items: Vec<FacetOption>,
     next_cursor: Option<String>,
 }
@@ -437,6 +449,7 @@ struct InventoryItem {
 
 #[derive(Debug, Serialize)]
 struct InventoryItemPage {
+    coverage: crate::runtime_retention::history::Coverage,
     items: Vec<InventoryItem>,
     next_cursor: Option<Uuid>,
 }
@@ -459,6 +472,7 @@ struct KindAggregate {
 
 #[derive(Debug, Serialize)]
 struct InventorySummary {
+    coverage: crate::runtime_retention::history::Coverage,
     identity_version: i16,
     item_count: i64,
     occurrence_count: i64,
@@ -469,6 +483,7 @@ struct InventorySummary {
 
 #[derive(Debug, Serialize)]
 struct InventoryItemDetail {
+    coverage: crate::runtime_retention::history::Coverage,
     #[serde(flatten)]
     item: InventoryItem,
     evidence: EvidenceLinks,
@@ -512,6 +527,7 @@ struct ReleasePresence {
 
 #[derive(Debug, Serialize)]
 struct ReleasePresencePage {
+    coverage: crate::runtime_retention::history::Coverage,
     items: Vec<ReleasePresence>,
     next_cursor: Option<Uuid>,
 }
@@ -546,6 +562,7 @@ struct SightingCursor {
 
 #[derive(Debug, Serialize)]
 struct SightingPage {
+    coverage: crate::runtime_retention::history::Coverage,
     items: Vec<InventorySighting>,
     next_cursor: Option<String>,
 }
@@ -566,6 +583,7 @@ struct InventoryGroup {
 
 #[derive(Debug, Serialize)]
 struct GroupPage {
+    coverage: crate::runtime_retention::history::Coverage,
     items: Vec<InventoryGroup>,
     next_cursor: Option<Uuid>,
 }
@@ -591,6 +609,7 @@ struct InventoryOccurrence {
 
 #[derive(Debug, Serialize)]
 struct OccurrencePage {
+    coverage: crate::runtime_retention::history::Coverage,
     items: Vec<InventoryOccurrence>,
     next_cursor: Option<Uuid>,
 }
@@ -807,7 +826,7 @@ async fn summary(
     let version = CURRENT_INVENTORY_IDENTITY_VERSION.get();
     let search = scope.search_pattern();
     let rows: Vec<KindAggregate> =
-        sqlx::query_as("SELECT CASE WHEN i.inventory_kind IN ('process_exit','container_termination','container_restart') THEN 'lifecycle' ELSE i.inventory_kind END kind,count(*)::bigint item_count,COALESCE(sum(i.occurrence_count),0)::bigint occurrence_count,min(i.first_seen_at) first_seen_at,max(i.last_seen_at) last_seen_at FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND ($5::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$5)) AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$6)) AND ($7::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$10)) AND ($11::timestamptz IS NULL OR i.last_seen_at >= $11) AND ($12::timestamptz IS NULL OR i.first_seen_at <= $12) AND ($13::text IS NULL OR i.semantic_summary->>'operation'=$13) AND ($14::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $14) GROUP BY 1")
+        sqlx::query_as("SELECT CASE WHEN i.inventory_kind IN ('process_exit','container_termination','container_restart') THEN 'lifecycle' ELSE i.inventory_kind END kind,count(*)::bigint item_count,COALESCE(sum(i.occurrence_count),0)::bigint occurrence_count,min(i.first_seen_at) first_seen_at,max(i.last_seen_at) last_seen_at FROM runtime_inventory_items i WHERE i.occurrence_count>0 AND i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND ($5::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$5)) AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$6)) AND ($7::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$10)) AND ($11::timestamptz IS NULL OR i.last_seen_at >= $11) AND ($12::timestamptz IS NULL OR i.first_seen_at <= $12) AND ($13::text IS NULL OR i.semantic_summary->>'operation'=$13) AND ($14::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $14) GROUP BY 1")
             .bind(principal.organization_id).bind(project_id).bind(application_id).bind(version)
             .bind(scope.release_id).bind(scope.cluster_id).bind(scope.namespace.as_deref()).bind(scope.workload_kind.as_deref()).bind(scope.workload_name.as_deref()).bind(scope.container_name.as_deref()).bind(scope.observed_from).bind(scope.observed_to).bind(scope.operation.as_deref()).bind(search.as_deref())
             .fetch_all(&state.pool).await?;
@@ -852,6 +871,12 @@ async fn summary(
         result_size = kinds.len()
     );
     Ok(Json(InventorySummary {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
         identity_version: version,
         item_count,
         occurrence_count,
@@ -885,7 +910,7 @@ async fn distribution(
     let version = CURRENT_INVENTORY_IDENTITY_VERSION.get();
     let search = scope.search_pattern();
     let rows = sqlx::query_as::<_, DistributionRow>(
-        "WITH scoped AS MATERIALIZED (SELECT i.id,i.identity_digest,i.semantic_summary,i.occurrence_count FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND i.inventory_kind=$5 AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$6)) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$10)) AND ($11::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$11)) AND ($12::timestamptz IS NULL OR i.last_seen_at >= $12) AND ($13::timestamptz IS NULL OR i.first_seen_at <= $13) AND ($14::text IS NULL OR i.semantic_summary->>'operation'=$14) AND ($15::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $15)), ranked AS (SELECT id,identity_digest,semantic_summary,occurrence_count,count(*) OVER()::bigint total_item_count,COALESCE(sum(occurrence_count) OVER(),0)::bigint total_occurrence_count FROM scoped) SELECT id,identity_digest,semantic_summary,occurrence_count,total_item_count,total_occurrence_count FROM ranked ORDER BY occurrence_count DESC,identity_digest ASC LIMIT $16",
+        "WITH scoped AS MATERIALIZED (SELECT i.id,i.identity_digest,i.semantic_summary,i.occurrence_count FROM runtime_inventory_items i WHERE i.occurrence_count>0 AND i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND i.inventory_kind=$5 AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$6)) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$10)) AND ($11::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$11)) AND ($12::timestamptz IS NULL OR i.last_seen_at >= $12) AND ($13::timestamptz IS NULL OR i.first_seen_at <= $13) AND ($14::text IS NULL OR i.semantic_summary->>'operation'=$14) AND ($15::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $15)), ranked AS (SELECT id,identity_digest,semantic_summary,occurrence_count,count(*) OVER()::bigint total_item_count,COALESCE(sum(occurrence_count) OVER(),0)::bigint total_occurrence_count FROM scoped) SELECT id,identity_digest,semantic_summary,occurrence_count,total_item_count,total_occurrence_count FROM ranked ORDER BY occurrence_count DESC,identity_digest ASC LIMIT $16",
     )
     .bind(principal.organization_id)
     .bind(project_id)
@@ -941,6 +966,12 @@ async fn distribution(
         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
     );
     Ok(Json(InventoryDistribution {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
         identity_version: version,
         kind: query.kind,
         total_item_count,
@@ -973,13 +1004,7 @@ async fn facets(
         false,
     )?;
     let mut scope = record_validation(query.scope.normalize(), "facet", "scope", false)?;
-    match facet {
-        InventoryFacet::Cluster => scope.cluster_id = None,
-        InventoryFacet::Namespace => scope.namespace = None,
-        InventoryFacet::WorkloadKind => scope.workload_kind = None,
-        InventoryFacet::WorkloadName => scope.workload_name = None,
-        InventoryFacet::ContainerName => scope.container_name = None,
-    }
+    facet.clear_selected_filter(&mut scope);
     record_validation(
         validate_release_scope(
             &state.pool,
@@ -1046,7 +1071,16 @@ async fn facets(
         elapsed_micros,
         result_size = items.len()
     );
-    Ok(Json(FacetPage { items, next_cursor }))
+    Ok(Json(FacetPage {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
+        items,
+        next_cursor,
+    }))
 }
 
 async fn load_facet_options(
@@ -1175,7 +1209,7 @@ async fn list_items(
     let (cursor_time, cursor_id) = cursor.map_or((None, None), |(time, id)| (Some(time), Some(id)));
     let search = scope.search_pattern();
     let mut items = sqlx::query_as::<_, InventoryItem>(
-        "SELECT i.id,i.project_id,i.application_id,i.inventory_kind,i.identity_version,i.semantic_summary,i.first_seen_at,i.last_seen_at,i.occurrence_count,(SELECT count(*) FROM runtime_inventory_releases r WHERE r.item_id=i.id) release_count,(SELECT count(DISTINCT s.cluster_id) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) cluster_count,(SELECT count(DISTINCT (s.cluster_id,s.namespace)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) namespace_count,(SELECT count(DISTINCT (s.cluster_id,s.namespace,s.workload_kind,s.workload_name)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) workload_count,(SELECT count(DISTINCT (s.cluster_id,s.pod_uid)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) pod_count,(SELECT count(DISTINCT s.container_name) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) container_count,(SELECT count(*) FROM runtime_inventory_group_links gl WHERE gl.item_id=i.id) group_count FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND ($5::text IS NULL OR i.inventory_kind=$5) AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$6)) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$10)) AND ($11::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$11)) AND ($12::timestamptz IS NULL OR i.last_seen_at >= $12) AND ($13::timestamptz IS NULL OR i.first_seen_at <= $13) AND ($14::text IS NULL OR i.semantic_summary->>'operation'=$14) AND ($15::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $15) AND ($16::uuid IS NULL OR (i.id=$16 AND i.identity_digest=$17)) AND ($18::text IS NULL OR EXISTS(SELECT 1 FROM runtime_sighting_policy_evaluations e JOIN runtime_policy_states ps ON ps.organization_id=e.organization_id AND ps.project_id=e.project_id AND ps.application_id=e.application_id WHERE e.item_id=i.id AND e.policy_state_version=ps.state_version AND e.evaluator_version=$21 AND e.verdict=$18)) AND ($19::bool IS NULL OR $19=EXISTS(SELECT 1 FROM runtime_inventory_sightings s JOIN runtime_policy_suppressions z ON z.organization_id=s.organization_id AND z.project_id=s.project_id AND z.application_id=s.application_id AND z.identity_version=i.identity_version AND z.identity_digest=i.identity_digest AND z.cancelled_at IS NULL AND z.expires_at>now() AND (cardinality(z.cluster_ids)=0 OR s.cluster_id=ANY(z.cluster_ids)) AND (cardinality(z.namespaces)=0 OR s.namespace=ANY(z.namespaces)) AND (cardinality(z.workload_kinds)=0 OR s.workload_kind=ANY(z.workload_kinds)) AND (cardinality(z.workload_names)=0 OR s.workload_name=ANY(z.workload_names)) WHERE s.item_id=i.id)) AND ($20::bool IS NULL OR $20=EXISTS(SELECT 1 FROM runtime_inventory_sightings s LEFT JOIN runtime_sighting_policy_evaluations e ON e.item_id=s.item_id AND e.cluster_id=s.cluster_id AND e.namespace=s.namespace AND e.workload_kind=s.workload_kind AND e.workload_name=s.workload_name AND e.pod_uid=s.pod_uid AND e.container_name=s.container_name LEFT JOIN runtime_policy_states ps ON ps.organization_id=s.organization_id AND ps.project_id=s.project_id AND ps.application_id=s.application_id WHERE s.item_id=i.id AND (e.item_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$21))) AND ($22::timestamptz IS NULL OR (i.last_seen_at,i.id)<($22,$23)) ORDER BY i.last_seen_at DESC,i.id DESC LIMIT $24",
+        "SELECT i.id,i.project_id,i.application_id,i.inventory_kind,i.identity_version,i.semantic_summary,i.first_seen_at,i.last_seen_at,i.occurrence_count,(SELECT count(*) FROM runtime_inventory_releases r WHERE r.item_id=i.id) release_count,(SELECT count(DISTINCT s.cluster_id) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) cluster_count,(SELECT count(DISTINCT (s.cluster_id,s.namespace)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) namespace_count,(SELECT count(DISTINCT (s.cluster_id,s.namespace,s.workload_kind,s.workload_name)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) workload_count,(SELECT count(DISTINCT (s.cluster_id,s.pod_uid)) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) pod_count,(SELECT count(DISTINCT s.container_name) FROM runtime_inventory_sightings s WHERE s.item_id=i.id) container_count,(SELECT count(*) FROM runtime_inventory_group_links gl WHERE gl.item_id=i.id) group_count FROM runtime_inventory_items i WHERE i.occurrence_count>0 AND i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND ($5::text IS NULL OR i.inventory_kind=$5) AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$6)) AND ($7::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.cluster_id=$7)) AND ($8::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace=$8)) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_kind=$9)) AND ($10::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.workload_name=$10)) AND ($11::text IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.container_name=$11)) AND ($12::timestamptz IS NULL OR i.last_seen_at >= $12) AND ($13::timestamptz IS NULL OR i.first_seen_at <= $13) AND ($14::text IS NULL OR i.semantic_summary->>'operation'=$14) AND ($15::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $15) AND ($16::uuid IS NULL OR (i.id=$16 AND i.identity_digest=$17)) AND ($18::text IS NULL OR EXISTS(SELECT 1 FROM runtime_sighting_policy_evaluations e JOIN runtime_policy_states ps ON ps.organization_id=e.organization_id AND ps.project_id=e.project_id AND ps.application_id=e.application_id WHERE e.item_id=i.id AND e.policy_state_version=ps.state_version AND e.evaluator_version=$21 AND e.verdict=$18)) AND ($19::bool IS NULL OR $19=EXISTS(SELECT 1 FROM runtime_inventory_sightings s JOIN runtime_policy_suppressions z ON z.organization_id=s.organization_id AND z.project_id=s.project_id AND z.application_id=s.application_id AND z.identity_version=i.identity_version AND z.identity_digest=i.identity_digest AND z.cancelled_at IS NULL AND z.expires_at>now() AND (cardinality(z.cluster_ids)=0 OR s.cluster_id=ANY(z.cluster_ids)) AND (cardinality(z.namespaces)=0 OR s.namespace=ANY(z.namespaces)) AND (cardinality(z.workload_kinds)=0 OR s.workload_kind=ANY(z.workload_kinds)) AND (cardinality(z.workload_names)=0 OR s.workload_name=ANY(z.workload_names)) WHERE s.item_id=i.id)) AND ($20::bool IS NULL OR $20=EXISTS(SELECT 1 FROM runtime_inventory_sightings s LEFT JOIN runtime_sighting_policy_evaluations e ON e.item_id=s.item_id AND e.cluster_id=s.cluster_id AND e.namespace=s.namespace AND e.workload_kind=s.workload_kind AND e.workload_name=s.workload_name AND e.pod_uid=s.pod_uid AND e.container_name=s.container_name LEFT JOIN runtime_policy_states ps ON ps.organization_id=s.organization_id AND ps.project_id=s.project_id AND ps.application_id=s.application_id WHERE s.item_id=i.id AND (e.item_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>$21))) AND ($22::timestamptz IS NULL OR (i.last_seen_at,i.id)<($22,$23)) ORDER BY i.last_seen_at DESC,i.id DESC LIMIT $24",
     )
     .bind(principal.organization_id).bind(project_id).bind(application_id)
     .bind(CURRENT_INVENTORY_IDENTITY_VERSION.get()).bind(query.kind).bind(scope.release_id).bind(scope.cluster_id)
@@ -1196,7 +1230,16 @@ async fn list_items(
     crate::metrics::record_inventory_query(
         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
     );
-    Ok(Json(InventoryItemPage { items, next_cursor }))
+    Ok(Json(InventoryItemPage {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
+        items,
+        next_cursor,
+    }))
 }
 
 async fn fetch_item(
@@ -1233,6 +1276,12 @@ async fn item_detail(
         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
     );
     Ok(Json(InventoryItemDetail {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
         item,
         evidence: EvidenceLinks::scoped(project_id, application_id, item_id),
         policy_placement_summary,
@@ -1256,7 +1305,7 @@ async fn item_releases(
         None
     };
     let (cursor_time, cursor_id) = cursor.map_or((None, None), |(time, id)| (Some(time), Some(id)));
-    let mut items = sqlx::query_as::<_, ReleasePresence>("SELECT r.id release_id,release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) release_display_name,r.version,r.deployed_at,CASE WHEN ir.release_id IS NOT NULL THEN 'observed' WHEN EXISTS(SELECT 1 FROM runtime_events e WHERE e.organization_id=r.organization_id AND e.project_id=r.project_id AND e.application_id=r.application_id AND e.release_id=r.id) THEN 'not_observed' ELSE 'unknown' END presence,ir.occurrence_count,ir.first_seen_at,ir.last_seen_at,(SELECT count(*) FROM runtime_events e WHERE e.organization_id=r.organization_id AND e.project_id=r.project_id AND e.application_id=r.application_id AND e.release_id=r.id) release_evidence_count FROM releases r JOIN applications a ON a.id=r.application_id LEFT JOIN runtime_inventory_releases ir ON ir.release_id=r.id AND ir.item_id=$4 WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND ($5::timestamptz IS NULL OR (r.deployed_at,r.id)<($5,$6)) ORDER BY r.deployed_at DESC,r.id DESC LIMIT $7")
+    let mut items = sqlx::query_as::<_, ReleasePresence>("SELECT r.id release_id,release_display_name(a.name,r.source,r.version,r.identity_digest,r.identity_components) release_display_name,r.version,r.deployed_at,CASE WHEN ir.release_id IS NOT NULL AND ir.occurrence_count>0 THEN 'observed' WHEN EXISTS(SELECT 1 FROM projects p WHERE p.id=r.project_id AND r.deployed_at<p.runtime_closed_before) THEN 'unknown' WHEN EXISTS(SELECT 1 FROM runtime_events e WHERE e.organization_id=r.organization_id AND e.project_id=r.project_id AND e.application_id=r.application_id AND e.release_id=r.id) THEN 'not_observed' ELSE 'unknown' END presence,ir.occurrence_count,ir.first_seen_at,ir.last_seen_at,(SELECT count(*) FROM runtime_events e WHERE e.organization_id=r.organization_id AND e.project_id=r.project_id AND e.application_id=r.application_id AND e.release_id=r.id) release_evidence_count FROM releases r JOIN applications a ON a.id=r.application_id LEFT JOIN runtime_inventory_releases ir ON ir.release_id=r.id AND ir.item_id=$4 WHERE r.organization_id=$1 AND r.project_id=$2 AND r.application_id=$3 AND ($5::timestamptz IS NULL OR (r.deployed_at,r.id)<($5,$6)) ORDER BY r.deployed_at DESC,r.id DESC LIMIT $7")
         .bind(principal.organization_id).bind(project_id).bind(application_id).bind(item_id).bind(cursor_time).bind(cursor_id).bind(limit + 1)
         .fetch_all(&state.pool).await?;
     let next_cursor = if items.len() > usize::try_from(limit).unwrap_or(usize::MAX) {
@@ -1265,7 +1314,16 @@ async fn item_releases(
     } else {
         None
     };
-    Ok(Json(ReleasePresencePage { items, next_cursor }))
+    Ok(Json(ReleasePresencePage {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
+        items,
+        next_cursor,
+    }))
 }
 
 fn encode_cursor<T: Serialize>(cursor: &T) -> Result<String, InventoryApiError> {
@@ -1317,7 +1375,16 @@ async fn item_sightings(
     } else {
         None
     };
-    Ok(Json(SightingPage { items, next_cursor }))
+    Ok(Json(SightingPage {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
+        items,
+        next_cursor,
+    }))
 }
 
 async fn item_groups(
@@ -1338,7 +1405,16 @@ async fn item_groups(
     } else {
         None
     };
-    Ok(Json(GroupPage { items, next_cursor }))
+    Ok(Json(GroupPage {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
+        items,
+        next_cursor,
+    }))
 }
 
 async fn item_occurrences(
@@ -1367,7 +1443,16 @@ async fn item_occurrences(
     } else {
         None
     };
-    Ok(Json(OccurrencePage { items, next_cursor }))
+    Ok(Json(OccurrencePage {
+        coverage: crate::runtime_retention::history::coverage(
+            &state.pool,
+            principal.organization_id,
+            project_id,
+        )
+        .await?,
+        items,
+        next_cursor,
+    }))
 }
 
 #[cfg(test)]

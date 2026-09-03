@@ -210,7 +210,7 @@ async fn update_group_occurrence(
     event: &RuntimeEvent,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE runtime_event_groups SET first_seen_event_id=CASE WHEN ($2,$3) < (first_seen_at,first_seen_event_id) THEN $3 ELSE first_seen_event_id END, first_seen_at=LEAST(first_seen_at,$2), last_seen_at=GREATEST(last_seen_at,$2), occurrence_count=occurrence_count+1, updated_at=now() WHERE id=$1",
+        "UPDATE runtime_event_groups SET first_seen_event_id=CASE WHEN ($2,$3) < (first_seen_at,first_seen_event_id) THEN $3 ELSE first_seen_event_id END, first_seen_at=CASE WHEN occurrence_count=0 THEN $2 ELSE LEAST(first_seen_at,$2) END, last_seen_at=CASE WHEN occurrence_count=0 THEN $2 ELSE GREATEST(last_seen_at,$2) END, representative_event_id=COALESCE(representative_event_id,$3), occurrence_count=occurrence_count+1, updated_at=now() WHERE id=$1",
     )
     .bind(group_id)
     .bind(event.observed_at)
@@ -229,7 +229,7 @@ async fn update_release_summary(
     event: &RuntimeEvent,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO runtime_event_group_releases (organization_id,project_id,application_id,release_id,group_id,occurrence_count,first_seen_at,last_seen_at,representative_event_id) VALUES ($1,$2,$3,$4,$5,1,$6,$6,$7) ON CONFLICT (release_id,group_id) DO UPDATE SET occurrence_count=runtime_event_group_releases.occurrence_count+1,first_seen_at=LEAST(runtime_event_group_releases.first_seen_at,EXCLUDED.first_seen_at),last_seen_at=GREATEST(runtime_event_group_releases.last_seen_at,EXCLUDED.last_seen_at),updated_at=now()",
+        "INSERT INTO runtime_event_group_releases (organization_id,project_id,application_id,release_id,group_id,occurrence_count,first_seen_at,last_seen_at,representative_event_id) VALUES ($1,$2,$3,$4,$5,1,$6,$6,$7) ON CONFLICT (release_id,group_id) DO UPDATE SET representative_event_id=COALESCE(runtime_event_group_releases.representative_event_id,EXCLUDED.representative_event_id),occurrence_count=runtime_event_group_releases.occurrence_count+1,first_seen_at=LEAST(runtime_event_group_releases.first_seen_at,EXCLUDED.first_seen_at),last_seen_at=GREATEST(runtime_event_group_releases.last_seen_at,EXCLUDED.last_seen_at),updated_at=now()",
     )
     .bind(scope.organization_id).bind(scope.project_id).bind(scope.application_id)
     .bind(release_id).bind(group_id).bind(event.observed_at).bind(raw_event_id)

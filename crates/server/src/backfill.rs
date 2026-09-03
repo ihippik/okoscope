@@ -42,6 +42,7 @@ struct BackfillEvent {
     project_id: Uuid,
     cluster_id: Uuid,
     application_id: Uuid,
+    release_id: Option<Uuid>,
     observed_at: chrono::DateTime<chrono::Utc>,
     node_name: String,
     namespace: String,
@@ -80,8 +81,18 @@ pub async fn run(pool: &PgPool, options: BackfillOptions) -> Result<BackfillStat
     let mut cursor: Option<Uuid> = None;
     let mut stats = BackfillStats::default();
     loop {
+        let mut tx = pool.begin().await?;
+        let closed = crate::runtime_retention::worker::lock_project(
+            &mut tx,
+            options.organization_id,
+            options.project_id,
+        )
+        .await?;
+        if closed.is_some() {
+            tracing::info!(?closed, "backfill covers retained raw evidence only");
+        }
         let rows = sqlx::query_as::<_, BackfillEvent>(
-            "SELECT e.id,e.event_id,e.project_id,e.cluster_id,e.application_id,e.observed_at,e.node_name,e.namespace,e.pod_uid,e.pod_name,e.container_id,e.container_name,e.workload_uid,e.workload_kind,e.workload_name,e.cgroup_id,e.pid,e.tgid,e.process_command,e.event_schema_version,e.payload FROM runtime_events e LEFT JOIN runtime_event_group_memberships m ON m.event_id=e.id AND m.fingerprint_version=$3 WHERE e.organization_id=$1 AND e.project_id=$2 AND m.event_id IS NULL AND ($4::uuid IS NULL OR e.id>$4) AND e.id<=$5 ORDER BY e.id LIMIT $6",
+            "SELECT e.id,e.event_id,e.project_id,e.cluster_id,e.application_id,e.release_id,e.observed_at,e.node_name,e.namespace,e.pod_uid,e.pod_name,e.container_id,e.container_name,e.workload_uid,e.workload_kind,e.workload_name,e.cgroup_id,e.pid,e.tgid,e.process_command,e.event_schema_version,e.payload FROM runtime_events e LEFT JOIN runtime_event_group_memberships m ON m.event_id=e.id AND m.fingerprint_version=$3 WHERE e.organization_id=$1 AND e.project_id=$2 AND m.event_id IS NULL AND ($4::uuid IS NULL OR e.id>$4) AND e.id<=$5 ORDER BY e.id LIMIT $6",
         )
         .bind(options.organization_id)
         .bind(options.project_id)
@@ -89,12 +100,11 @@ pub async fn run(pool: &PgPool, options: BackfillOptions) -> Result<BackfillStat
         .bind(cursor)
         .bind(upper_bound)
         .bind(options.batch_size)
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?;
         if rows.is_empty() {
             break;
         }
-        let mut tx = pool.begin().await?;
         for row in &rows {
             let event = row.to_runtime_event()?;
             let scope = TrustedGroupingScope {
@@ -109,7 +119,7 @@ pub async fn run(pool: &PgPool, options: BackfillOptions) -> Result<BackfillStat
             let outcome = assign_event(
                 &mut tx,
                 row.id,
-                None,
+                row.release_id,
                 &scope,
                 &event,
                 GroupingSource::Backfill,

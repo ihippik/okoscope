@@ -1,6 +1,18 @@
 use std::collections::HashSet;
 
 const LIVE_OPERATIONS: &[(&str, &str)] = &[
+    ("/api/v1/runtime-groups/{group_id}/snapshots", "get"),
+    (
+        "/api/v1/organizations/{organization_id}/runtime-retention",
+        "get",
+    ),
+    (
+        "/api/v1/organizations/{organization_id}/runtime-retention",
+        "put",
+    ),
+    ("/api/v1/projects/{project_id}/runtime-retention", "get"),
+    ("/api/v1/projects/{project_id}/runtime-retention", "put"),
+    ("/api/v1/projects/{project_id}/runtime-retention", "delete"),
     (
         "/api/v1/organizations/{organization_id}/notification-retention",
         "get",

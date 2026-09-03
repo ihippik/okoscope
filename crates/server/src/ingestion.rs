@@ -44,6 +44,20 @@ pub async fn persist_application_batch(
     agent_id: Uuid,
     events: &mut [RuntimeEvent],
 ) -> Result<u32, IngestionError> {
+    Ok(
+        persist_application_batch_outcome(pool, scope, credential, agent_id, events)
+            .await?
+            .0,
+    )
+}
+
+pub async fn persist_application_batch_outcome(
+    pool: &PgPool,
+    scope: SessionScope,
+    credential: ApplicationCredentialScope,
+    agent_id: Uuid,
+    events: &mut [RuntimeEvent],
+) -> Result<(u32, u32), IngestionError> {
     if credential.organization_id != scope.organization_id {
         return Err(IngestionError::InvalidOwnership);
     }
@@ -53,13 +67,26 @@ pub async fn persist_application_batch(
     }
     let context = IngestionContext { scope, agent_id };
     let mut accepted = 0_u32;
+    let mut expired = 0_u32;
+    let closed = crate::runtime_retention::worker::lock_project(
+        &mut tx,
+        scope.organization_id,
+        credential.project_id,
+    )
+    .await?;
     for event in events {
+        if closed.is_some_and(|boundary| event.observed_at < boundary) {
+            expired += 1;
+            crate::runtime_retention::worker::EXPIRED_ARRIVALS
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            continue;
+        }
         event.attribution.project_id = credential.project_id;
         event.attribution.application_id = credential.application_id;
         accepted = accepted.saturating_add(persist_event(&mut tx, context, event).await?);
     }
     tx.commit().await?;
-    Ok(accepted)
+    Ok((accepted, expired))
 }
 
 pub async fn persist_batch(
@@ -69,14 +96,42 @@ pub async fn persist_batch(
 ) -> Result<u32, IngestionError> {
     let mut tx = pool.begin().await?;
     let mut accepted = 0_u32;
+    let mut projects: Vec<_> = events
+        .iter()
+        .map(|event| event.attribution.project_id)
+        .collect();
+    projects.sort_unstable();
+    projects.dedup();
+    for project in projects {
+        crate::runtime_retention::worker::lock_project(
+            &mut tx,
+            context.scope.organization_id,
+            project,
+        )
+        .await
+        .map_err(|error| {
+            if matches!(error, sqlx::Error::RowNotFound) {
+                IngestionError::InvalidOwnership
+            } else {
+                IngestionError::Database(error)
+            }
+        })?;
+    }
     for event in events {
+        let closed: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT runtime_closed_before FROM projects WHERE id=$1")
+                .bind(event.attribution.project_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if closed.is_some_and(|boundary| event.observed_at < boundary) {
+            continue;
+        }
         accepted = accepted.saturating_add(persist_event(&mut tx, context, event).await?);
     }
     tx.commit().await?;
     Ok(accepted)
 }
 
-#[allow(clippy::too_many_lines)]
 async fn persist_event(
     tx: &mut Transaction<'_, Postgres>,
     context: IngestionContext,
@@ -170,15 +225,20 @@ async fn persist_event(
         event,
     )
     .await?;
+    record_event_metrics(event, grouping.group_created);
+    Ok(1)
+}
+
+fn record_event_metrics(event: &RuntimeEvent, group_created: bool) {
     if matches!(&event.payload, EventPayload::NetworkConnect(_)) {
-        crate::metrics::record_network_event(grouping.group_created);
+        crate::metrics::record_network_event(group_created);
         if matches!(&event.payload, EventPayload::NetworkConnect(connect) if connect.dns_context.as_ref().is_some_and(|context| context.ambiguous))
         {
             crate::metrics::record_dns_ambiguous_context();
         }
         tracing::debug!(
             outcome = "accepted",
-            group_created = grouping.group_created,
+            group_created = group_created,
             "network connect event ingested"
         );
     }
@@ -188,11 +248,11 @@ async fn persist_event(
     ) {
         crate::metrics::record_inbound_event(
             matches!(&event.payload, EventPayload::NetworkAccept(_)),
-            grouping.group_created,
+            group_created,
         );
         tracing::debug!(
             outcome = "accepted",
-            group_created = grouping.group_created,
+            group_created = group_created,
             "inbound network event ingested"
         );
     }
@@ -200,10 +260,10 @@ async fn persist_event(
         &event.payload,
         EventPayload::NetworkDnsQuery(_) | EventPayload::NetworkDnsResponse(_)
     ) {
-        crate::metrics::record_dns_event(grouping.group_created);
+        crate::metrics::record_dns_event(group_created);
         tracing::debug!(
             outcome = "accepted",
-            group_created = grouping.group_created,
+            group_created = group_created,
             "DNS event ingested"
         );
     }
@@ -214,14 +274,13 @@ async fn persist_event(
             | EventPayload::FileDelete(_)
             | EventPayload::FileRename(_)
     ) {
-        crate::metrics::record_file_event(grouping.group_created);
+        crate::metrics::record_file_event(group_created);
         tracing::debug!(
             outcome = "accepted",
-            group_created = grouping.group_created,
+            group_created = group_created,
             "file activity event ingested"
         );
     }
-    Ok(1)
 }
 
 async fn resolve_release(

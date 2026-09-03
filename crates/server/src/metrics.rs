@@ -718,5 +718,6 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         body.push_str(&value.to_string());
         body.push('\n');
     }
+    body.push_str(&crate::runtime_retention::worker::render_metrics());
     (StatusCode::OK, body)
 }

@@ -188,7 +188,7 @@ async fn run_stream(
                     match incoming {
                         Ok(Some(message)) => match message.message {
                             Some(server_message::Message::BatchAcknowledgement(ack)) => {
-                                buffer.acknowledge(ack.sequence, &counters);
+                                acknowledge_batch(&mut buffer, &counters, &ack);
                             }
                             Some(server_message::Message::Control(control)) => {
                                 let result = handle_control(control);
@@ -317,6 +317,20 @@ async fn send_batch(
         .await
 }
 
+fn acknowledge_batch(
+    buffer: &mut EventBuffer,
+    counters: &Counters,
+    ack: &protocol::v1::BatchAcknowledgement,
+) {
+    if ack.retention_expired_events > 0 {
+        tracing::info!(
+            expired_events = ack.retention_expired_events,
+            "server discarded events outside retention coverage"
+        );
+    }
+    buffer.acknowledge(ack.sequence, counters);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,6 +338,26 @@ mod tests {
     use event_model::{
         EVENT_SCHEMA_VERSION, EventPayload, KubernetesAttribution, ProcessExec, ProcessIdentity,
     };
+
+    #[test]
+    fn mixed_retention_ack_drops_sequence_without_replaying_eligible_events() {
+        let counters = Counters::default();
+        let mut buffer = EventBuffer::new(2, 2);
+        buffer.push(event(Uuid::new_v4()), &counters);
+        buffer.push(event(Uuid::new_v4()), &counters);
+        let batch = buffer.next_batch(&counters).unwrap();
+        acknowledge_batch(
+            &mut buffer,
+            &counters,
+            &protocol::v1::BatchAcknowledgement {
+                sequence: batch.sequence,
+                accepted_events: 1,
+                retention_expired_events: 1,
+            },
+        );
+        assert!(buffer.replay_pending(&counters).is_empty());
+        assert_eq!(counters.snapshot().acknowledged, 2);
+    }
 
     fn event(route_id: Uuid) -> RuntimeEvent {
         RuntimeEvent {

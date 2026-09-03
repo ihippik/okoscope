@@ -14,3 +14,5 @@ make build-ebpf # Linux with nightly Rust and bpf-linker
 See [Outbound network observation](docs/outbound-network-observation.md) for the opt-in `network.connect` capability, privacy boundary, counters, and rollout order.
 
 See [platform support](docs/platform-support.md) and [deployment and verification](docs/deployment.md).
+
+See [runtime event retention](docs/runtime-events-retention.md) for Organization/Project policies, lightweight daily snapshots, and historical coverage.

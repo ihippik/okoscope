@@ -182,7 +182,7 @@ pub async fn project_event(
         };
         if let Some((listener_observed, accept_observed)) = inbound_evidence {
             sqlx::query(
-                "UPDATE runtime_inventory_items SET first_seen_at=LEAST(first_seen_at,$2),last_seen_at=GREATEST(last_seen_at,$2),occurrence_count=occurrence_count+1,semantic_summary=jsonb_set(jsonb_set(semantic_summary,'{listener_observed}',to_jsonb(COALESCE((semantic_summary->>'listener_observed')::boolean,false) OR $3)),'{accept_observed}',to_jsonb(COALESCE((semantic_summary->>'accept_observed')::boolean,false) OR $4)),updated_at=now() WHERE id=$1",
+                "UPDATE runtime_inventory_items SET first_seen_at=CASE WHEN occurrence_count=0 THEN $2 ELSE LEAST(first_seen_at,$2) END,last_seen_at=CASE WHEN occurrence_count=0 THEN $2 ELSE GREATEST(last_seen_at,$2) END,occurrence_count=occurrence_count+1,semantic_summary=jsonb_set(jsonb_set(semantic_summary,'{listener_observed}',to_jsonb(COALESCE((semantic_summary->>'listener_observed')::boolean,false) OR $3)),'{accept_observed}',to_jsonb(COALESCE((semantic_summary->>'accept_observed')::boolean,false) OR $4)),updated_at=now() WHERE id=$1",
             )
             .bind(item_id)
             .bind(event.observed_at)
@@ -192,7 +192,7 @@ pub async fn project_event(
             .await?;
         } else {
             sqlx::query(
-                "UPDATE runtime_inventory_items SET first_seen_at=LEAST(first_seen_at,$2),last_seen_at=GREATEST(last_seen_at,$2),occurrence_count=occurrence_count+1,updated_at=now() WHERE id=$1",
+                "UPDATE runtime_inventory_items SET first_seen_at=CASE WHEN occurrence_count=0 THEN $2 ELSE LEAST(first_seen_at,$2) END,last_seen_at=CASE WHEN occurrence_count=0 THEN $2 ELSE GREATEST(last_seen_at,$2) END,occurrence_count=occurrence_count+1,updated_at=now() WHERE id=$1",
             )
             .bind(item_id)
             .bind(event.observed_at)

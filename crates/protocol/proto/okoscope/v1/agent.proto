@@ -59,6 +59,9 @@ message EventBatch {
 message BatchAcknowledgement {
   uint64 sequence = 1;
   uint32 accepted_events = 2;
+  // Terminally discarded: observed before the project retention closure.
+  // The entire sequence is acknowledged, including these events.
+  uint32 retention_expired_events = 3;
 }
 
 message RuntimeEvent {

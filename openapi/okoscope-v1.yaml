@@ -8,13 +8,153 @@ servers:
 security:
   - sessionAuth: []
 paths:
+  /api/v1/runtime-groups/{group_id}/snapshots:
+    get:
+      operationId: listRuntimeHistorySnapshots
+      summary: List compacted daily group history
+      description: Whole UTC day history; day_from is inclusive and day_to exclusive. Sub-day timestamps are rejected. Snapshots contain counts only and cannot reconstruct events.
+      parameters:
+        - { name: group_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: day_from, in: query, schema: { type: string, format: date } }
+        - { name: day_to, in: query, schema: { type: string, format: date } }
+        - { name: release_id, in: query, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string, format: uuid } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+          }
+      responses:
+        '200':
+          description: Daily snapshots, newest first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeHistorySnapshotPage' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/v1/organizations/{organization_id}/runtime-retention:
+    parameters: [{ $ref: '#/components/parameters/OrganizationId' }]
+    get:
+      operationId: getOrganizationRuntimeRetention
+      description: Read effective retention settings.
+      responses:
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/RuntimeRetentionPolicy' } },
+              },
+          }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: putOrganizationRuntimeRetention
+      description: Organization owner required. Changes affect subsequent maintenance batches.
+      requestBody:
+        required: true
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/RuntimeRetentionPolicy' } } }
+      responses:
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/RuntimeRetentionPolicy' } },
+              },
+          }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{project_id}/runtime-retention:
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+    get:
+      operationId: getProjectRuntimeRetention
+      description: Read effective retention settings.
+      responses:
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/ProjectRuntimeRetention' } },
+              },
+          }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: putProjectRuntimeRetention
+      description: Organization owner required. Changes affect subsequent maintenance batches.
+      requestBody:
+        required: true
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/RuntimeRetentionPolicy' } } }
+      responses:
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/ProjectRuntimeRetention' } },
+              },
+          }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteProjectRuntimeRetention
+      description: Organization owner required. Changes affect subsequent maintenance batches.
+      responses:
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/ProjectRuntimeRetention' } },
+              },
+          }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/organizations/{organization_id}/notification-retention:
     parameters: [{ $ref: '#/components/parameters/OrganizationId' }]
     get:
       operationId: getOrganizationNotificationRetention
       description: Read effective retention settings.
       responses:
-        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } } } }
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } },
+              },
+          }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -26,9 +166,21 @@ paths:
       description: Organization owner required. Changes affect subsequent maintenance batches.
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } } }
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } },
+          }
       responses:
-        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } } } }
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } },
+              },
+          }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -41,7 +193,15 @@ paths:
       operationId: getProjectNotificationRetention
       description: Read effective retention settings.
       responses:
-        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectNotificationRetention' } } } }
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/ProjectNotificationRetention' } },
+              },
+          }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -53,9 +213,21 @@ paths:
       description: Organization owner required. Changes affect subsequent maintenance batches.
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } } }
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } },
+          }
       responses:
-        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectNotificationRetention' } } } }
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/ProjectNotificationRetention' } },
+              },
+          }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -66,7 +238,15 @@ paths:
       operationId: deleteProjectNotificationRetention
       description: Organization owner required. Changes affect subsequent maintenance batches.
       responses:
-        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectNotificationRetention' } } } }
+        '200':
+          {
+            description: Retention settings,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/ProjectNotificationRetention' } },
+              },
+          }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -124,10 +304,21 @@ paths:
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
       responses:
-        '201': { description: Organization created, content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
-        '200': { description: Original Organization returned for an idempotent replay, content: { application/json: { schema: { $ref: '#/components/schemas/Organization' } } } }
+        '201':
+          {
+            description: Organization created,
+            content:
+              { application/json: { schema: { $ref: '#/components/schemas/Organization' } } },
+          }
+        '200':
+          {
+            description: Original Organization returned for an idempotent replay,
+            content:
+              { application/json: { schema: { $ref: '#/components/schemas/Organization' } } },
+          }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
@@ -137,7 +328,15 @@ paths:
       operationId: listAdminOrganizations
       security: [{ adminAuth: [] }]
       responses:
-        '200': { description: Organizations ordered by creation time and id, content: { application/json: { schema: { $ref: '#/components/schemas/AdminOrganizationPage' } } } }
+        '200':
+          {
+            description: Organizations ordered by creation time and id,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/AdminOrganizationPage' } },
+              },
+          }
         '401': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /api/v1/admin/organizations/{organization_id}/projects:
@@ -146,7 +345,12 @@ paths:
       operationId: listAdminProjects
       security: [{ adminAuth: [] }]
       responses:
-        '200': { description: Projects ordered by creation time and id, content: { application/json: { schema: { $ref: '#/components/schemas/AdminProjectPage' } } } }
+        '200':
+          {
+            description: Projects ordered by creation time and id,
+            content:
+              { application/json: { schema: { $ref: '#/components/schemas/AdminProjectPage' } } },
+          }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
@@ -156,17 +360,36 @@ paths:
       operationId: listAdminApplications
       security: [{ adminAuth: [] }]
       responses:
-        '200': { description: Applications ordered by creation time and id, content: { application/json: { schema: { $ref: '#/components/schemas/AdminApplicationPage' } } } }
+        '200':
+          {
+            description: Applications ordered by creation time and id,
+            content:
+              {
+                application/json: { schema: { $ref: '#/components/schemas/AdminApplicationPage' } },
+              },
+          }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /api/v1/admin/projects/{project_id}/applications/{application_id}:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
     get:
       operationId: getAdminApplication
       security: [{ adminAuth: [] }]
       responses:
-        '200': { description: Application metadata without credentials, content: { application/json: { schema: { $ref: '#/components/schemas/ProvisionedApplication' } } } }
+        '200':
+          {
+            description: Application metadata without credentials,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/ProvisionedApplication' } },
+              },
+          }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
@@ -178,10 +401,21 @@ paths:
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
       responses:
-        '201': { description: Project created, content: { application/json: { schema: { $ref: '#/components/schemas/ProvisionedProject' } } } }
-        '200': { description: Original Project returned for an idempotent replay, content: { application/json: { schema: { $ref: '#/components/schemas/ProvisionedProject' } } } }
+        '201':
+          {
+            description: Project created,
+            content:
+              { application/json: { schema: { $ref: '#/components/schemas/ProvisionedProject' } } },
+          }
+        '200':
+          {
+            description: Original Project returned for an idempotent replay,
+            content:
+              { application/json: { schema: { $ref: '#/components/schemas/ProvisionedProject' } } },
+          }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -193,9 +427,21 @@ paths:
       description: Returns a bounded, repeatable-read organization triage snapshot. Totals cover the complete tenant-scoped database set; disappeared means no longer observed and is not a security or deletion claim.
       parameters:
         - { name: window, in: query, schema: { $ref: '#/components/schemas/AttentionWindowKind' } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
-        - { name: changed_application_limit, in: query, schema: { type: integer, minimum: 1, maximum: 10, default: 5 } }
-        - { name: recommendation_limit, in: query, schema: { type: integer, minimum: 1, maximum: 10, default: 5 } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 50, default: 20 },
+          }
+        - {
+            name: changed_application_limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 10, default: 5 },
+          }
+        - {
+            name: recommendation_limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 10, default: 5 },
+          }
       responses:
         '200': { $ref: '#/components/responses/OrganizationAttentionSummary' }
         '400': { $ref: '#/components/responses/Error' }
@@ -203,15 +449,30 @@ paths:
         '500': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/applications/{application_id}/attention-summary:
     parameters:
-      [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
     get:
       operationId: getApplicationAttentionSummary
       description: Returns a bounded Application investigation snapshot using the latest comparable release and complete discovery totals.
       parameters:
         - { name: window, in: query, schema: { $ref: '#/components/schemas/AttentionWindowKind' } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
-        - { name: largest_change_limit, in: query, schema: { type: integer, minimum: 1, maximum: 10, default: 5 } }
-        - { name: recommendation_limit, in: query, schema: { type: integer, minimum: 1, maximum: 10, default: 5 } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 50, default: 20 },
+          }
+        - {
+            name: largest_change_limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 10, default: 5 },
+          }
+        - {
+            name: recommendation_limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 10, default: 5 },
+          }
       responses:
         '200': { $ref: '#/components/responses/ApplicationAttentionSummary' }
         '400': { $ref: '#/components/responses/Error' }
@@ -262,9 +523,15 @@ paths:
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/CreateNamedResource' } } }
       responses:
-        '201': { description: Application and one-time initial credential created, content: { application/json: { schema: { $ref: '#/components/schemas/CreatedApplication' } } } }
+        '201':
+          {
+            description: Application and one-time initial credential created,
+            content:
+              { application/json: { schema: { $ref: '#/components/schemas/CreatedApplication' } } },
+          }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -305,12 +572,23 @@ paths:
         }
   /api/v1/projects/{project_id}/applications/{application_id}/credentials:
     parameters:
-      [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
     get:
       operationId: listApplicationCredentials
       security: [{ sessionAuth: [] }, { adminAuth: [] }]
       responses:
-        '200': { description: Secret-safe credential metadata, content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationCredentialPage' } } } }
+        '200':
+          {
+            description: Secret-safe credential metadata,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/ApplicationCredentialPage' } },
+              },
+          }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
     post:
@@ -319,9 +597,18 @@ paths:
       parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/IssueCredentialRequest' } } }
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/IssueCredentialRequest' } } }
       responses:
-        '201': { description: One-time Application credential, content: { application/json: { schema: { $ref: '#/components/schemas/IssuedApplicationCredential' } } } }
+        '201':
+          {
+            description: One-time Application credential,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: '#/components/schemas/IssuedApplicationCredential' } },
+              },
+          }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -329,7 +616,11 @@ paths:
         '500': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/applications/{application_id}/credentials/{credential_id}:
     parameters:
-      [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/CredentialId' }]
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/CredentialId' },
+      ]
     delete:
       operationId: revokeApplicationCredential
       security: [{ sessionAuth: [] }, { adminAuth: [] }]
@@ -630,56 +921,391 @@ paths:
         - { $ref: '#/components/parameters/Limit' }
       responses: { '200': { $ref: '#/components/responses/RuntimeGroupPage' } }
   /api/v1/projects/{project_id}/applications/{application_id}/policies:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
     get:
       operationId: listRuntimePolicies
-      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
-      responses: { '200': { description: Policy page, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyPage' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } }
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        {
+          '200':
+            {
+              description: Policy page,
+              content:
+                { application/json: { schema: { $ref: '#/components/schemas/PolicyPage' } } },
+            },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+          '500': { $ref: '#/components/responses/Error' },
+        }
     post:
       operationId: createRuntimePolicy
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyMutation' } } } }
-      responses: { '200': { description: Policy command result, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyCommandResult' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } }
+      requestBody:
+        {
+          required: true,
+          content:
+            { application/json: { schema: { $ref: '#/components/schemas/PolicyMutation' } } },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Policy command result,
+              content:
+                {
+                  application/json:
+                    { schema: { $ref: '#/components/schemas/PolicyCommandResult' } },
+                },
+            },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+          '409': { $ref: '#/components/responses/Error' },
+          '500': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/policies/preview:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
     post:
       operationId: previewRuntimePolicy
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyRevisionInput' } } } }
-      responses: { '200': { description: Non-mutating policy preview, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyPreview' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } }
+      requestBody:
+        {
+          required: true,
+          content:
+            { application/json: { schema: { $ref: '#/components/schemas/PolicyRevisionInput' } } },
+        }
+      responses:
+        {
+          '200':
+            {
+              description: Non-mutating policy preview,
+              content:
+                { application/json: { schema: { $ref: '#/components/schemas/PolicyPreview' } } },
+            },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+          '409': { $ref: '#/components/responses/Error' },
+          '500': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/PolicyId' }]
-    get: { operationId: getRuntimePolicy, responses: { '200': { description: Policy, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimePolicy' } } } }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/PolicyId' },
+      ]
+    get:
+      {
+        operationId: getRuntimePolicy,
+        responses:
+          {
+            '200':
+              {
+                description: Policy,
+                content:
+                  { application/json: { schema: { $ref: '#/components/schemas/RuntimePolicy' } } },
+              },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
   /api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}/revisions:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/PolicyId' }]
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/PolicyId' },
+      ]
     get:
       operationId: listRuntimePolicyRevisions
-      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
-      responses: { '200': { description: Immutable revision page, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyRevisionPage' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } }
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        {
+          '200':
+            {
+              description: Immutable revision page,
+              content:
+                {
+                  application/json: { schema: { $ref: '#/components/schemas/PolicyRevisionPage' } },
+                },
+            },
+          '400': { $ref: '#/components/responses/Error' },
+          '401': { $ref: '#/components/responses/Error' },
+          '404': { $ref: '#/components/responses/Error' },
+          '500': { $ref: '#/components/responses/Error' },
+        }
   /api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}/replace:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/PolicyId' }]
-    post: { operationId: replaceRuntimePolicy, parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyReplacement' } } } }, responses: { '200': { description: Replaced policy, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyCommandResult' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/PolicyId' },
+      ]
+    post:
+      {
+        operationId: replaceRuntimePolicy,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        requestBody:
+          {
+            required: true,
+            content:
+              { application/json: { schema: { $ref: '#/components/schemas/PolicyReplacement' } } },
+          },
+        responses:
+          {
+            '200':
+              {
+                description: Replaced policy,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: '#/components/schemas/PolicyCommandResult' } },
+                  },
+              },
+            '400': { $ref: '#/components/responses/Error' },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '409': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
   /api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}/enable:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/PolicyId' }]
-    post: { operationId: enableRuntimePolicy, parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '200': { description: Enabled policy, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyCommandResult' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/PolicyId' },
+      ]
+    post:
+      {
+        operationId: enableRuntimePolicy,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        responses:
+          {
+            '200':
+              {
+                description: Enabled policy,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: '#/components/schemas/PolicyCommandResult' } },
+                  },
+              },
+            '400': { $ref: '#/components/responses/Error' },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '409': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
   /api/v1/projects/{project_id}/applications/{application_id}/policies/{policy_id}/disable:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/PolicyId' }]
-    post: { operationId: disableRuntimePolicy, parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '200': { description: Disabled policy, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyCommandResult' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/PolicyId' },
+      ]
+    post:
+      {
+        operationId: disableRuntimePolicy,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        responses:
+          {
+            '200':
+              {
+                description: Disabled policy,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: '#/components/schemas/PolicyCommandResult' } },
+                  },
+              },
+            '400': { $ref: '#/components/responses/Error' },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '409': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/{item_id}/policy-seed:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/InventoryItemId' }]
-    get: { operationId: getInventoryPolicySeed, responses: { '200': { description: Typed inventory policy seed, content: { application/json: { schema: { $ref: '#/components/schemas/PolicySeed' } } } }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/InventoryItemId' },
+      ]
+    get:
+      {
+        operationId: getInventoryPolicySeed,
+        responses:
+          {
+            '200':
+              {
+                description: Typed inventory policy seed,
+                content:
+                  { application/json: { schema: { $ref: '#/components/schemas/PolicySeed' } } },
+              },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
   /api/v1/projects/{project_id}/applications/{application_id}/runtime-groups/{group_id}/policy-seed:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { $ref: '#/components/parameters/GroupId' }]
-    get: { operationId: getRuntimeGroupPolicySeed, responses: { '200': { description: Typed group policy seed, content: { application/json: { schema: { $ref: '#/components/schemas/PolicySeed' } } } }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/GroupId' },
+      ]
+    get:
+      {
+        operationId: getRuntimeGroupPolicySeed,
+        responses:
+          {
+            '200':
+              {
+                description: Typed group policy seed,
+                content:
+                  { application/json: { schema: { $ref: '#/components/schemas/PolicySeed' } } },
+              },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
   /api/v1/projects/{project_id}/applications/{application_id}/policy-suppressions:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }]
-    get: { operationId: listPolicySuppressions, parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }, { name: active, in: query, schema: { type: boolean } }], responses: { '200': { description: Suppression page, content: { application/json: { schema: { $ref: '#/components/schemas/SuppressionPage' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
-    post: { operationId: createPolicySuppression, parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SuppressionMutation' } } } }, responses: { '200': { description: Suppression, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyCommandResult' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
+    get:
+      {
+        operationId: listPolicySuppressions,
+        parameters:
+          [
+            { $ref: '#/components/parameters/Cursor' },
+            { $ref: '#/components/parameters/Limit' },
+            { name: active, in: query, schema: { type: boolean } },
+          ],
+        responses:
+          {
+            '200':
+              {
+                description: Suppression page,
+                content:
+                  {
+                    application/json: { schema: { $ref: '#/components/schemas/SuppressionPage' } },
+                  },
+              },
+            '400': { $ref: '#/components/responses/Error' },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
+    post:
+      {
+        operationId: createPolicySuppression,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        requestBody:
+          {
+            required: true,
+            content:
+              {
+                application/json: { schema: { $ref: '#/components/schemas/SuppressionMutation' } },
+              },
+          },
+        responses:
+          {
+            '200':
+              {
+                description: Suppression,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: '#/components/schemas/PolicyCommandResult' } },
+                  },
+              },
+            '400': { $ref: '#/components/responses/Error' },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '409': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
   /api/v1/projects/{project_id}/applications/{application_id}/policy-suppressions/{suppression_id}/cancel:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { name: suppression_id, in: path, required: true, schema: { type: string, format: uuid } }]
-    post: { operationId: cancelPolicySuppression, parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '200': { description: Cancelled suppression, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyCommandResult' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { name: suppression_id, in: path, required: true, schema: { type: string, format: uuid } },
+      ]
+    post:
+      {
+        operationId: cancelPolicySuppression,
+        parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
+        responses:
+          {
+            '200':
+              {
+                description: Cancelled suppression,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: '#/components/schemas/PolicyCommandResult' } },
+                  },
+              },
+            '400': { $ref: '#/components/responses/Error' },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '409': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
   /api/v1/projects/{project_id}/applications/{application_id}/policy-recomputations/{recomputation_id}:
-    parameters: [{ $ref: '#/components/parameters/ProjectId' }, { $ref: '#/components/parameters/ApplicationId' }, { name: recomputation_id, in: path, required: true, schema: { type: string, format: uuid } }]
-    get: { operationId: getPolicyRecomputation, responses: { '200': { description: Recomputation status, content: { application/json: { schema: { $ref: '#/components/schemas/PolicyRecomputation' } } } }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } } }
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        {
+          name: recomputation_id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        },
+      ]
+    get:
+      {
+        operationId: getPolicyRecomputation,
+        responses:
+          {
+            '200':
+              {
+                description: Recomputation status,
+                content:
+                  {
+                    application/json:
+                      { schema: { $ref: '#/components/schemas/PolicyRecomputation' } },
+                  },
+              },
+            '401': { $ref: '#/components/responses/Error' },
+            '404': { $ref: '#/components/responses/Error' },
+            '500': { $ref: '#/components/responses/Error' },
+          },
+      }
   /api/v1/runtime-groups/{group_id}:
     parameters: [{ $ref: '#/components/parameters/GroupId' }]
     get:
@@ -761,7 +1387,8 @@ paths:
     get:
       operationId: listDeploymentEpisodes
       description: Lists observed Kubernetes deployment episodes. Ready Pod share is not measured traffic share or declared rollout intent.
-      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      parameters:
+        [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
       responses: { '200': { $ref: '#/components/responses/DeploymentEpisodePage' } }
   /api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff:
     parameters:
@@ -970,8 +1597,7 @@ components:
       { name: credential_id, in: path, required: true, schema: { type: string, format: uuid } }
     InventoryItemId:
       { name: item_id, in: path, required: true, schema: { type: string, format: uuid } }
-    PolicyId:
-      { name: policy_id, in: path, required: true, schema: { type: string, format: uuid } }
+    PolicyId: { name: policy_id, in: path, required: true, schema: { type: string, format: uuid } }
     GroupId: { name: group_id, in: path, required: true, schema: { type: string, format: uuid } }
     ReleaseId:
       { name: release_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1000,6 +1626,74 @@ components:
   headers:
     RequestId: { schema: { type: string }, description: Correlation identifier for the request. }
   schemas:
+    RuntimeRetentionCoverage:
+      type: object
+      additionalProperties: false
+      required: [closed_before, history_expired_before, detail_scope]
+      properties:
+        closed_before: { $ref: '#/components/schemas/NullableTimestamp' }
+        history_expired_before: { $ref: '#/components/schemas/NullableTimestamp' }
+        detail_scope: { type: string, enum: [raw] }
+    RuntimeHistorySnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          group_id,
+          release_id,
+          day,
+          format_version,
+          occurrence_count,
+          first_observed_at,
+          last_observed_at,
+        ]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        group_id: { $ref: '#/components/schemas/Uuid' }
+        release_id: { $ref: '#/components/schemas/NullableUuid' }
+        day: { type: string, format: date }
+        format_version: { type: integer, enum: [1] }
+        occurrence_count: { type: integer, format: int64, minimum: 1 }
+        first_observed_at: { $ref: '#/components/schemas/Timestamp' }
+        last_observed_at: { $ref: '#/components/schemas/Timestamp' }
+    RuntimeHistorySnapshotPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor, coverage, granularity]
+      properties:
+        items:
+          {
+            type: array,
+            maxItems: 100,
+            items: { $ref: '#/components/schemas/RuntimeHistorySnapshot' },
+          }
+        next_cursor: { $ref: '#/components/schemas/NullableUuid' }
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
+        granularity: { type: string, enum: [utc_day] }
+    RuntimeRetentionPolicy:
+      type: object
+      additionalProperties: false
+      required: [enabled, raw_days, history_days]
+      properties:
+        enabled: { type: boolean, default: false }
+        raw_days: { type: integer, minimum: 1, maximum: 3650, default: 30 }
+        history_days:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 3650
+          description: Total observation age in days; must be at least raw_days. Null preserves snapshots forever. Processing uses complete UTC days.
+    ProjectRuntimeRetention:
+      type: object
+      required: [override, effective, inherited, source]
+      properties:
+        override:
+          anyOf:
+            - { $ref: '#/components/schemas/RuntimeRetentionPolicy' }
+            - { type: 'null' }
+        effective: { $ref: '#/components/schemas/RuntimeRetentionPolicy' }
+        inherited: { $ref: '#/components/schemas/RuntimeRetentionPolicy' }
+        source: { type: string, enum: [organization, project] }
     NotificationRetentionPolicy:
       type: object
       additionalProperties: false
@@ -1022,7 +1716,8 @@ components:
         effective: { $ref: '#/components/schemas/NotificationRetentionPolicy' }
         inherited: { $ref: '#/components/schemas/NotificationRetentionPolicy' }
         source: { type: string, enum: [organization, project] }
-    PolicyVerdict: { type: string, enum: [unclassified, expected, requires_review, policy_conflict] }
+    PolicyVerdict:
+      { type: string, enum: [unclassified, expected, requires_review, policy_conflict] }
     PolicyEvaluationState: { type: string, enum: [current, evaluation_pending] }
     PolicyEffect: { type: string, enum: [expected, requires_review] }
     PolicyPlacementMatcher:
@@ -1054,13 +1749,103 @@ components:
           lifecycle_process_exit: '#/components/schemas/LifecycleBehaviorMatcher'
           lifecycle_container_termination: '#/components/schemas/LifecycleBehaviorMatcher'
           lifecycle_container_restart: '#/components/schemas/LifecycleBehaviorMatcher'
-    ProcessBehaviorMatcher: { type: object, additionalProperties: false, required: [kind, executable], properties: { kind: { const: process }, executable: { type: string } } }
-    DestinationBehaviorMatcher: { type: object, additionalProperties: false, required: [kind, process_command, address_family, destination_address, destination_port], properties: { kind: { const: destination }, process_command: { type: string }, address_family: { type: string, enum: [ipv4, ipv6] }, destination_address: { type: string }, destination_port: { type: integer, minimum: 0, maximum: 65535 } } }
-    DomainBehaviorMatcher: { type: object, additionalProperties: false, required: [kind, process_command, name, query_type], properties: { kind: { const: domain }, process_command: { type: string }, name: { type: string }, query_type: { type: string } } }
-    SyscallBehaviorMatcher: { type: object, additionalProperties: false, required: [kind, process_command, syscall], properties: { kind: { const: syscall }, process_command: { type: string }, syscall: { type: string } } }
-    InboundBehaviorMatcher: { type: object, additionalProperties: false, required: [kind, transport, local_address, local_port], properties: { kind: { const: inbound_endpoint }, transport: { type: string }, local_address: { type: string }, local_port: { type: integer, minimum: 0, maximum: 65535 } } }
-    FileBehaviorMatcher: { type: object, additionalProperties: false, required: [kind, process_command, operation, path], properties: { kind: { const: file_activity }, process_command: { type: string }, operation: { type: string }, path: { type: string }, new_path: { type: string }, replaced: { type: boolean } } }
-    LifecycleBehaviorMatcher: { type: object, additionalProperties: false, required: [kind], properties: { kind: { type: string, enum: [lifecycle_process_exit, lifecycle_container_termination, lifecycle_container_restart] }, identity: { type: string }, container_name: { type: string }, reason: { type: string }, exit_code: { type: integer } } }
+    ProcessBehaviorMatcher:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [kind, executable],
+        properties: { kind: { const: process }, executable: { type: string } },
+      }
+    DestinationBehaviorMatcher:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [kind, process_command, address_family, destination_address, destination_port],
+        properties:
+          {
+            kind: { const: destination },
+            process_command: { type: string },
+            address_family: { type: string, enum: [ipv4, ipv6] },
+            destination_address: { type: string },
+            destination_port: { type: integer, minimum: 0, maximum: 65535 },
+          },
+      }
+    DomainBehaviorMatcher:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [kind, process_command, name, query_type],
+        properties:
+          {
+            kind: { const: domain },
+            process_command: { type: string },
+            name: { type: string },
+            query_type: { type: string },
+          },
+      }
+    SyscallBehaviorMatcher:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [kind, process_command, syscall],
+        properties:
+          {
+            kind: { const: syscall },
+            process_command: { type: string },
+            syscall: { type: string },
+          },
+      }
+    InboundBehaviorMatcher:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [kind, transport, local_address, local_port],
+        properties:
+          {
+            kind: { const: inbound_endpoint },
+            transport: { type: string },
+            local_address: { type: string },
+            local_port: { type: integer, minimum: 0, maximum: 65535 },
+          },
+      }
+    FileBehaviorMatcher:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [kind, process_command, operation, path],
+        properties:
+          {
+            kind: { const: file_activity },
+            process_command: { type: string },
+            operation: { type: string },
+            path: { type: string },
+            new_path: { type: string },
+            replaced: { type: boolean },
+          },
+      }
+    LifecycleBehaviorMatcher:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [kind],
+        properties:
+          {
+            kind:
+              {
+                type: string,
+                enum:
+                  [
+                    lifecycle_process_exit,
+                    lifecycle_container_termination,
+                    lifecycle_container_restart,
+                  ],
+              },
+            identity: { type: string },
+            container_name: { type: string },
+            reason: { type: string },
+            exit_code: { type: integer },
+          },
+      }
     PolicyRevisionInput:
       type: object
       additionalProperties: false
@@ -1075,12 +1860,20 @@ components:
       type: object
       additionalProperties: false
       required: [name, revision]
-      properties: { name: { type: string, minLength: 1, maxLength: 160 }, revision: { $ref: '#/components/schemas/PolicyRevisionInput' } }
+      properties:
+        {
+          name: { type: string, minLength: 1, maxLength: 160 },
+          revision: { $ref: '#/components/schemas/PolicyRevisionInput' },
+        }
     PolicyReplacement:
       type: object
       additionalProperties: false
       required: [revision]
-      properties: { name: { type: string, minLength: 1, maxLength: 160 }, revision: { $ref: '#/components/schemas/PolicyRevisionInput' } }
+      properties:
+        {
+          name: { type: string, minLength: 1, maxLength: 160 },
+          revision: { $ref: '#/components/schemas/PolicyRevisionInput' },
+        }
     SuppressionMutation:
       type: object
       additionalProperties: false
@@ -1094,7 +1887,28 @@ components:
     RuntimePolicy:
       type: object
       additionalProperties: false
-      required: [id, project_id, application_id, name, current_revision_id, revision_number, enabled, inventory_kind, identity_version, behavior_matcher, cluster_ids, namespaces, workload_kinds, workload_names, inside_effect, outside_effect, created_by_user_id, created_at, updated_at]
+      required:
+        [
+          id,
+          project_id,
+          application_id,
+          name,
+          current_revision_id,
+          revision_number,
+          enabled,
+          inventory_kind,
+          identity_version,
+          behavior_matcher,
+          cluster_ids,
+          namespaces,
+          workload_kinds,
+          workload_names,
+          inside_effect,
+          outside_effect,
+          created_by_user_id,
+          created_at,
+          updated_at,
+        ]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         project_id: { $ref: '#/components/schemas/Uuid' }
@@ -1103,10 +1917,13 @@ components:
         current_revision_id: { $ref: '#/components/schemas/NullableUuid' }
         revision_number: { type: [integer, 'null'], format: int64, minimum: 1 }
         enabled: { type: [boolean, 'null'] }
-        inventory_kind: { anyOf: [{ $ref: '#/components/schemas/InventoryKind' }, { type: 'null' }] }
+        inventory_kind:
+          { anyOf: [{ $ref: '#/components/schemas/InventoryKind' }, { type: 'null' }] }
         identity_version: { type: [integer, 'null'], minimum: 1 }
-        behavior_matcher: { anyOf: [{ $ref: '#/components/schemas/BehaviorMatcher' }, { type: 'null' }] }
-        cluster_ids: { type: [array, 'null'], maxItems: 50, items: { $ref: '#/components/schemas/Uuid' } }
+        behavior_matcher:
+          { anyOf: [{ $ref: '#/components/schemas/BehaviorMatcher' }, { type: 'null' }] }
+        cluster_ids:
+          { type: [array, 'null'], maxItems: 50, items: { $ref: '#/components/schemas/Uuid' } }
         namespaces: { type: [array, 'null'], maxItems: 50, items: { type: string } }
         workload_kinds: { type: [array, 'null'], maxItems: 50, items: { type: string } }
         workload_names: { type: [array, 'null'], maxItems: 50, items: { type: string } }
@@ -1118,7 +1935,28 @@ components:
     PolicyRevision:
       type: object
       additionalProperties: false
-      required: [id, policy_id, revision_number, prior_revision_id, enabled, inventory_kind, identity_version, identity_digest, behavior_matcher, cluster_ids, namespaces, workload_kinds, workload_names, inside_effect, outside_effect, source_inventory_item_id, source_runtime_group_id, created_by_user_id, created_at]
+      required:
+        [
+          id,
+          policy_id,
+          revision_number,
+          prior_revision_id,
+          enabled,
+          inventory_kind,
+          identity_version,
+          identity_digest,
+          behavior_matcher,
+          cluster_ids,
+          namespaces,
+          workload_kinds,
+          workload_names,
+          inside_effect,
+          outside_effect,
+          source_inventory_item_id,
+          source_runtime_group_id,
+          created_by_user_id,
+          created_at,
+        ]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         policy_id: { $ref: '#/components/schemas/Uuid' }
@@ -1127,7 +1965,13 @@ components:
         enabled: { type: boolean }
         inventory_kind: { $ref: '#/components/schemas/InventoryKind' }
         identity_version: { type: integer, minimum: 1 }
-        identity_digest: { type: array, minItems: 32, maxItems: 32, items: { type: integer, minimum: 0, maximum: 255 } }
+        identity_digest:
+          {
+            type: array,
+            minItems: 32,
+            maxItems: 32,
+            items: { type: integer, minimum: 0, maximum: 255 },
+          }
         behavior_matcher: { $ref: '#/components/schemas/BehaviorMatcher' }
         cluster_ids: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/Uuid' } }
         namespaces: { type: array, maxItems: 50, items: { type: string } }
@@ -1139,12 +1983,117 @@ components:
         source_runtime_group_id: { $ref: '#/components/schemas/NullableUuid' }
         created_by_user_id: { $ref: '#/components/schemas/Uuid' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
-    PolicyPage: { type: object, additionalProperties: false, required: [items, next_cursor], properties: { items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/RuntimePolicy' } }, next_cursor: { $ref: '#/components/schemas/NullableUuid' } } }
-    PolicyRevisionPage: { type: object, additionalProperties: false, required: [items, next_cursor], properties: { items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/PolicyRevision' } }, next_cursor: { $ref: '#/components/schemas/NullableUuid' } } }
-    PolicyPreview: { type: object, additionalProperties: false, required: [snapshot_at, group_count, sighting_count, cluster_count, namespace_count, workload_count, expected_count, requires_review_count, representative_group_ids, representative_sightings], properties: { snapshot_at: { $ref: '#/components/schemas/Timestamp' }, group_count: { type: integer, minimum: 0 }, sighting_count: { type: integer, minimum: 0 }, cluster_count: { type: integer, minimum: 0 }, namespace_count: { type: integer, minimum: 0 }, workload_count: { type: integer, minimum: 0 }, expected_count: { type: integer, minimum: 0 }, requires_review_count: { type: integer, minimum: 0 }, representative_group_ids: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/Uuid' } }, representative_sightings: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/PolicyPreviewSighting' } } } }
-    PolicyPreviewSighting: { type: object, additionalProperties: false, required: [cluster_id, namespace, workload_kind, workload_name, pod_uid, container_name], properties: { cluster_id: { $ref: '#/components/schemas/Uuid' }, namespace: { type: string }, workload_kind: { type: string }, workload_name: { type: string }, pod_uid: { type: string }, container_name: { type: string } } }
-    PolicyCommandResult: { type: object, additionalProperties: false, required: [resource_id, policy_state_version], properties: { resource_id: { $ref: '#/components/schemas/Uuid' }, revision_id: { $ref: '#/components/schemas/Uuid' }, recomputation_id: { $ref: '#/components/schemas/Uuid' }, policy_state_version: { type: integer, format: int64 } } }
-    PolicyRecomputation: { type: object, additionalProperties: false, required: [id, state, attempt_count, created_at, updated_at], properties: { id: { $ref: '#/components/schemas/Uuid' }, state: { type: string, enum: [pending, running, completed, failed] }, attempt_count: { type: integer, minimum: 0 }, requested_policy_revision_id: { anyOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }, created_at: { $ref: '#/components/schemas/Timestamp' }, started_at: { anyOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }, completed_at: { anyOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }, updated_at: { $ref: '#/components/schemas/Timestamp' } } }
+    PolicyPage:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [items, next_cursor],
+        properties:
+          {
+            items:
+              { type: array, maxItems: 200, items: { $ref: '#/components/schemas/RuntimePolicy' } },
+            next_cursor: { $ref: '#/components/schemas/NullableUuid' },
+          },
+      }
+    PolicyRevisionPage:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [items, next_cursor],
+        properties:
+          {
+            items:
+              {
+                type: array,
+                maxItems: 200,
+                items: { $ref: '#/components/schemas/PolicyRevision' },
+              },
+            next_cursor: { $ref: '#/components/schemas/NullableUuid' },
+          },
+      }
+    PolicyPreview:
+      {
+        type: object,
+        additionalProperties: false,
+        required:
+          [
+            snapshot_at,
+            group_count,
+            sighting_count,
+            cluster_count,
+            namespace_count,
+            workload_count,
+            expected_count,
+            requires_review_count,
+            representative_group_ids,
+            representative_sightings,
+          ],
+        properties:
+          {
+            snapshot_at: { $ref: '#/components/schemas/Timestamp' },
+            group_count: { type: integer, minimum: 0 },
+            sighting_count: { type: integer, minimum: 0 },
+            cluster_count: { type: integer, minimum: 0 },
+            namespace_count: { type: integer, minimum: 0 },
+            workload_count: { type: integer, minimum: 0 },
+            expected_count: { type: integer, minimum: 0 },
+            requires_review_count: { type: integer, minimum: 0 },
+            representative_group_ids:
+              { type: array, maxItems: 20, items: { $ref: '#/components/schemas/Uuid' } },
+            representative_sightings:
+              {
+                type: array,
+                maxItems: 20,
+                items: { $ref: '#/components/schemas/PolicyPreviewSighting' },
+              },
+          },
+      }
+    PolicyPreviewSighting:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [cluster_id, namespace, workload_kind, workload_name, pod_uid, container_name],
+        properties:
+          {
+            cluster_id: { $ref: '#/components/schemas/Uuid' },
+            namespace: { type: string },
+            workload_kind: { type: string },
+            workload_name: { type: string },
+            pod_uid: { type: string },
+            container_name: { type: string },
+          },
+      }
+    PolicyCommandResult:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [resource_id, policy_state_version],
+        properties:
+          {
+            resource_id: { $ref: '#/components/schemas/Uuid' },
+            revision_id: { $ref: '#/components/schemas/Uuid' },
+            recomputation_id: { $ref: '#/components/schemas/Uuid' },
+            policy_state_version: { type: integer, format: int64 },
+          },
+      }
+    PolicyRecomputation:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [id, state, attempt_count, created_at, updated_at],
+        properties:
+          {
+            id: { $ref: '#/components/schemas/Uuid' },
+            state: { type: string, enum: [pending, running, completed, failed] },
+            attempt_count: { type: integer, minimum: 0 },
+            requested_policy_revision_id:
+              { anyOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] },
+            created_at: { $ref: '#/components/schemas/Timestamp' },
+            started_at: { anyOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] },
+            completed_at: { anyOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] },
+            updated_at: { $ref: '#/components/schemas/Timestamp' },
+          },
+      }
     PolicySeed:
       oneOf:
         - { $ref: '#/components/schemas/AvailablePolicySeed' }
@@ -1154,19 +2103,102 @@ components:
         mapping:
           available: '#/components/schemas/AvailablePolicySeed'
           unavailable: '#/components/schemas/UnavailablePolicySeed'
-    AvailablePolicySeed: { type: object, additionalProperties: false, required: [state, seed], properties: { state: { const: available }, seed: { $ref: '#/components/schemas/PolicySeedValue' } } }
-    UnavailablePolicySeed: { type: object, additionalProperties: false, required: [state, reason], properties: { state: { const: unavailable }, reason: { type: string, enum: [unsupported_identity_version, unsupported_inventory_kind, invalid_semantic_identity, invalid_identity_digest] } } }
-    PolicySeedValue: { type: object, additionalProperties: false, required: [behavior, placement, inside_effect], properties: { behavior: { $ref: '#/components/schemas/BehaviorIdentity' }, placement: { $ref: '#/components/schemas/PolicyPlacementMatcher' }, source_inventory_item_id: { $ref: '#/components/schemas/Uuid' }, source_runtime_group_id: { $ref: '#/components/schemas/Uuid' }, inside_effect: { $ref: '#/components/schemas/PolicyEffect' }, outside_effect: { type: string, enum: [requires_review] } } }
-    BehaviorIdentity: { type: object, additionalProperties: false, required: [identity_version, identity_digest, matcher], properties: { identity_version: { type: integer, minimum: 1 }, identity_digest: { type: array, minItems: 32, maxItems: 32, items: { type: integer, minimum: 0, maximum: 255 } }, matcher: { $ref: '#/components/schemas/BehaviorMatcher' } } }
+    AvailablePolicySeed:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [state, seed],
+        properties:
+          { state: { const: available }, seed: { $ref: '#/components/schemas/PolicySeedValue' } },
+      }
+    UnavailablePolicySeed:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [state, reason],
+        properties:
+          {
+            state: { const: unavailable },
+            reason:
+              {
+                type: string,
+                enum:
+                  [
+                    unsupported_identity_version,
+                    unsupported_inventory_kind,
+                    invalid_semantic_identity,
+                    invalid_identity_digest,
+                  ],
+              },
+          },
+      }
+    PolicySeedValue:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [behavior, placement, inside_effect],
+        properties:
+          {
+            behavior: { $ref: '#/components/schemas/BehaviorIdentity' },
+            placement: { $ref: '#/components/schemas/PolicyPlacementMatcher' },
+            source_inventory_item_id: { $ref: '#/components/schemas/Uuid' },
+            source_runtime_group_id: { $ref: '#/components/schemas/Uuid' },
+            inside_effect: { $ref: '#/components/schemas/PolicyEffect' },
+            outside_effect: { type: string, enum: [requires_review] },
+          },
+      }
+    BehaviorIdentity:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [identity_version, identity_digest, matcher],
+        properties:
+          {
+            identity_version: { type: integer, minimum: 1 },
+            identity_digest:
+              {
+                type: array,
+                minItems: 32,
+                maxItems: 32,
+                items: { type: integer, minimum: 0, maximum: 255 },
+              },
+            matcher: { $ref: '#/components/schemas/BehaviorMatcher' },
+          },
+      }
     PolicySuppression:
       type: object
       additionalProperties: false
-      required: [id, inventory_kind, identity_version, identity_digest, behavior_matcher, cluster_ids, namespaces, workload_kinds, workload_names, reason, expires_at, cancelled_at, cancelled_by_user_id, source_inventory_item_id, source_runtime_group_id, created_by_user_id, created_at]
+      required:
+        [
+          id,
+          inventory_kind,
+          identity_version,
+          identity_digest,
+          behavior_matcher,
+          cluster_ids,
+          namespaces,
+          workload_kinds,
+          workload_names,
+          reason,
+          expires_at,
+          cancelled_at,
+          cancelled_by_user_id,
+          source_inventory_item_id,
+          source_runtime_group_id,
+          created_by_user_id,
+          created_at,
+        ]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         inventory_kind: { $ref: '#/components/schemas/InventoryKind' }
         identity_version: { type: integer, minimum: 1 }
-        identity_digest: { type: array, minItems: 32, maxItems: 32, items: { type: integer, minimum: 0, maximum: 255 } }
+        identity_digest:
+          {
+            type: array,
+            minItems: 32,
+            maxItems: 32,
+            items: { type: integer, minimum: 0, maximum: 255 },
+          }
         behavior_matcher: { $ref: '#/components/schemas/BehaviorMatcher' }
         cluster_ids: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/Uuid' } }
         namespaces: { type: array, maxItems: 50, items: { type: string } }
@@ -1180,7 +2212,22 @@ components:
         source_runtime_group_id: { $ref: '#/components/schemas/NullableUuid' }
         created_by_user_id: { $ref: '#/components/schemas/Uuid' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
-    SuppressionPage: { type: object, additionalProperties: false, required: [items, next_cursor], properties: { items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/PolicySuppression' } }, next_cursor: { $ref: '#/components/schemas/NullableUuid' } } }
+    SuppressionPage:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [items, next_cursor],
+        properties:
+          {
+            items:
+              {
+                type: array,
+                maxItems: 200,
+                items: { $ref: '#/components/schemas/PolicySuppression' },
+              },
+            next_cursor: { $ref: '#/components/schemas/NullableUuid' },
+          },
+      }
     OrganizationRole: { type: string, enum: [owner, member] }
     RegisterRequest:
       type: object
@@ -1223,29 +2270,93 @@ components:
         role: { $ref: '#/components/schemas/OrganizationRole' }
     AttentionWindowKind: { type: string, enum: [24h, 7d], default: 24h }
     AttentionPriority: { type: string, enum: [urgent, high, normal] }
-    AttentionItemKind: { type: string, enum: [notification_delivery_failing, notification_delivery_backlogged, notification_destination_missing, release_runtime_changed, new_discovery, open_discovery, container_restart_loop] }
-    AttentionReasonCode: { type: string, enum: [terminal_deliveries_failed, notification_health_failing, notification_health_backlogged, notification_health_retrying, enabled_destination_missing, release_runtime_changed, discovery_first_seen_in_window, discovery_open, container_restart_loop_observed, policy_review_required, policy_conflict, policy_unclassified, policy_evaluation_pending] }
-    AttentionRecommendationKind: { type: string, enum: [review_failed_deliveries, configure_webhook_destination, review_notification_backlog, review_release_changes, review_new_discoveries] }
+    AttentionItemKind:
+      {
+        type: string,
+        enum:
+          [
+            notification_delivery_failing,
+            notification_delivery_backlogged,
+            notification_destination_missing,
+            release_runtime_changed,
+            new_discovery,
+            open_discovery,
+            container_restart_loop,
+          ],
+      }
+    AttentionReasonCode:
+      {
+        type: string,
+        enum:
+          [
+            terminal_deliveries_failed,
+            notification_health_failing,
+            notification_health_backlogged,
+            notification_health_retrying,
+            enabled_destination_missing,
+            release_runtime_changed,
+            discovery_first_seen_in_window,
+            discovery_open,
+            container_restart_loop_observed,
+            policy_review_required,
+            policy_conflict,
+            policy_unclassified,
+            policy_evaluation_pending,
+          ],
+      }
+    AttentionRecommendationKind:
+      {
+        type: string,
+        enum:
+          [
+            review_failed_deliveries,
+            configure_webhook_destination,
+            review_notification_backlog,
+            review_release_changes,
+            review_new_discoveries,
+          ],
+      }
     AttentionWindow:
       type: object
       additionalProperties: false
       required: [kind, from, to]
-      properties: { kind: { $ref: '#/components/schemas/AttentionWindowKind' }, from: { $ref: '#/components/schemas/Timestamp' }, to: { $ref: '#/components/schemas/Timestamp' } }
+      properties:
+        {
+          kind: { $ref: '#/components/schemas/AttentionWindowKind' },
+          from: { $ref: '#/components/schemas/Timestamp' },
+          to: { $ref: '#/components/schemas/Timestamp' },
+        }
     AttentionProjectRef:
       type: object
       additionalProperties: false
       required: [id, name, slug]
-      properties: { id: { $ref: '#/components/schemas/Uuid' }, name: { type: string }, slug: { type: string } }
+      properties:
+        {
+          id: { $ref: '#/components/schemas/Uuid' },
+          name: { type: string },
+          slug: { type: string },
+        }
     AttentionApplicationRef:
       type: object
       additionalProperties: false
       required: [id, name, slug]
-      properties: { id: { $ref: '#/components/schemas/Uuid' }, name: { type: string }, slug: { type: string } }
+      properties:
+        {
+          id: { $ref: '#/components/schemas/Uuid' },
+          name: { type: string },
+          slug: { type: string },
+        }
     AttentionReleaseRef:
       type: object
       additionalProperties: false
       required: [id, version, display_name, deployed_at]
-      properties: { id: { $ref: '#/components/schemas/Uuid' }, version: { type: string }, display_name: { type: string, minLength: 1 }, deployed_at: { $ref: '#/components/schemas/Timestamp' } }
+      properties:
+        {
+          id: { $ref: '#/components/schemas/Uuid' },
+          version: { type: string },
+          display_name: { type: string, minLength: 1 },
+          deployed_at: { $ref: '#/components/schemas/Timestamp' },
+        }
     AttentionFacts:
       type: object
       additionalProperties: false
@@ -1260,7 +2371,15 @@ components:
     AttentionRestartLoopFacts:
       type: object
       additionalProperties: false
-      required: [projection_version, threshold, observed_restart_count, window_started_at, window_ended_at, container_name]
+      required:
+        [
+          projection_version,
+          threshold,
+          observed_restart_count,
+          window_started_at,
+          window_ended_at,
+          container_name,
+        ]
       properties:
         projection_version: { type: integer, format: int64, minimum: 1 }
         threshold: { type: integer, format: int64, minimum: 1 }
@@ -1278,16 +2397,36 @@ components:
       type: object
       additionalProperties: false
       required: [type, project_id]
-      properties: { type: { type: string, const: project }, project_id: { $ref: '#/components/schemas/Uuid' } }
+      properties:
+        {
+          type: { type: string, const: project },
+          project_id: { $ref: '#/components/schemas/Uuid' },
+        }
     AttentionApplicationResourceRef:
       type: object
       additionalProperties: false
       required: [type, project_id, application_id]
-      properties: { type: { type: string, const: application }, project_id: { $ref: '#/components/schemas/Uuid' }, application_id: { $ref: '#/components/schemas/Uuid' } }
+      properties:
+        {
+          type: { type: string, const: application },
+          project_id: { $ref: '#/components/schemas/Uuid' },
+          application_id: { $ref: '#/components/schemas/Uuid' },
+        }
     AttentionRuntimeGroupResourceRef:
       type: object
       additionalProperties: false
-      required: [type, project_id, application_id, runtime_group_id, event_kind, semantic_summary, namespace, workload_kind, workload_name]
+      required:
+        [
+          type,
+          project_id,
+          application_id,
+          runtime_group_id,
+          event_kind,
+          semantic_summary,
+          namespace,
+          workload_kind,
+          workload_name,
+        ]
       properties:
         type: { type: string, const: runtime_group }
         project_id: { $ref: '#/components/schemas/Uuid' }
@@ -1301,8 +2440,26 @@ components:
     AttentionRuntimeDiffResourceRef:
       type: object
       additionalProperties: false
-      required: [type, project_id, application_id, target_release_id, target_release_display_name, baseline_release_id, baseline_release_display_name]
-      properties: { type: { type: string, const: runtime_diff }, project_id: { $ref: '#/components/schemas/Uuid' }, application_id: { $ref: '#/components/schemas/Uuid' }, target_release_id: { $ref: '#/components/schemas/Uuid' }, target_release_display_name: { type: string, minLength: 1 }, baseline_release_id: { $ref: '#/components/schemas/Uuid' }, baseline_release_display_name: { type: string, minLength: 1 } }
+      required:
+        [
+          type,
+          project_id,
+          application_id,
+          target_release_id,
+          target_release_display_name,
+          baseline_release_id,
+          baseline_release_display_name,
+        ]
+      properties:
+        {
+          type: { type: string, const: runtime_diff },
+          project_id: { $ref: '#/components/schemas/Uuid' },
+          application_id: { $ref: '#/components/schemas/Uuid' },
+          target_release_id: { $ref: '#/components/schemas/Uuid' },
+          target_release_display_name: { type: string, minLength: 1 },
+          baseline_release_id: { $ref: '#/components/schemas/Uuid' },
+          baseline_release_display_name: { type: string, minLength: 1 },
+        }
     AttentionPriorityItem:
       type: object
       additionalProperties: false
@@ -1320,32 +2477,90 @@ components:
     AttentionLargestChange:
       type: object
       additionalProperties: false
-      required: [group_id, classification, baseline_occurrence_count, target_occurrence_count, occurrence_delta]
-      properties: { group_id: { $ref: '#/components/schemas/Uuid' }, classification: { type: string, enum: [new, disappeared, unchanged] }, baseline_occurrence_count: { type: integer, format: int64 }, target_occurrence_count: { type: integer, format: int64 }, occurrence_delta: { type: integer, format: int64 } }
+      required:
+        [
+          group_id,
+          classification,
+          baseline_occurrence_count,
+          target_occurrence_count,
+          occurrence_delta,
+        ]
+      properties:
+        {
+          group_id: { $ref: '#/components/schemas/Uuid' },
+          classification: { type: string, enum: [new, disappeared, unchanged, unknown] },
+          baseline_occurrence_count: { type: integer, format: int64 },
+          target_occurrence_count: { type: integer, format: int64 },
+          occurrence_delta: { type: integer, format: int64 },
+        }
     AttentionReleaseComparison:
       type: object
       additionalProperties: false
-      required: [target_release, baseline_release, new_count, disappeared_count, unchanged_count, total_item_count, absolute_occurrence_delta_sum, max_absolute_occurrence_delta, largest_changes]
+      required:
+        [
+          target_release,
+          baseline_release,
+          new_count,
+          disappeared_count,
+          unchanged_count,
+          total_item_count,
+          absolute_occurrence_delta_sum,
+          max_absolute_occurrence_delta,
+          largest_changes,
+        ]
       properties:
         target_release: { $ref: '#/components/schemas/AttentionReleaseRef' }
-        baseline_release: { anyOf: [{ $ref: '#/components/schemas/AttentionReleaseRef' }, { type: 'null' }] }
+        baseline_release:
+          { anyOf: [{ $ref: '#/components/schemas/AttentionReleaseRef' }, { type: 'null' }] }
         new_count: { type: integer, format: int64, minimum: 0 }
-        disappeared_count: { type: integer, format: int64, minimum: 0, description: Runtime behavior no longer observed in the target release; this does not assert deletion. }
+        disappeared_count:
+          {
+            type: integer,
+            format: int64,
+            minimum: 0,
+            description: Runtime behavior no longer observed in the target release; this does not assert deletion.,
+          }
         unchanged_count: { type: integer, format: int64, minimum: 0 }
         total_item_count: { type: integer, format: int64, minimum: 0 }
         absolute_occurrence_delta_sum: { type: integer, format: int64, minimum: 0 }
         max_absolute_occurrence_delta: { type: integer, format: int64, minimum: 0 }
-        largest_changes: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/AttentionLargestChange' } }
+        largest_changes:
+          {
+            type: array,
+            maxItems: 10,
+            items: { $ref: '#/components/schemas/AttentionLargestChange' },
+          }
     AttentionChangedApplication:
       allOf:
         - { $ref: '#/components/schemas/AttentionReleaseComparison' }
         - type: object
           required: [project, application, changed_at]
-          properties: { project: { $ref: '#/components/schemas/AttentionProjectRef' }, application: { $ref: '#/components/schemas/AttentionApplicationRef' }, changed_at: { $ref: '#/components/schemas/Timestamp' } }
+          properties:
+            {
+              project: { $ref: '#/components/schemas/AttentionProjectRef' },
+              application: { $ref: '#/components/schemas/AttentionApplicationRef' },
+              changed_at: { $ref: '#/components/schemas/Timestamp' },
+            }
     AttentionNotificationProblem:
       type: object
       additionalProperties: false
-      required: [project, state, delivery_enabled, enabled_destination_count, pending_count, due_count, retrying_count, in_flight_count, expired_lease_count, failed_count, oldest_due_age_seconds, observed_at, priority, reason_code]
+      required:
+        [
+          project,
+          state,
+          delivery_enabled,
+          enabled_destination_count,
+          pending_count,
+          due_count,
+          retrying_count,
+          in_flight_count,
+          expired_lease_count,
+          failed_count,
+          oldest_due_age_seconds,
+          observed_at,
+          priority,
+          reason_code,
+        ]
       properties:
         project: { $ref: '#/components/schemas/AttentionProjectRef' }
         state: { type: string, enum: [disabled, idle, backlogged, retrying, failing, draining] }
@@ -1364,31 +2579,210 @@ components:
     AttentionRecommendation:
       type: object
       additionalProperties: false
-      required: [id, kind, priority, reason_code, facts, project, resource, created_from_snapshot_at]
-      properties: { id: { type: string }, kind: { $ref: '#/components/schemas/AttentionRecommendationKind' }, priority: { $ref: '#/components/schemas/AttentionPriority' }, reason_code: { $ref: '#/components/schemas/AttentionReasonCode' }, facts: { $ref: '#/components/schemas/AttentionFacts' }, project: { $ref: '#/components/schemas/AttentionProjectRef' }, application: { $ref: '#/components/schemas/AttentionApplicationRef' }, resource: { $ref: '#/components/schemas/AttentionResourceRef' }, created_from_snapshot_at: { $ref: '#/components/schemas/Timestamp' } }
+      required:
+        [id, kind, priority, reason_code, facts, project, resource, created_from_snapshot_at]
+      properties:
+        {
+          id: { type: string },
+          kind: { $ref: '#/components/schemas/AttentionRecommendationKind' },
+          priority: { $ref: '#/components/schemas/AttentionPriority' },
+          reason_code: { $ref: '#/components/schemas/AttentionReasonCode' },
+          facts: { $ref: '#/components/schemas/AttentionFacts' },
+          project: { $ref: '#/components/schemas/AttentionProjectRef' },
+          application: { $ref: '#/components/schemas/AttentionApplicationRef' },
+          resource: { $ref: '#/components/schemas/AttentionResourceRef' },
+          created_from_snapshot_at: { $ref: '#/components/schemas/Timestamp' },
+        }
     OrganizationAttentionTotals:
       type: object
       additionalProperties: false
-      required: [new_discoveries, open_discoveries, acknowledged_discoveries, changed_applications, projects_with_notification_problems, failed_notification_deliveries, policy]
-      properties: { new_discoveries: { type: integer, format: int64, minimum: 0 }, open_discoveries: { type: integer, format: int64, minimum: 0 }, acknowledged_discoveries: { type: integer, format: int64, minimum: 0 }, changed_applications: { type: integer, format: int64, minimum: 0 }, projects_with_notification_problems: { type: integer, format: int64, minimum: 0 }, failed_notification_deliveries: { type: integer, format: int64, minimum: 0 }, policy: { $ref: '#/components/schemas/AttentionPolicyTotals' } }
+      required:
+        [
+          new_discoveries,
+          open_discoveries,
+          acknowledged_discoveries,
+          changed_applications,
+          projects_with_notification_problems,
+          failed_notification_deliveries,
+          policy,
+        ]
+      properties:
+        {
+          new_discoveries: { type: integer, format: int64, minimum: 0 },
+          open_discoveries: { type: integer, format: int64, minimum: 0 },
+          acknowledged_discoveries: { type: integer, format: int64, minimum: 0 },
+          changed_applications: { type: integer, format: int64, minimum: 0 },
+          projects_with_notification_problems: { type: integer, format: int64, minimum: 0 },
+          failed_notification_deliveries: { type: integer, format: int64, minimum: 0 },
+          policy: { $ref: '#/components/schemas/AttentionPolicyTotals' },
+        }
     OrganizationAttentionSummary:
       type: object
       additionalProperties: false
-      required: [generated_at, window, totals, priority_items, changed_applications, notification_problems, recommendations]
-      properties: { generated_at: { $ref: '#/components/schemas/Timestamp' }, window: { $ref: '#/components/schemas/AttentionWindow' }, totals: { $ref: '#/components/schemas/OrganizationAttentionTotals' }, priority_items: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/AttentionPriorityItem' } }, changed_applications: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/AttentionChangedApplication' } }, notification_problems: { type: array, items: { $ref: '#/components/schemas/AttentionNotificationProblem' } }, recommendations: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/AttentionRecommendation' } } }
-      example: { generated_at: '2026-08-22T12:00:00Z', window: { kind: 24h, from: '2026-08-21T12:00:00Z', to: '2026-08-22T12:00:00Z' }, totals: { new_discoveries: 0, open_discoveries: 0, acknowledged_discoveries: 0, changed_applications: 0, projects_with_notification_problems: 0, failed_notification_deliveries: 0 }, priority_items: [], changed_applications: [], notification_problems: [], recommendations: [] }
+      required:
+        [
+          generated_at,
+          window,
+          totals,
+          priority_items,
+          changed_applications,
+          notification_problems,
+          recommendations,
+        ]
+      properties:
+        {
+          generated_at: { $ref: '#/components/schemas/Timestamp' },
+          window: { $ref: '#/components/schemas/AttentionWindow' },
+          totals: { $ref: '#/components/schemas/OrganizationAttentionTotals' },
+          priority_items:
+            {
+              type: array,
+              maxItems: 50,
+              items: { $ref: '#/components/schemas/AttentionPriorityItem' },
+            },
+          changed_applications:
+            {
+              type: array,
+              maxItems: 10,
+              items: { $ref: '#/components/schemas/AttentionChangedApplication' },
+            },
+          notification_problems:
+            { type: array, items: { $ref: '#/components/schemas/AttentionNotificationProblem' } },
+          recommendations:
+            {
+              type: array,
+              maxItems: 10,
+              items: { $ref: '#/components/schemas/AttentionRecommendation' },
+            },
+        }
+      example:
+        {
+          generated_at: '2026-08-22T12:00:00Z',
+          window: { kind: 24h, from: '2026-08-21T12:00:00Z', to: '2026-08-22T12:00:00Z' },
+          totals:
+            {
+              new_discoveries: 0,
+              open_discoveries: 0,
+              acknowledged_discoveries: 0,
+              changed_applications: 0,
+              projects_with_notification_problems: 0,
+              failed_notification_deliveries: 0,
+            },
+          priority_items: [],
+          changed_applications: [],
+          notification_problems: [],
+          recommendations: [],
+        }
     ApplicationAttentionTotals:
       type: object
       additionalProperties: false
-      required: [new_discoveries, open_discoveries, acknowledged_discoveries, new_runtime_items, disappeared_runtime_items, unchanged_runtime_items, total_runtime_items, policy]
-      properties: { new_discoveries: { type: integer, format: int64, minimum: 0 }, open_discoveries: { type: integer, format: int64, minimum: 0 }, acknowledged_discoveries: { type: integer, format: int64, minimum: 0 }, new_runtime_items: { type: integer, format: int64, minimum: 0 }, disappeared_runtime_items: { type: integer, format: int64, minimum: 0 }, unchanged_runtime_items: { type: integer, format: int64, minimum: 0 }, total_runtime_items: { type: integer, format: int64, minimum: 0 }, policy: { $ref: '#/components/schemas/AttentionPolicyTotals' } }
-    AttentionPolicyTotals: { type: object, additionalProperties: false, required: [factual_total, actionable_total, evaluation_pending, expected, requires_review, policy_conflict, unclassified], properties: { factual_total: { type: integer, minimum: 0 }, actionable_total: { type: integer, minimum: 0 }, evaluation_pending: { type: integer, minimum: 0 }, expected: { type: integer, minimum: 0 }, requires_review: { type: integer, minimum: 0 }, policy_conflict: { type: integer, minimum: 0 }, unclassified: { type: integer, minimum: 0 } } }
+      required:
+        [
+          new_discoveries,
+          open_discoveries,
+          acknowledged_discoveries,
+          new_runtime_items,
+          disappeared_runtime_items,
+          unchanged_runtime_items,
+          total_runtime_items,
+          policy,
+        ]
+      properties:
+        {
+          new_discoveries: { type: integer, format: int64, minimum: 0 },
+          open_discoveries: { type: integer, format: int64, minimum: 0 },
+          acknowledged_discoveries: { type: integer, format: int64, minimum: 0 },
+          new_runtime_items: { type: integer, format: int64, minimum: 0 },
+          disappeared_runtime_items: { type: integer, format: int64, minimum: 0 },
+          unchanged_runtime_items: { type: integer, format: int64, minimum: 0 },
+          total_runtime_items: { type: integer, format: int64, minimum: 0 },
+          policy: { $ref: '#/components/schemas/AttentionPolicyTotals' },
+        }
+    AttentionPolicyTotals:
+      {
+        type: object,
+        additionalProperties: false,
+        required:
+          [
+            factual_total,
+            actionable_total,
+            evaluation_pending,
+            expected,
+            requires_review,
+            policy_conflict,
+            unclassified,
+          ],
+        properties:
+          {
+            factual_total: { type: integer, minimum: 0 },
+            actionable_total: { type: integer, minimum: 0 },
+            evaluation_pending: { type: integer, minimum: 0 },
+            expected: { type: integer, minimum: 0 },
+            requires_review: { type: integer, minimum: 0 },
+            policy_conflict: { type: integer, minimum: 0 },
+            unclassified: { type: integer, minimum: 0 },
+          },
+      }
     ApplicationAttentionSummary:
       type: object
       additionalProperties: false
-      required: [generated_at, window, project, application, totals, release_comparison, priority_items, recommendations]
-      properties: { generated_at: { $ref: '#/components/schemas/Timestamp' }, window: { $ref: '#/components/schemas/AttentionWindow' }, project: { $ref: '#/components/schemas/AttentionProjectRef' }, application: { $ref: '#/components/schemas/AttentionApplicationRef' }, totals: { $ref: '#/components/schemas/ApplicationAttentionTotals' }, release_comparison: { anyOf: [{ $ref: '#/components/schemas/AttentionReleaseComparison' }, { type: 'null' }] }, priority_items: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/AttentionPriorityItem' } }, recommendations: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/AttentionRecommendation' } } }
-      example: { generated_at: '2026-08-22T12:00:00Z', window: { kind: 24h, from: '2026-08-21T12:00:00Z', to: '2026-08-22T12:00:00Z' }, project: { id: '00000000-0000-0000-0000-000000000001', name: Commerce, slug: commerce }, application: { id: '00000000-0000-0000-0000-000000000002', name: Checkout, slug: checkout }, totals: { new_discoveries: 0, open_discoveries: 0, acknowledged_discoveries: 0, new_runtime_items: 0, disappeared_runtime_items: 0, unchanged_runtime_items: 0, total_runtime_items: 0 }, release_comparison: null, priority_items: [], recommendations: [] }
+      required:
+        [
+          generated_at,
+          window,
+          project,
+          application,
+          totals,
+          release_comparison,
+          priority_items,
+          recommendations,
+        ]
+      properties:
+        {
+          generated_at: { $ref: '#/components/schemas/Timestamp' },
+          window: { $ref: '#/components/schemas/AttentionWindow' },
+          project: { $ref: '#/components/schemas/AttentionProjectRef' },
+          application: { $ref: '#/components/schemas/AttentionApplicationRef' },
+          totals: { $ref: '#/components/schemas/ApplicationAttentionTotals' },
+          release_comparison:
+            {
+              anyOf:
+                [{ $ref: '#/components/schemas/AttentionReleaseComparison' }, { type: 'null' }],
+            },
+          priority_items:
+            {
+              type: array,
+              maxItems: 50,
+              items: { $ref: '#/components/schemas/AttentionPriorityItem' },
+            },
+          recommendations:
+            {
+              type: array,
+              maxItems: 10,
+              items: { $ref: '#/components/schemas/AttentionRecommendation' },
+            },
+        }
+      example:
+        {
+          generated_at: '2026-08-22T12:00:00Z',
+          window: { kind: 24h, from: '2026-08-21T12:00:00Z', to: '2026-08-22T12:00:00Z' },
+          project: { id: '00000000-0000-0000-0000-000000000001', name: Commerce, slug: commerce },
+          application:
+            { id: '00000000-0000-0000-0000-000000000002', name: Checkout, slug: checkout },
+          totals:
+            {
+              new_discoveries: 0,
+              open_discoveries: 0,
+              acknowledged_discoveries: 0,
+              new_runtime_items: 0,
+              disappeared_runtime_items: 0,
+              unchanged_runtime_items: 0,
+              total_runtime_items: 0,
+            },
+          release_comparison: null,
+          priority_items: [],
+          recommendations: [],
+        }
     Error:
       type: object
       additionalProperties: false
@@ -1447,7 +2841,8 @@ components:
       additionalProperties: false
       required: [items]
       properties:
-        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ProvisionedProject' } }
+        items:
+          { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ProvisionedProject' } }
     ProvisionedApplication:
       type: object
       additionalProperties: false
@@ -1464,14 +2859,25 @@ components:
       additionalProperties: false
       required: [items]
       properties:
-        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ProvisionedApplication' } }
+        items:
+          {
+            type: array,
+            maxItems: 200,
+            items: { $ref: '#/components/schemas/ProvisionedApplication' },
+          }
     ApplicationCredential:
       type: object
       additionalProperties: false
       required: [id, name, token_hint, created_at, last_used_at, revoked_at]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
-        name: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }
+        name:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 64,
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$',
+          }
         token_hint: { type: string, minLength: 4, maxLength: 12 }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         last_used_at:
@@ -1483,12 +2889,26 @@ components:
       additionalProperties: false
       required: [items]
       properties:
-        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ApplicationCredential' } }
+        items:
+          {
+            type: array,
+            maxItems: 200,
+            items: { $ref: '#/components/schemas/ApplicationCredential' },
+          }
     IssueCredentialRequest:
       type: object
       additionalProperties: false
       required: [name]
-      properties: { name: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' } }
+      properties:
+        {
+          name:
+            {
+              type: string,
+              minLength: 1,
+              maxLength: 64,
+              pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$',
+            },
+        }
     IssuedApplicationCredential:
       type: object
       additionalProperties: false
@@ -1586,8 +3006,9 @@ components:
     ApplicationWorkerPage:
       type: object
       additionalProperties: false
-      required: [items, next_cursor]
+      required: [items, next_cursor, coverage]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         items:
           { type: array, maxItems: 200, items: { $ref: '#/components/schemas/ApplicationWorker' } }
         next_cursor: { $ref: '#/components/schemas/NullableOpaqueCursor' }
@@ -1596,6 +3017,7 @@ components:
       additionalProperties: false
       required:
         [
+          coverage,
           id,
           project_id,
           application_id,
@@ -1619,6 +3041,7 @@ components:
           actionable,
         ]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         id: { $ref: '#/components/schemas/Uuid' }
         project_id: { $ref: '#/components/schemas/Uuid' }
         application_id: { $ref: '#/components/schemas/Uuid' }
@@ -1631,12 +3054,13 @@ components:
         semantic_summary: { $ref: '#/components/schemas/RuntimeEventSemanticSummary' }
         status: { type: string, enum: [open, acknowledged, resolved] }
         first_seen_at: { $ref: '#/components/schemas/Timestamp' }
-        first_seen_event_id: { $ref: '#/components/schemas/Uuid' }
+        first_seen_event_id: { $ref: '#/components/schemas/NullableUuid' }
         last_seen_at: { $ref: '#/components/schemas/Timestamp' }
         occurrence_count: { type: integer, format: int64, minimum: 0 }
-        representative_event_id: { $ref: '#/components/schemas/Uuid' }
+        representative_event_id: { $ref: '#/components/schemas/NullableUuid' }
         policy_evaluation: { $ref: '#/components/schemas/PolicyEvaluation' }
-        active_suppression: { anyOf: [{ $ref: '#/components/schemas/ActivePolicySuppression' }, { type: 'null' }] }
+        active_suppression:
+          { anyOf: [{ $ref: '#/components/schemas/ActivePolicySuppression' }, { type: 'null' }] }
         actionable: { type: boolean }
         status_changed_at: { $ref: '#/components/schemas/NullableTimestamp' }
         status_changed_by: { $ref: '#/components/schemas/NullableUuid' }
@@ -1647,11 +3071,44 @@ components:
       properties:
         state: { $ref: '#/components/schemas/PolicyEvaluationState' }
         verdict: { anyOf: [{ $ref: '#/components/schemas/PolicyVerdict' }, { type: 'null' }] }
-        reason_code: { type: string, enum: [no_matching_policy, inside_placement, outside_placement, equal_specificity_conflict, evaluation_pending] }
+        reason_code:
+          {
+            type: string,
+            enum:
+              [
+                no_matching_policy,
+                inside_placement,
+                outside_placement,
+                equal_specificity_conflict,
+                evaluation_pending,
+              ],
+          }
         winning_revision_id: { anyOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
-        explanation: { type: object, additionalProperties: false, properties: { specificity: { type: array, maxItems: 4, items: { type: integer } }, related_revision_ids: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/Uuid' } } } }
+        explanation:
+          {
+            type: object,
+            additionalProperties: false,
+            properties:
+              {
+                specificity: { type: array, maxItems: 4, items: { type: integer } },
+                related_revision_ids:
+                  { type: array, maxItems: 10, items: { $ref: '#/components/schemas/Uuid' } },
+              },
+          }
         evaluated_at: { anyOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
-    ActivePolicySuppression: { type: object, additionalProperties: false, required: [id, reason, expires_at, created_at], properties: { id: { $ref: '#/components/schemas/Uuid' }, reason: { type: string }, expires_at: { $ref: '#/components/schemas/Timestamp' }, created_at: { $ref: '#/components/schemas/Timestamp' } } }
+    ActivePolicySuppression:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [id, reason, expires_at, created_at],
+        properties:
+          {
+            id: { $ref: '#/components/schemas/Uuid' },
+            reason: { type: string },
+            expires_at: { $ref: '#/components/schemas/Timestamp' },
+            created_at: { $ref: '#/components/schemas/Timestamp' },
+          },
+      }
     RuntimeGroupPage:
       type: object
       additionalProperties: false
@@ -1694,7 +3151,8 @@ components:
         event_kind: { type: string }
         payload: { $ref: '#/components/schemas/RuntimeEventPayload' }
         correlation: { $ref: '#/components/schemas/EventCorrelation' }
-        related_evidence: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RelatedEvidence' } }
+        related_evidence:
+          { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RelatedEvidence' } }
         release_id: { $ref: '#/components/schemas/NullableUuid' }
         release_version: { type: [string, 'null'] }
         release_display_name: { type: string, minLength: 1 }
@@ -1807,17 +3265,37 @@ components:
     FileActivityOperation: { type: string, enum: [create, modify, delete, rename] }
     RuntimeEventKind:
       type: string
-      enum: [process.exec, syscall, network.connect, network.listen, network.accept, network.dns_query, network.dns_response, file.create, file.modify, file.delete, file.rename, process.exit, container.terminated, container.restart, container.restart_loop]
+      enum:
+        [
+          process.exec,
+          syscall,
+          network.connect,
+          network.listen,
+          network.accept,
+          network.dns_query,
+          network.dns_response,
+          file.create,
+          file.modify,
+          file.delete,
+          file.rename,
+          process.exit,
+          container.terminated,
+          container.restart,
+          container.restart_loop,
+        ]
     EvidenceSource: { type: string, enum: [kernel, kubernetes, derived] }
     EventCorrelation:
       type: object
       additionalProperties: false
       required: [status, candidate_count, related_event_ids]
       properties:
+        retention_incomplete:
+          { type: boolean, description: A related raw event was removed by retention. }
         status: { type: string, enum: [absent, qualified, ambiguous] }
         candidate_count: { type: integer, minimum: 0, maximum: 2 }
         tolerance_seconds: { type: integer, minimum: 1 }
-        related_event_ids: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/Uuid' } }
+        related_event_ids:
+          { type: array, maxItems: 1, items: { $ref: '#/components/schemas/Uuid' } }
     ProcessTermination:
       oneOf:
         - type: object
@@ -1833,7 +3311,11 @@ components:
             type: { type: string, const: signaled }
             signal: { type: integer, minimum: 1, maximum: 64 }
             signal_name: { type: string, pattern: '^SIG[A-Z0-9]+$' }
-            core_dump_flag: { type: boolean, description: Kernel wait-status flag; does not prove a core file was written. }
+            core_dump_flag:
+              {
+                type: boolean,
+                description: Kernel wait-status flag; does not prove a core file was written.,
+              }
             conventional_exit_code: { type: integer, minimum: 129, maximum: 192, readOnly: true }
     GenerationCorrelation:
       oneOf:
@@ -1850,7 +3332,12 @@ components:
           required: [status, reason]
           properties:
             status: { type: string, const: unresolved }
-            reason: { type: string, enum: [before_observation, evicted, generation_mismatch, container_lifetime_mismatch] }
+            reason:
+              {
+                type: string,
+                enum:
+                  [before_observation, evicted, generation_mismatch, container_lifetime_mismatch],
+              }
     KubernetesTermination:
       type: object
       additionalProperties: false
@@ -1892,7 +3379,16 @@ components:
     RestartLoopSemanticSummary:
       type: object
       additionalProperties: false
-      required: [evidence_source, projection_version, threshold, window_started_at, window_ended_at, observed_restart_count, container_name]
+      required:
+        [
+          evidence_source,
+          projection_version,
+          threshold,
+          window_started_at,
+          window_ended_at,
+          observed_restart_count,
+          container_name,
+        ]
       properties:
         event_kind: { type: string, const: container.restart_loop }
         evidence_source: { type: string, const: derived }
@@ -2231,7 +3727,8 @@ components:
         - type: object
           required: [representative_event, notification]
           properties:
-            representative_event: { $ref: '#/components/schemas/EventOccurrence' }
+            representative_event:
+              { anyOf: [{ $ref: '#/components/schemas/EventOccurrence' }, { type: 'null' }] }
             notification: { $ref: '#/components/schemas/FirstSeenNotificationSummary' }
     ReleaseIdentityComponent:
       type: object
@@ -2245,7 +3742,23 @@ components:
     Release:
       type: object
       additionalProperties: false
-      required: [id, project_id, application_id, version, display_name, description, deployed_at, created_at, source, identity_version, identity_digest, identity_components, revision_count, active_episode_count]
+      required:
+        [
+          id,
+          project_id,
+          application_id,
+          version,
+          display_name,
+          description,
+          deployed_at,
+          created_at,
+          source,
+          identity_version,
+          identity_digest,
+          identity_components,
+          revision_count,
+          active_episode_count,
+        ]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         project_id: { $ref: '#/components/schemas/Uuid' }
@@ -2258,13 +3771,38 @@ components:
         source: { type: string, enum: [manual, observed] }
         identity_version: { type: [integer, 'null'], minimum: 1 }
         identity_digest: { type: [string, 'null'], pattern: '^[0-9a-f]{64}$' }
-        identity_components: { type: [array, 'null'], maxItems: 64, items: { $ref: '#/components/schemas/ReleaseIdentityComponent' } }
+        identity_components:
+          {
+            type: [array, 'null'],
+            maxItems: 64,
+            items: { $ref: '#/components/schemas/ReleaseIdentityComponent' },
+          }
         revision_count: { type: integer, format: int64, minimum: 0 }
         active_episode_count: { type: integer, format: int64, minimum: 0 }
     DeploymentEpisode:
       type: object
       additionalProperties: false
-      required: [id, release_id, release_display_name, revision_id, cluster_id, occurrence_number, state, transition_kind, first_observed_at, first_ready_at, last_observed_at, ended_at, pod_count, ready_pod_count, workload_ready_pod_count, ready_pod_share, snapshot_observed_at, predecessors]
+      required:
+        [
+          id,
+          release_id,
+          release_display_name,
+          revision_id,
+          cluster_id,
+          occurrence_number,
+          state,
+          transition_kind,
+          first_observed_at,
+          first_ready_at,
+          last_observed_at,
+          ended_at,
+          pod_count,
+          ready_pod_count,
+          workload_ready_pod_count,
+          ready_pod_share,
+          snapshot_observed_at,
+          predecessors,
+        ]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         release_id: { $ref: '#/components/schemas/Uuid' }
@@ -2281,7 +3819,14 @@ components:
         pod_count: { type: integer, minimum: 0 }
         ready_pod_count: { type: integer, minimum: 0 }
         workload_ready_pod_count: { type: integer, minimum: 0 }
-        ready_pod_share: { type: [number, 'null'], minimum: 0, maximum: 1, description: Share of Ready Pods, not request traffic. }
+        ready_pod_share:
+          {
+            type: [number, 'null'],
+            minimum: 0,
+            maximum: 1,
+            description: Share of Ready Pods,
+            not request traffic.,
+          }
         snapshot_observed_at: { $ref: '#/components/schemas/NullableTimestamp' }
         predecessors: { type: array, maxItems: 100, items: { type: object } }
     DeploymentEpisodePage:
@@ -2324,7 +3869,7 @@ components:
         ]
       properties:
         group_id: { $ref: '#/components/schemas/Uuid' }
-        classification: { type: string, enum: [new, disappeared, unchanged] }
+        classification: { type: string, enum: [new, disappeared, unchanged, unknown] }
         event_kind: { type: string }
         semantic_summary: { $ref: '#/components/schemas/RuntimeEventSemanticSummary' }
         baseline_occurrence_count: { type: [integer, 'null'], format: int64 }
@@ -2336,19 +3881,25 @@ components:
     RuntimeDiff:
       type: object
       additionalProperties: false
-      required: [baseline, target, items, next_cursor, baseline_selection_source]
+      required: [coverage, baseline, target, items, next_cursor, baseline_selection_source]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         baseline: { oneOf: [{ $ref: '#/components/schemas/Release' }, { type: 'null' }] }
         target: { $ref: '#/components/schemas/Release' }
         items: { type: array, items: { $ref: '#/components/schemas/RuntimeDiffEntry' } }
         next_cursor: { $ref: '#/components/schemas/NullableUuid' }
-        baseline_selection_source: { type: string, enum: [explicit, transition, concurrent_transition_fallback, legacy_deployment_order, none] }
+        baseline_selection_source:
+          {
+            type: string,
+            enum:
+              [explicit, transition, concurrent_transition_fallback, legacy_deployment_order, none],
+          }
     RuntimeDiffClassificationCount:
       type: object
       additionalProperties: false
       required: [classification, item_count]
       properties:
-        classification: { type: string, enum: [new, disappeared, unchanged] }
+        classification: { type: string, enum: [new, disappeared, unchanged, unknown] }
         item_count: { type: integer, format: int64, minimum: 0 }
     RuntimeDiffChangeEntry:
       type: object
@@ -2365,7 +3916,7 @@ components:
         ]
       properties:
         group_id: { $ref: '#/components/schemas/Uuid' }
-        classification: { type: string, enum: [new, disappeared, unchanged] }
+        classification: { type: string, enum: [new, disappeared, unchanged, unknown] }
         event_kind: { type: string }
         semantic_summary: { $ref: '#/components/schemas/RuntimeEventSemanticSummary' }
         baseline_occurrence_count: { type: integer, format: int64, minimum: 0 }
@@ -2374,16 +3925,31 @@ components:
     RuntimeDiffSummary:
       type: object
       additionalProperties: false
-      required: [baseline, target, total_item_count, classifications, largest_changes, baseline_selection_source]
+      required:
+        [
+          coverage,
+          baseline,
+          target,
+          total_item_count,
+          classifications,
+          largest_changes,
+          baseline_selection_source,
+        ]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         baseline: { oneOf: [{ $ref: '#/components/schemas/Release' }, { type: 'null' }] }
         target: { $ref: '#/components/schemas/Release' }
-        baseline_selection_source: { type: string, enum: [explicit, transition, concurrent_transition_fallback, legacy_deployment_order, none] }
+        baseline_selection_source:
+          {
+            type: string,
+            enum:
+              [explicit, transition, concurrent_transition_fallback, legacy_deployment_order, none],
+          }
         total_item_count: { type: integer, format: int64, minimum: 0 }
         classifications:
           {
             type: array,
-            maxItems: 3,
+            maxItems: 4,
             items: { $ref: '#/components/schemas/RuntimeDiffClassificationCount' },
           }
         largest_changes:
@@ -2833,11 +4399,11 @@ components:
         project_id: { $ref: '#/components/schemas/Uuid' }
         application_id: { $ref: '#/components/schemas/Uuid' }
         inventory_kind: { $ref: '#/components/schemas/InventoryKind' }
-        identity_version: { type: integer, format: int32, minimum: 1, example: 1 }
+        identity_version: { type: integer, format: int32, minimum: 0, example: 1 }
         semantic_summary: { $ref: '#/components/schemas/InventorySemanticSummary' }
         first_seen_at: { $ref: '#/components/schemas/Timestamp' }
         last_seen_at: { $ref: '#/components/schemas/Timestamp' }
-        occurrence_count: { type: integer, format: int64, minimum: 1 }
+        occurrence_count: { type: integer, format: int64, minimum: 0 }
         release_count: { type: integer, format: int64, minimum: 0 }
         cluster_count: { type: integer, format: int64, minimum: 0 }
         namespace_count: { type: integer, format: int64, minimum: 0 }
@@ -2848,8 +4414,9 @@ components:
     InventoryItemPage:
       type: object
       additionalProperties: false
-      required: [items, next_cursor]
+      required: [coverage, items, next_cursor]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/InventoryItem' } }
         next_cursor: { $ref: '#/components/schemas/NullableUuid' }
     InventoryKindCount:
@@ -2863,8 +4430,18 @@ components:
     InventorySummary:
       type: object
       additionalProperties: false
-      required: [identity_version, item_count, occurrence_count, first_seen_at, last_seen_at, kinds]
+      required:
+        [
+          coverage,
+          identity_version,
+          item_count,
+          occurrence_count,
+          first_seen_at,
+          last_seen_at,
+          kinds,
+        ]
       example:
+        coverage: { closed_before: null, history_expired_before: null, detail_scope: raw }
         identity_version: 1
         item_count: 1
         occurrence_count: 4
@@ -2873,6 +4450,7 @@ components:
         kinds:
           - { kind: process, item_count: 1, occurrence_count: 4 }
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         identity_version: { type: integer, format: int32, minimum: 1 }
         item_count: { type: integer, format: int64, minimum: 0 }
         occurrence_count: { type: integer, format: int64, minimum: 0 }
@@ -2899,8 +4477,10 @@ components:
     InventoryDistribution:
       type: object
       additionalProperties: false
-      required: [identity_version, kind, total_item_count, total_occurrence_count, entries, other]
+      required:
+        [coverage, identity_version, kind, total_item_count, total_occurrence_count, entries, other]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         identity_version: { type: integer, format: int32, minimum: 1 }
         kind: { $ref: '#/components/schemas/InventoryKind' }
         total_item_count: { type: integer, format: int64, minimum: 0 }
@@ -2930,12 +4510,14 @@ components:
     InventoryFacetPage:
       type: object
       additionalProperties: false
-      required: [items, next_cursor]
+      required: [coverage, items, next_cursor]
       example:
+        coverage: { closed_before: null, history_expired_before: null, detail_scope: raw }
         items:
           - { value: production, label: production, item_count: 12, occurrence_count: 48 }
         next_cursor: null
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         items:
           {
             type: array,
@@ -2980,10 +4562,39 @@ components:
       allOf:
         - { $ref: '#/components/schemas/InventoryItem' }
         - type: object
-          required: [evidence, policy_placement_summary]
-          properties: { evidence: { $ref: '#/components/schemas/InventoryEvidenceLinks' }, policy_placement_summary: { $ref: '#/components/schemas/InventoryPolicyPlacementSummary' } }
-    InventoryPolicyVerdictCounts: { type: object, additionalProperties: false, required: [expected, requires_review, policy_conflict, unclassified], properties: { expected: { type: integer, minimum: 0 }, requires_review: { type: integer, minimum: 0 }, policy_conflict: { type: integer, minimum: 0 }, unclassified: { type: integer, minimum: 0 } } }
-    InventoryPolicyPlacementSummary: { type: object, additionalProperties: false, required: [placement_count, evaluation_pending, verdicts], properties: { placement_count: { type: integer, minimum: 0 }, evaluation_pending: { type: integer, minimum: 0 }, verdicts: { $ref: '#/components/schemas/InventoryPolicyVerdictCounts' } } }
+          required: [evidence, policy_placement_summary, coverage]
+          properties:
+            {
+              coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' },
+              evidence: { $ref: '#/components/schemas/InventoryEvidenceLinks' },
+              policy_placement_summary:
+                { $ref: '#/components/schemas/InventoryPolicyPlacementSummary' },
+            }
+    InventoryPolicyVerdictCounts:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [expected, requires_review, policy_conflict, unclassified],
+        properties:
+          {
+            expected: { type: integer, minimum: 0 },
+            requires_review: { type: integer, minimum: 0 },
+            policy_conflict: { type: integer, minimum: 0 },
+            unclassified: { type: integer, minimum: 0 },
+          },
+      }
+    InventoryPolicyPlacementSummary:
+      {
+        type: object,
+        additionalProperties: false,
+        required: [placement_count, evaluation_pending, verdicts],
+        properties:
+          {
+            placement_count: { type: integer, minimum: 0 },
+            evaluation_pending: { type: integer, minimum: 0 },
+            verdicts: { $ref: '#/components/schemas/InventoryPolicyVerdictCounts' },
+          },
+      }
     InventoryReleaseEvidence:
       type: object
       additionalProperties: false
@@ -3012,8 +4623,9 @@ components:
     InventoryReleasePresencePage:
       type: object
       additionalProperties: false
-      required: [items, next_cursor]
+      required: [coverage, items, next_cursor]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         items:
           {
             type: array,
@@ -3052,13 +4664,15 @@ components:
         first_seen_at: { $ref: '#/components/schemas/Timestamp' }
         last_seen_at: { $ref: '#/components/schemas/Timestamp' }
         policy_evaluation: { $ref: '#/components/schemas/PolicyEvaluation' }
-        active_suppression: { anyOf: [{ $ref: '#/components/schemas/ActivePolicySuppression' }, { type: 'null' }] }
+        active_suppression:
+          { anyOf: [{ $ref: '#/components/schemas/ActivePolicySuppression' }, { type: 'null' }] }
         actionable: { type: boolean }
     InventorySightingPage:
       type: object
       additionalProperties: false
-      required: [items, next_cursor]
+      required: [coverage, items, next_cursor]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         items:
           { type: array, maxItems: 200, items: { $ref: '#/components/schemas/InventorySighting' } }
         next_cursor: { $ref: '#/components/schemas/NullableOpaqueCursor' }
@@ -3092,8 +4706,9 @@ components:
     InventoryGroupPage:
       type: object
       additionalProperties: false
-      required: [items, next_cursor]
+      required: [coverage, items, next_cursor]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         items:
           { type: array, maxItems: 200, items: { $ref: '#/components/schemas/InventoryGroup' } }
         next_cursor: { $ref: '#/components/schemas/NullableUuid' }
@@ -3137,8 +4752,9 @@ components:
     InventoryOccurrencePage:
       type: object
       additionalProperties: false
-      required: [items, next_cursor]
+      required: [coverage, items, next_cursor]
       properties:
+        coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         items:
           {
             type: array,
@@ -3179,11 +4795,19 @@ components:
     OrganizationAttentionSummary:
       description: Complete organization attention snapshot with bounded lists
       headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/OrganizationAttentionSummary' } } }
+      content:
+        {
+          application/json:
+            { schema: { $ref: '#/components/schemas/OrganizationAttentionSummary' } },
+        }
     ApplicationAttentionSummary:
       description: Complete Application attention snapshot with bounded lists
       headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationAttentionSummary' } } }
+      content:
+        {
+          application/json:
+            { schema: { $ref: '#/components/schemas/ApplicationAttentionSummary' } },
+        }
     BuildInfoResponse:
       {
         description: Build compatibility metadata,
@@ -3337,7 +4961,8 @@ components:
       {
         description: Kubernetes deployment episode page; Ready Pod share is not traffic share,
         headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } },
-        content: { application/json: { schema: { $ref: '#/components/schemas/DeploymentEpisodePage' } } },
+        content:
+          { application/json: { schema: { $ref: '#/components/schemas/DeploymentEpisodePage' } } },
       }
     RuntimeDiff:
       {
