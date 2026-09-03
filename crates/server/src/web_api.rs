@@ -447,8 +447,15 @@ mod tests {
             allowed.headers()[header::ACCESS_CONTROL_ALLOW_CREDENTIALS],
             "true"
         );
+        assert!(
+            allowed.headers()[header::ACCESS_CONTROL_ALLOW_METHODS]
+                .to_str()
+                .unwrap()
+                .split(',')
+                .any(|method| method.trim() == "PUT")
+        );
         for (method, request_headers, forbidden) in
-            [("PUT", None, "PUT"), ("GET", Some("cookie"), "cookie")]
+            [("TRACE", None, "TRACE"), ("GET", Some("cookie"), "cookie")]
         {
             let mut request = Request::builder()
                 .method(Method::OPTIONS)
