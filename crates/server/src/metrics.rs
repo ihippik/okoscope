@@ -69,6 +69,14 @@ static INVENTORY_RECONCILIATIONS: AtomicU64 = AtomicU64::new(0);
 static INVENTORY_RECONCILIATION_MISMATCHES: AtomicU64 = AtomicU64::new(0);
 static INVENTORY_QUERY_REQUESTS: AtomicU64 = AtomicU64::new(0);
 static INVENTORY_QUERY_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_SUMMARY_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_SUMMARY_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_SUMMARY_RESULTS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_FACET_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_FACET_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_FACET_RESULTS: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_SCOPE_VALIDATION_FAILURES: AtomicU64 = AtomicU64::new(0);
+static INVENTORY_CURSOR_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 
 pub fn record_grouping(elapsed_micros: u64, group_created: bool) {
     GROUPING_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -262,6 +270,32 @@ pub fn record_inventory_query(elapsed_micros: u64) {
     INVENTORY_QUERY_MICROSECONDS.fetch_add(elapsed_micros, Ordering::Relaxed);
 }
 
+pub fn record_inventory_summary(elapsed_micros: u64, result_size: usize) {
+    INVENTORY_SUMMARY_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    INVENTORY_SUMMARY_MICROSECONDS.fetch_add(elapsed_micros, Ordering::Relaxed);
+    INVENTORY_SUMMARY_RESULTS.fetch_add(
+        u64::try_from(result_size).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
+}
+
+pub fn record_inventory_facet(elapsed_micros: u64, result_size: usize) {
+    INVENTORY_FACET_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    INVENTORY_FACET_MICROSECONDS.fetch_add(elapsed_micros, Ordering::Relaxed);
+    INVENTORY_FACET_RESULTS.fetch_add(
+        u64::try_from(result_size).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
+}
+
+pub fn record_inventory_validation_failure(cursor: bool) {
+    if cursor {
+        INVENTORY_CURSOR_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+    } else {
+        INVENTORY_SCOPE_VALIDATION_FAILURES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 #[derive(Clone)]
 struct MetricsState {
     pool: PgPool,
@@ -443,6 +477,38 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         (
             "okoscope_inventory_query_duration_microseconds_total",
             INVENTORY_QUERY_MICROSECONDS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_summary_requests_total",
+            INVENTORY_SUMMARY_REQUESTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_summary_duration_microseconds_total",
+            INVENTORY_SUMMARY_MICROSECONDS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_summary_results_total",
+            INVENTORY_SUMMARY_RESULTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_facet_requests_total",
+            INVENTORY_FACET_REQUESTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_facet_duration_microseconds_total",
+            INVENTORY_FACET_MICROSECONDS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_facet_results_total",
+            INVENTORY_FACET_RESULTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_scope_validation_failures_total",
+            INVENTORY_SCOPE_VALIDATION_FAILURES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_inventory_cursor_rejections_total",
+            INVENTORY_CURSOR_REJECTIONS.load(Ordering::Relaxed),
         ),
         (
             "okoscope_inventory_items",

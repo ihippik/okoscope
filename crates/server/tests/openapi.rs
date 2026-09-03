@@ -559,8 +559,105 @@ fn inbound_contract_fixture_keeps_remote_clients_in_occurrences_only() {
     assert!(fixture["inbound_occurrences"]["next_cursor"].is_null());
 }
 
+#[test]
+fn runtime_inventory_fixture_covers_complete_safe_contract_states() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../docs/fixtures/runtime-inventory.json"
+    ))
+    .expect("valid runtime inventory fixture");
+    assert_eq!(fixture["filtered_summary"]["item_count"], 1);
+    assert_eq!(
+        fixture["item_details"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>(),
+        ["process", "destination", "domain", "syscall"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect()
+    );
+    for detail in fixture["item_details"].as_object().unwrap().values() {
+        for field in ["releases", "sightings", "groups", "occurrences"] {
+            let path = detail["evidence"][field].as_str().unwrap();
+            assert!(path.starts_with("/api/v1/projects/"));
+            assert!(path.ends_with(field));
+            assert!(!path.contains(['?', '#', '\\']));
+            assert!(!path.contains("..") && !path.contains("://"));
+        }
+        assert!(detail.get("policy_placement_summary").is_some());
+    }
+    for page in ["sightings", "groups", "occurrences"] {
+        assert!(fixture[page]["items"].as_array().unwrap().len() <= 200);
+        assert!(
+            fixture["terminal_pages"][page]["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+    for facet in [
+        "cluster",
+        "namespace",
+        "workload_kind",
+        "workload_name",
+        "container_name",
+    ] {
+        let page = &fixture["facets"][facet];
+        assert!(page["items"].as_array().unwrap().len() <= 200);
+        for option in page["items"].as_array().unwrap() {
+            for field in ["value", "label", "item_count", "occurrence_count"] {
+                assert!(
+                    option.get(field).is_some(),
+                    "{facet} option missing {field}"
+                );
+            }
+        }
+    }
+    for error in [
+        "invalid_cursor",
+        "unauthorized",
+        "not_found",
+        "server_error",
+    ] {
+        for field in ["error", "message", "request_id"] {
+            assert!(fixture["errors"][error].get(field).is_some());
+        }
+    }
+    let unsafe_values = &fixture["unsafe_display_text"];
+    for field in [
+        "cluster_label",
+        "namespace",
+        "workload_kind",
+        "workload_name",
+        "pod_uid",
+        "pod_name",
+        "container_name",
+        "node_name",
+    ] {
+        assert!(unsafe_values[field].is_string(), "missing unsafe {field}");
+    }
+    for field in [
+        "executable",
+        "process_command",
+        "destination_address",
+        "name",
+        "syscall",
+        "operation",
+        "path",
+        "new_path",
+    ] {
+        assert!(
+            unsafe_values["semantic_summary"][field].is_string(),
+            "missing unsafe semantic {field}"
+        );
+    }
+}
+
 fn assert_inventory_contract(document: &serde_json::Value) {
     let schemas = &document["components"]["schemas"];
+    assert_inventory_hardening_contract(document);
     assert_query_parameters(
         document,
         "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory",
@@ -651,6 +748,69 @@ fn assert_inventory_contract(document: &serde_json::Value) {
         assert_eq!(schemas[page]["properties"]["items"]["maxItems"], 200);
     }
     assert_inventory_policy_contract(document);
+}
+
+fn assert_inventory_hardening_contract(document: &serde_json::Value) {
+    let summary_path =
+        "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/summary";
+    let facet_path = "/api/v1/projects/{project_id}/applications/{application_id}/runtime-inventory/facets/{facet}";
+    let scope = [
+        "operation",
+        "release_id",
+        "cluster_id",
+        "namespace",
+        "workload_kind",
+        "workload_name",
+        "container_name",
+        "observed_from",
+        "observed_to",
+        "search",
+    ];
+    assert_query_parameters(document, summary_path, "get", &scope);
+    let mut facet_parameters = vec!["kind"];
+    facet_parameters.extend(scope);
+    facet_parameters.extend(["facet_search", "cursor", "limit"]);
+    assert_query_parameters(document, facet_path, "get", &facet_parameters);
+    let schemas = &document["components"]["schemas"];
+    assert_eq!(
+        schemas["InventoryFacet"]["enum"],
+        serde_json::json!([
+            "cluster",
+            "namespace",
+            "workload_kind",
+            "workload_name",
+            "container_name"
+        ])
+    );
+    assert_eq!(
+        schemas["InventoryFacetPage"]["properties"]["items"]["maxItems"],
+        200
+    );
+    assert!(schemas["InventoryFacetPage"].get("example").is_some());
+    assert!(schemas["InventorySummary"].get("example").is_some());
+    for status in ["400", "401", "404"] {
+        assert_eq!(
+            document["paths"][summary_path]["get"]["responses"][status]["$ref"],
+            "#/components/responses/Error"
+        );
+        assert_eq!(
+            document["paths"][facet_path]["get"]["responses"][status]["$ref"],
+            "#/components/responses/Error"
+        );
+    }
+    assert_required_fields(document, "Error", &["error", "message", "request_id"]);
+    let links = &schemas["InventoryEvidenceLinks"];
+    assert!(
+        links["description"]
+            .as_str()
+            .unwrap()
+            .contains("typed child routes")
+    );
+    for field in ["releases", "sightings", "groups", "occurrences"] {
+        let pattern = links["properties"][field]["pattern"].as_str().unwrap();
+        assert!(pattern.starts_with('^') && pattern.ends_with('$'));
+        assert!(!pattern.contains(['?', '#']));
+    }
 }
 
 fn assert_inventory_policy_contract(document: &serde_json::Value) {

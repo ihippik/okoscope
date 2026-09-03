@@ -43,12 +43,21 @@ Monitor the following metrics:
 - `okoscope_inventory_projection_freshness_seconds`;
 - `okoscope_inventory_reconciliation_mismatches_total`;
 - inventory query request and duration totals.
+- `okoscope_inventory_summary_requests_total`, `okoscope_inventory_summary_duration_microseconds_total`, and `okoscope_inventory_summary_results_total`;
+- `okoscope_inventory_facet_requests_total`, `okoscope_inventory_facet_duration_microseconds_total`, and `okoscope_inventory_facet_results_total`;
+- `okoscope_inventory_scope_validation_failures_total` and `okoscope_inventory_cursor_rejections_total`.
+
+Summary and facet structured logs contain only the closed operation/facet name, elapsed time, result size, and closed validation class. They must never include semantic search, facet search, namespace, workload, container, or any other observed value. During rollout, compare request growth with total duration and result totals; investigate cursor-rejection spikes separately from ordinary invalid scope filters.
+
+Initial cardinality assumptions per Application are 100 clusters, 1,000 namespaces, 10 workload kinds, 10,000 workload names, and 10,000 container names. Before enabling broad UI traffic, run the PostgreSQL benchmark with representative cardinalities, retain `EXPLAIN (ANALYZE, BUFFERS)` output for scoped summary and all facets, and confirm every page remains at or below 200 options.
 
 Use [`ops/queries/runtime-inventory.sql`](../ops/queries/runtime-inventory.sql) to inspect per-Application projection totals, missing memberships, and kind cardinality without selecting event payloads.
 
 ## Rollback and rebuild
 
 An older server image can run against migration 8 because the schema change is additive. To roll back the feature, stop inventory API traffic and deploy the older server; do not drop projection tables during an incident.
+
+The hardening routes are additive. If summary/facet latency regresses during rollout, disable the UI calls or deploy the prior server image; existing unfiltered inventory list/detail behavior and stored projections remain usable. Do not add or remove indexes during incident response without a captured plan and the normal migration verification suite.
 
 To rebuild one controlled tenant scope:
 

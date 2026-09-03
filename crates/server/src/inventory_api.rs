@@ -391,6 +391,18 @@ struct FacetPage {
     next_cursor: Option<String>,
 }
 
+struct FacetLoad {
+    organization_id: Uuid,
+    project_id: Uuid,
+    application_id: Uuid,
+    facet: InventoryFacet,
+    kind: Option<String>,
+    scope: InventoryScope,
+    facet_search: Option<String>,
+    cursor: Option<FacetCursor>,
+    limit: i64,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct PageQuery {
     cursor: Option<Uuid>,
@@ -647,6 +659,23 @@ fn validate_search(search: Option<&str>) -> Result<(), InventoryApiError> {
     }
 }
 
+fn record_validation<T>(
+    result: Result<T, InventoryApiError>,
+    operation: &'static str,
+    failure_class: &'static str,
+    cursor: bool,
+) -> Result<T, InventoryApiError> {
+    if result.is_err() {
+        crate::metrics::record_inventory_validation_failure(cursor);
+        tracing::warn!(
+            operation,
+            failure_class,
+            "runtime inventory request rejected"
+        );
+    }
+    result
+}
+
 impl InventoryScope {
     fn normalize(mut self) -> Result<Self, InventoryApiError> {
         validate_search(self.search.as_deref())?;
@@ -761,15 +790,20 @@ async fn summary(
     let started = Instant::now();
     let principal = principal(&headers, &state).await?;
     ensure_application(&state.pool, principal, project_id, application_id).await?;
-    let scope = query.scope.normalize()?;
-    validate_release_scope(
-        &state.pool,
-        principal,
-        project_id,
-        application_id,
-        scope.release_id,
-    )
-    .await?;
+    let scope = record_validation(query.scope.normalize(), "summary", "scope", false)?;
+    record_validation(
+        validate_release_scope(
+            &state.pool,
+            principal,
+            project_id,
+            application_id,
+            scope.release_id,
+        )
+        .await,
+        "summary",
+        "release_scope",
+        false,
+    )?;
     let version = CURRENT_INVENTORY_IDENTITY_VERSION.get();
     let search = scope.search_pattern();
     let rows: Vec<KindAggregate> =
@@ -809,8 +843,13 @@ async fn summary(
     }
     let item_count = kinds.iter().map(|kind| kind.item_count).sum();
     let occurrence_count = kinds.iter().map(|kind| kind.occurrence_count).sum();
-    crate::metrics::record_inventory_query(
-        u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+    let elapsed_micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    crate::metrics::record_inventory_query(elapsed_micros);
+    crate::metrics::record_inventory_summary(elapsed_micros, kinds.len());
+    tracing::debug!(
+        operation = "summary",
+        elapsed_micros,
+        result_size = kinds.len()
     );
     Ok(Json(InventorySummary {
         identity_version: version,
@@ -911,7 +950,6 @@ async fn distribution(
     }))
 }
 
-#[allow(clippy::too_many_lines)]
 async fn facets(
     State(state): State<InventoryApiState>,
     headers: HeaderMap,
@@ -921,10 +959,20 @@ async fn facets(
     let started = Instant::now();
     let principal = principal(&headers, &state).await?;
     ensure_application(&state.pool, principal, project_id, application_id).await?;
-    let facet = InventoryFacet::parse(&facet_name)?;
-    validate_kind(query.kind.as_deref())?;
-    validate_search(query.facet_search.as_deref())?;
-    let mut scope = query.scope.normalize()?;
+    let facet = record_validation(
+        InventoryFacet::parse(&facet_name),
+        "facet",
+        "facet_name",
+        false,
+    )?;
+    record_validation(validate_kind(query.kind.as_deref()), "facet", "kind", false)?;
+    record_validation(
+        validate_search(query.facet_search.as_deref()),
+        "facet",
+        "option_search",
+        false,
+    )?;
+    let mut scope = record_validation(query.scope.normalize(), "facet", "scope", false)?;
     match facet {
         InventoryFacet::Cluster => scope.cluster_id = None,
         InventoryFacet::Namespace => scope.namespace = None,
@@ -932,32 +980,80 @@ async fn facets(
         InventoryFacet::WorkloadName => scope.workload_name = None,
         InventoryFacet::ContainerName => scope.container_name = None,
     }
-    validate_release_scope(
-        &state.pool,
-        principal,
-        project_id,
-        application_id,
-        scope.release_id,
-    )
-    .await?;
-    let limit = limit(query.limit)?;
+    record_validation(
+        validate_release_scope(
+            &state.pool,
+            principal,
+            project_id,
+            application_id,
+            scope.release_id,
+        )
+        .await,
+        "facet",
+        "release_scope",
+        false,
+    )?;
+    let limit = record_validation(limit(query.limit), "facet", "limit", false)?;
     let fingerprint = scope.fingerprint(
         (principal.organization_id, project_id, application_id),
         query.kind.as_deref(),
     );
-    let cursor = query
-        .cursor
-        .as_deref()
-        .map(decode_cursor::<FacetCursor>)
-        .transpose()?;
+    let cursor = record_validation(
+        query
+            .cursor
+            .as_deref()
+            .map(decode_cursor::<FacetCursor>)
+            .transpose(),
+        "facet",
+        "cursor_encoding",
+        true,
+    )?;
     if cursor.as_ref().is_some_and(|cursor| {
         cursor.facet != facet.name() || cursor.scope != fingerprint || cursor.item_count < 0
     }) {
+        crate::metrics::record_inventory_validation_failure(true);
+        tracing::warn!(
+            operation = "facet",
+            failure_class = "cursor_scope",
+            "runtime inventory request rejected"
+        );
         return Err(InventoryApiError::Invalid(
             "facet cursor is invalid for this scope".into(),
         ));
     }
-    let (value_sql, label_sql, cluster_join) = match facet {
+    let mut items = load_facet_options(
+        &state.pool,
+        &FacetLoad {
+            organization_id: principal.organization_id,
+            project_id,
+            application_id,
+            facet,
+            kind: query.kind,
+            scope,
+            facet_search: query.facet_search,
+            cursor,
+            limit,
+        },
+    )
+    .await?;
+    let next_cursor = facet_next_cursor(&mut items, limit, facet, fingerprint)?;
+    let elapsed_micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    crate::metrics::record_inventory_query(elapsed_micros);
+    crate::metrics::record_inventory_facet(elapsed_micros, items.len());
+    tracing::debug!(
+        operation = "facet",
+        facet = facet.name(),
+        elapsed_micros,
+        result_size = items.len()
+    );
+    Ok(Json(FacetPage { items, next_cursor }))
+}
+
+async fn load_facet_options(
+    pool: &PgPool,
+    load: &FacetLoad,
+) -> Result<Vec<FacetOption>, InventoryApiError> {
+    let (value_sql, label_sql, cluster_join) = match load.facet {
         InventoryFacet::Cluster => (
             "s.cluster_id::text",
             "c.name",
@@ -971,55 +1067,58 @@ async fn facets(
     let sql = format!(
         "SELECT {value_sql} value,{label_sql} label,count(DISTINCT i.id)::bigint item_count,COALESCE(sum(s.occurrence_count),0)::bigint occurrence_count FROM runtime_inventory_sightings s JOIN runtime_inventory_items i ON i.id=s.item_id {cluster_join} WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=$4 AND ($5::text IS NULL OR i.inventory_kind=$5) AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$6)) AND ($7::uuid IS NULL OR s.cluster_id=$7) AND ($8::text IS NULL OR s.namespace=$8) AND ($9::text IS NULL OR s.workload_kind=$9) AND ($10::text IS NULL OR s.workload_name=$10) AND ($11::text IS NULL OR s.container_name=$11) AND ($12::timestamptz IS NULL OR s.last_seen_at >= $12) AND ($13::timestamptz IS NULL OR s.first_seen_at <= $13) AND ($14::text IS NULL OR i.semantic_summary->>'operation'=$14) AND ($15::text IS NULL OR concat_ws(' ',i.semantic_summary->>'executable',i.semantic_summary->>'process_command',i.semantic_summary->>'destination_address',i.semantic_summary->>'destination_port',i.semantic_summary->>'local_address',i.semantic_summary->>'local_port',i.semantic_summary->>'name',i.semantic_summary->>'query_type',i.semantic_summary->>'syscall',i.semantic_summary->>'operation',i.semantic_summary->>'path',i.semantic_summary->>'new_path') ILIKE $15) AND ($16::text IS NULL OR concat_ws(' ',{label_sql},{value_sql}) ILIKE $16) GROUP BY {value_sql},{label_sql} HAVING ($17::bigint IS NULL OR count(DISTINCT i.id)<$17 OR (count(DISTINCT i.id)=$17 AND ({label_sql}>$18 OR ({label_sql}=$18 AND {value_sql}>$19)))) ORDER BY item_count DESC,label ASC,value ASC LIMIT $20"
     );
-    let search = scope.search_pattern();
-    let facet_search = query
-        .facet_search
-        .as_ref()
-        .map(|value| format!("%{value}%"));
-    let mut items = sqlx::query_as::<_, FacetOption>(&sql)
-        .bind(principal.organization_id)
-        .bind(project_id)
-        .bind(application_id)
+    let search = load.scope.search_pattern();
+    let facet_search = load.facet_search.as_ref().map(|value| format!("%{value}%"));
+    Ok(sqlx::query_as::<_, FacetOption>(&sql)
+        .bind(load.organization_id)
+        .bind(load.project_id)
+        .bind(load.application_id)
         .bind(CURRENT_INVENTORY_IDENTITY_VERSION.get())
-        .bind(query.kind.as_deref())
-        .bind(scope.release_id)
-        .bind(scope.cluster_id)
-        .bind(scope.namespace.as_deref())
-        .bind(scope.workload_kind.as_deref())
-        .bind(scope.workload_name.as_deref())
-        .bind(scope.container_name.as_deref())
-        .bind(scope.observed_from)
-        .bind(scope.observed_to)
-        .bind(scope.operation.as_deref())
+        .bind(load.kind.as_deref())
+        .bind(load.scope.release_id)
+        .bind(load.scope.cluster_id)
+        .bind(load.scope.namespace.as_deref())
+        .bind(load.scope.workload_kind.as_deref())
+        .bind(load.scope.workload_name.as_deref())
+        .bind(load.scope.container_name.as_deref())
+        .bind(load.scope.observed_from)
+        .bind(load.scope.observed_to)
+        .bind(load.scope.operation.as_deref())
         .bind(search.as_deref())
         .bind(facet_search.as_deref())
-        .bind(cursor.as_ref().map(|value| value.item_count))
-        .bind(cursor.as_ref().map(|value| value.label.as_str()))
-        .bind(cursor.as_ref().map(|value| value.value.as_str()))
-        .bind(limit + 1)
-        .fetch_all(&state.pool)
-        .await?;
-    let next_cursor = if items.len() > usize::try_from(limit).unwrap_or(usize::MAX) {
-        items.pop();
-        items
-            .last()
-            .map(|item| {
-                encode_cursor(&FacetCursor {
-                    facet: facet.name().into(),
-                    scope: fingerprint,
-                    item_count: item.item_count,
-                    label: item.label.clone(),
-                    value: item.value.clone(),
+        .bind(load.cursor.as_ref().map(|value| value.item_count))
+        .bind(load.cursor.as_ref().map(|value| value.label.as_str()))
+        .bind(load.cursor.as_ref().map(|value| value.value.as_str()))
+        .bind(load.limit + 1)
+        .fetch_all(pool)
+        .await?)
+}
+
+fn facet_next_cursor(
+    items: &mut Vec<FacetOption>,
+    limit: i64,
+    facet: InventoryFacet,
+    fingerprint: String,
+) -> Result<Option<String>, InventoryApiError> {
+    Ok(
+        if items.len() > usize::try_from(limit).unwrap_or(usize::MAX) {
+            items.pop();
+            items
+                .last()
+                .map(|item| {
+                    encode_cursor(&FacetCursor {
+                        facet: facet.name().into(),
+                        scope: fingerprint,
+                        item_count: item.item_count,
+                        label: item.label.clone(),
+                        value: item.value.clone(),
+                    })
                 })
-            })
-            .transpose()?
-    } else {
-        None
-    };
-    crate::metrics::record_inventory_query(
-        u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-    );
-    Ok(Json(FacetPage { items, next_cursor }))
+                .transpose()?
+        } else {
+            None
+        },
+    )
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1283,10 +1382,72 @@ mod tests {
         };
         assert!(scope.normalize().is_err());
         let scope = InventoryScope {
+            search: Some("x".repeat(201)),
+            ..Default::default()
+        };
+        assert!(scope.normalize().is_err());
+        let scope = InventoryScope {
             namespace: Some(" ".into()),
             ..Default::default()
         };
         assert!(scope.normalize().is_err());
+        let scope = InventoryScope {
+            observed_from: Some(Utc::now()),
+            observed_to: Some(Utc::now() - chrono::Duration::seconds(1)),
+            ..Default::default()
+        };
+        assert!(scope.normalize().is_err());
+        let scope = InventoryScope {
+            operation: Some("read".into()),
+            ..Default::default()
+        };
+        assert!(scope.normalize().is_err());
+        let scope = InventoryScope {
+            container_name: Some("x".repeat(254)),
+            ..Default::default()
+        };
+        assert!(scope.normalize().is_err());
+    }
+
+    #[test]
+    fn normalized_scope_trims_deployment_values_and_preserves_valid_bounds() {
+        let from = Utc::now() - chrono::Duration::minutes(1);
+        let to = Utc::now();
+        let scope = InventoryScope {
+            namespace: Some(" production ".into()),
+            workload_kind: Some(" Deployment ".into()),
+            workload_name: Some(" api ".into()),
+            container_name: Some(" server ".into()),
+            observed_from: Some(from),
+            observed_to: Some(to),
+            search: Some("worker".into()),
+            ..Default::default()
+        }
+        .normalize()
+        .unwrap();
+        assert_eq!(scope.namespace.as_deref(), Some("production"));
+        assert_eq!(scope.workload_kind.as_deref(), Some("Deployment"));
+        assert_eq!(scope.workload_name.as_deref(), Some("api"));
+        assert_eq!(scope.container_name.as_deref(), Some("server"));
+        assert_eq!(scope.observed_from, Some(from));
+        assert_eq!(scope.observed_to, Some(to));
+    }
+
+    #[test]
+    fn inventory_kinds_are_closed() {
+        for kind in [
+            None,
+            Some("process"),
+            Some("destination"),
+            Some("domain"),
+            Some("syscall"),
+            Some("inbound_endpoint"),
+            Some("file_activity"),
+            Some("lifecycle"),
+        ] {
+            assert!(validate_kind(kind).is_ok(), "kind {kind:?}");
+        }
+        assert!(validate_kind(Some("payload")).is_err());
     }
 
     #[test]
@@ -1307,6 +1468,20 @@ mod tests {
         assert_ne!(
             scope.fingerprint((org, project, app), Some("process")),
             scope.fingerprint((org, project, Uuid::from_u128(4)), Some("process"))
+        );
+        assert_ne!(
+            scope.fingerprint((org, project, app), Some("process")),
+            scope.fingerprint((org, project, app), Some("domain"))
+        );
+        let changed_scope = InventoryScope {
+            namespace: Some("staging".into()),
+            ..Default::default()
+        }
+        .normalize()
+        .unwrap();
+        assert_ne!(
+            scope.fingerprint((org, project, app), Some("process")),
+            changed_scope.fingerprint((org, project, app), Some("process"))
         );
     }
 

@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use axum::{
     body::{Body, to_bytes},
-    http::{Request, header::AUTHORIZATION},
+    http::{Request, header::COOKIE},
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use event_model::{
@@ -10,8 +10,8 @@ use event_model::{
     ProcessExec, ProcessIdentity, RuntimeEvent,
 };
 use server::{
-    auth::SessionScope,
-    bootstrap::{BootstrapConfig, bootstrap},
+    auth::{SESSION_COOKIE, SessionScope, SessionToken},
+    bootstrap::{BootstrapConfig, BootstrapIds, bootstrap},
     ingestion::{IngestionContext, persist_batch},
     inventory_api, releases,
 };
@@ -24,6 +24,7 @@ const POD_COUNT: usize = 200;
 const MAX_PROJECTION_DURATION: Duration = Duration::from_secs(60);
 const MAX_LIST_QUERY_DURATION: Duration = Duration::from_secs(2);
 const MAX_DETAIL_QUERY_DURATION: Duration = Duration::from_secs(2);
+const MAX_AGGREGATE_QUERY_DURATION: Duration = Duration::from_secs(2);
 const SAMPLE_COUNT: usize = 30;
 
 fn config() -> BootstrapConfig {
@@ -148,7 +149,7 @@ async fn inventory_projection_and_read_queries_meet_documented_acceptance_limits
     );
     assert!(detail_duration <= MAX_DETAIL_QUERY_DURATION);
 
-    let credential = config().api_credential;
+    let credential = owner_session(&pool, &ids).await;
     let inventory = inventory_api::router(pool.clone());
     let release_api = releases::router(pool.clone());
     let distribution_uri = format!(
@@ -159,6 +160,51 @@ async fn inventory_projection_and_read_queries_meet_documented_acceptance_limits
         "/api/v1/projects/{}/applications/{}/releases/{target_id}/runtime-diff/summary?baseline_id={baseline_id}&limit=10",
         ids.project_id, ids.application_id
     );
+    let inventory_base = format!(
+        "/api/v1/projects/{}/applications/{}/runtime-inventory",
+        ids.project_id, ids.application_id
+    );
+    let mut hardening_durations = Vec::new();
+    for (name, uri) in [
+        (
+            "summary",
+            format!("{inventory_base}/summary?release_id={baseline_id}&namespace=production"),
+        ),
+        (
+            "facet_cluster",
+            format!("{inventory_base}/facets/cluster?release_id={baseline_id}"),
+        ),
+        (
+            "facet_namespace",
+            format!("{inventory_base}/facets/namespace?release_id={baseline_id}"),
+        ),
+        (
+            "facet_workload_kind",
+            format!("{inventory_base}/facets/workload_kind?release_id={baseline_id}"),
+        ),
+        (
+            "facet_workload_name",
+            format!("{inventory_base}/facets/workload_name?release_id={baseline_id}"),
+        ),
+        (
+            "facet_container_name",
+            format!("{inventory_base}/facets/container_name?release_id={baseline_id}"),
+        ),
+    ] {
+        let started = Instant::now();
+        let response = inventory
+            .clone()
+            .oneshot(authenticated_request(&uri, &credential))
+            .await
+            .unwrap();
+        let duration = started.elapsed();
+        assert!(response.status().is_success(), "{name} response");
+        assert!(
+            duration <= MAX_AGGREGATE_QUERY_DURATION,
+            "{name} duration {duration:?}"
+        );
+        hardening_durations.push((name, duration));
+    }
     sqlx::query("ANALYZE runtime_inventory_items")
         .execute(&pool)
         .await
@@ -211,9 +257,10 @@ async fn inventory_projection_and_read_queries_meet_documented_acceptance_limits
     }
     let diff_plan: Vec<String> = sqlx::query_scalar("EXPLAIN WITH b AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$1),t AS (SELECT group_id,occurrence_count FROM runtime_event_group_releases WHERE release_id=$2) SELECT COALESCE(t.group_id,b.group_id) FROM b FULL OUTER JOIN t ON t.group_id=b.group_id ORDER BY ABS(COALESCE(t.occurrence_count,0)-COALESCE(b.occurrence_count,0)) DESC LIMIT 10")
         .bind(baseline_id).bind(target_id).fetch_all(&pool).await.unwrap();
+    let hardening_plans = hardening_plans(&pool, &ids, baseline_id).await;
 
     eprintln!(
-        "runtime inventory benchmark: events={EVENT_COUNT} items={ITEM_COUNT} pods={POD_COUNT} projection_ms={} list_ms={} detail_ms={} distribution_p50_ms={} distribution_p95_ms={} distribution_p99_ms={} diff_p50_ms={} diff_p95_ms={} diff_p99_ms={} max_response_bytes={} inventory_plans={:?} diff_plan={:?}",
+        "runtime inventory benchmark: events={EVENT_COUNT} items={ITEM_COUNT} pods={POD_COUNT} projection_ms={} list_ms={} detail_ms={} distribution_p50_ms={} distribution_p95_ms={} distribution_p99_ms={} diff_p50_ms={} diff_p95_ms={} diff_p99_ms={} max_response_bytes={} hardening_durations={:?} inventory_plans={:?} hardening_plans={:?} diff_plan={:?}",
         projection_duration.as_millis(),
         list_duration.as_millis(),
         detail_duration.as_millis(),
@@ -224,9 +271,43 @@ async fn inventory_projection_and_read_queries_meet_documented_acceptance_limits
         percentile(&diff_samples, 95).as_millis(),
         percentile(&diff_samples, 99).as_millis(),
         max_response_bytes,
+        hardening_durations,
         plans,
+        hardening_plans,
         diff_plan,
     );
+}
+
+async fn hardening_plans(
+    pool: &sqlx::PgPool,
+    ids: &server::bootstrap::BootstrapIds,
+    release_id: Uuid,
+) -> Vec<(String, Vec<String>)> {
+    let summary: Vec<String> = sqlx::query_scalar("EXPLAIN (ANALYZE, BUFFERS) SELECT i.inventory_kind,count(*) FROM runtime_inventory_items i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=1 AND EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$4) AND EXISTS(SELECT 1 FROM runtime_inventory_sightings s WHERE s.item_id=i.id AND s.namespace='production') GROUP BY i.inventory_kind")
+        .bind(ids.organization_id).bind(ids.project_id).bind(ids.application_id).bind(release_id)
+        .fetch_all(pool).await.unwrap();
+    let mut plans = vec![("summary".to_owned(), summary)];
+    for (name, expression) in [
+        ("cluster", "s.cluster_id::text"),
+        ("namespace", "s.namespace"),
+        ("workload_kind", "s.workload_kind"),
+        ("workload_name", "s.workload_name"),
+        ("container_name", "s.container_name"),
+    ] {
+        let sql = format!(
+            "EXPLAIN (ANALYZE, BUFFERS) SELECT {expression},count(DISTINCT i.id),sum(s.occurrence_count) FROM runtime_inventory_sightings s JOIN runtime_inventory_items i ON i.id=s.item_id WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 AND i.identity_version=1 AND EXISTS(SELECT 1 FROM runtime_inventory_releases r WHERE r.item_id=i.id AND r.release_id=$4) GROUP BY {expression} ORDER BY count(DISTINCT i.id) DESC,{expression} ASC LIMIT 201"
+        );
+        let plan = sqlx::query_scalar(&sql)
+            .bind(ids.organization_id)
+            .bind(ids.project_id)
+            .bind(ids.application_id)
+            .bind(release_id)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        plans.push((name.to_owned(), plan));
+    }
+    plans
 }
 
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
@@ -314,9 +395,33 @@ async fn inbound_remote_cardinality_does_not_expand_inventory_identity(pool: sql
 fn authenticated_request(uri: &str, credential: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
-        .header(AUTHORIZATION, format!("Bearer {credential}"))
+        .header(COOKIE, format!("{SESSION_COOKIE}={credential}"))
         .body(Body::empty())
         .unwrap()
+}
+
+async fn owner_session(pool: &sqlx::PgPool, ids: &BootstrapIds) -> String {
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)")
+        .bind(user_id)
+        .bind(format!("{user_id}@example.test"))
+        .bind(server::auth::hash_password("inventory-benchmark-password").unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner')",
+    )
+    .bind(ids.organization_id)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let token = SessionToken::generate();
+    sqlx::query("INSERT INTO user_sessions(id,user_id,organization_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')")
+        .bind(Uuid::new_v4()).bind(user_id).bind(ids.organization_id).bind(token.digest().as_slice())
+        .execute(pool).await.unwrap();
+    token.expose().to_owned()
 }
 
 fn percentile(samples: &[Duration], percentile: usize) -> Duration {

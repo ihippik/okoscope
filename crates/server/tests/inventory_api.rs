@@ -131,6 +131,54 @@ async fn release(pool: &sqlx::PgPool, ids: &BootstrapIds, version: &str, age_day
     id
 }
 
+async fn inventory_item(pool: &sqlx::PgPool, ids: &BootstrapIds, seed: u8) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO runtime_inventory_items(id,organization_id,project_id,application_id,inventory_kind,identity_version,identity_digest,semantic_summary,first_seen_at,last_seen_at,occurrence_count) VALUES($1,$2,$3,$4,'process',1,$5,jsonb_build_object('executable',$6),now(),now(),1)")
+        .bind(id)
+        .bind(ids.organization_id)
+        .bind(ids.project_id)
+        .bind(ids.application_id)
+        .bind(vec![seed; 32])
+        .bind(format!("/app/process-{seed}"))
+        .execute(pool)
+        .await
+        .unwrap();
+    id
+}
+
+struct Sighting<'a> {
+    cluster_id: Uuid,
+    namespace: &'a str,
+    workload_kind: &'a str,
+    workload_name: &'a str,
+    pod_uid: &'a str,
+    container_name: &'a str,
+    occurrence_count: i64,
+}
+
+async fn inventory_sighting(
+    pool: &sqlx::PgPool,
+    ids: &BootstrapIds,
+    item_id: Uuid,
+    sighting: Sighting<'_>,
+) {
+    sqlx::query("INSERT INTO runtime_inventory_sightings(organization_id,project_id,application_id,item_id,cluster_id,namespace,workload_kind,workload_name,pod_uid,pod_name,container_name,occurrence_count,first_seen_at,last_seen_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11,now(),now())")
+        .bind(ids.organization_id)
+        .bind(ids.project_id)
+        .bind(ids.application_id)
+        .bind(item_id)
+        .bind(sighting.cluster_id)
+        .bind(sighting.namespace)
+        .bind(sighting.workload_kind)
+        .bind(sighting.workload_name)
+        .bind(sighting.pod_uid)
+        .bind(sighting.container_name)
+        .bind(sighting.occurrence_count)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 #[sqlx::test(migrator = "server::database::MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isolation(
@@ -527,7 +575,71 @@ async fn inventory_api_covers_kinds_filters_evidence_pagination_and_tenant_isola
         .await
         .unwrap();
     assert_eq!(filtered.status(), StatusCode::OK);
-    assert_eq!(json(filtered).await["items"].as_array().unwrap().len(), 1);
+    let filtered = json(filtered).await;
+    assert_eq!(filtered["items"].as_array().unwrap().len(), 1);
+    let filtered_item = &filtered["items"][0];
+    let filtered_summary = app
+        .clone()
+        .oneshot(request(
+            &format!(
+                "{base}/summary?release_id={observed_release}&cluster_id={}&namespace=production&workload_kind=Deployment&workload_name=app&container_name=app&search=server",
+                first.cluster_id
+            ),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(filtered_summary.status(), StatusCode::OK);
+    let filtered_summary = json(filtered_summary).await;
+    assert_eq!(filtered_summary["item_count"], 1);
+    assert_eq!(
+        filtered_summary["occurrence_count"],
+        filtered_item["occurrence_count"]
+    );
+    assert_eq!(
+        filtered_summary["first_seen_at"],
+        filtered_item["first_seen_at"]
+    );
+    assert_eq!(
+        filtered_summary["last_seen_at"],
+        filtered_item["last_seen_at"]
+    );
+
+    let empty_summary = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/summary?search=does-not-exist"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(empty_summary.status(), StatusCode::OK);
+    let empty_summary = json(empty_summary).await;
+    assert_eq!(empty_summary["item_count"], 0);
+    assert!(empty_summary["first_seen_at"].is_null());
+    assert!(empty_summary["last_seen_at"].is_null());
+
+    let invalid_summary = app
+        .clone()
+        .oneshot(request(
+            &format!(
+                "{base}/summary?observed_from=2026-08-19T00:00:00Z&observed_to=2026-08-18T00:00:00Z"
+            ),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(invalid_summary.status(), StatusCode::BAD_REQUEST);
+
+    let foreign_summary_release = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/summary?release_id={foreign_release}"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(foreign_summary_release.status(), StatusCode::BAD_REQUEST);
 
     let page = app
         .clone()
@@ -673,4 +785,184 @@ async fn inventory_summary_normalizes_legacy_lifecycle_kinds(pool: sqlx::PgPool)
         .unwrap();
     assert_eq!(lifecycle["item_count"], 3);
     assert_eq!(lifecycle["occurrence_count"], 10);
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn inventory_facets_deduplicate_items_and_sum_distinct_sightings(pool: sqlx::PgPool) {
+    let mut test_config = config("inventory-facet-aggregates");
+    let ids = bootstrap(&pool, &test_config).await.unwrap();
+    test_config.api_credential = owner_session(&pool, &ids).await;
+    let second_cluster = Uuid::new_v4();
+    sqlx::query("INSERT INTO clusters(id,organization_id,external_id,name) VALUES($1,$2,'second','Second cluster')")
+        .bind(second_cluster)
+        .bind(ids.organization_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let item_id = inventory_item(&pool, &ids, 1).await;
+    for sighting in [
+        Sighting {
+            cluster_id: ids.cluster_id,
+            namespace: "production",
+            workload_kind: "Deployment",
+            workload_name: "api",
+            pod_uid: "pod-a",
+            container_name: "server",
+            occurrence_count: 2,
+        },
+        Sighting {
+            cluster_id: ids.cluster_id,
+            namespace: "production",
+            workload_kind: "Deployment",
+            workload_name: "worker",
+            pod_uid: "pod-b",
+            container_name: "server",
+            occurrence_count: 3,
+        },
+        Sighting {
+            cluster_id: second_cluster,
+            namespace: "staging",
+            workload_kind: "StatefulSet",
+            workload_name: "api",
+            pod_uid: "pod-c",
+            container_name: "sidecar",
+            occurrence_count: 5,
+        },
+    ] {
+        inventory_sighting(&pool, &ids, item_id, sighting).await;
+    }
+    let app = inventory_api::router(pool);
+    let base = format!(
+        "/api/v1/projects/{}/applications/{}/runtime-inventory/facets",
+        ids.project_id, ids.application_id
+    );
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/cluster?namespace=ignored-by-other-facet"),
+            &test_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(json(response).await["items"].as_array().unwrap().is_empty());
+    let clusters = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/cluster"),
+            &test_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    let clusters = json(clusters).await;
+    assert_eq!(clusters["items"].as_array().unwrap().len(), 2);
+    for option in clusters["items"].as_array().unwrap() {
+        assert_eq!(option["item_count"], 1);
+        assert_eq!(option["occurrence_count"], 5);
+    }
+    let namespaces = app
+        .oneshot(request(
+            &format!("{base}/namespace?namespace=absent&workload_name=api"),
+            &test_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    let namespaces = json(namespaces).await;
+    assert_eq!(namespaces["items"].as_array().unwrap().len(), 2);
+    assert_eq!(namespaces["items"][0]["item_count"], 1);
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn inventory_facets_enforce_bounds_search_cursors_and_tenant_scope(pool: sqlx::PgPool) {
+    let mut first_config = config("inventory-facet-pages");
+    let first = bootstrap(&pool, &first_config).await.unwrap();
+    first_config.api_credential = owner_session(&pool, &first).await;
+    let mut second_config = config("inventory-facet-foreign");
+    let second = bootstrap(&pool, &second_config).await.unwrap();
+    second_config.api_credential = owner_session(&pool, &second).await;
+    for index in 0_u8..=200 {
+        let item_id = inventory_item(&pool, &first, index).await;
+        let namespace = format!("namespace-{index:03}");
+        inventory_sighting(
+            &pool,
+            &first,
+            item_id,
+            Sighting {
+                cluster_id: first.cluster_id,
+                namespace: &namespace,
+                workload_kind: "Deployment",
+                workload_name: "api",
+                pod_uid: &format!("pod-{index}"),
+                container_name: "server",
+                occurrence_count: 1,
+            },
+        )
+        .await;
+    }
+    let app = inventory_api::router(pool);
+    let base = format!(
+        "/api/v1/projects/{}/applications/{}/runtime-inventory/facets",
+        first.project_id, first.application_id
+    );
+    let page = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/namespace?limit=200"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = json(page).await;
+    assert_eq!(page["items"].as_array().unwrap().len(), 200);
+    let cursor = page["next_cursor"].as_str().unwrap();
+    let next = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/namespace?limit=200&cursor={cursor}"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(json(next).await["items"].as_array().unwrap().len(), 1);
+    for uri in [
+        format!("{base}/workload_name?cursor={cursor}"),
+        format!("{base}/namespace?cursor={cursor}&kind=domain"),
+        format!("{base}/unsupported"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request(&uri, &first_config.api_credential))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    let searched = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/namespace?facet_search=namespace-200"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(json(searched).await["items"].as_array().unwrap().len(), 1);
+    let empty = app
+        .clone()
+        .oneshot(request(
+            &format!("{base}/namespace?facet_search=absent"),
+            &first_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert!(json(empty).await["items"].as_array().unwrap().is_empty());
+    let foreign = app
+        .oneshot(request(
+            &format!("{base}/namespace"),
+            &second_config.api_credential,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
 }

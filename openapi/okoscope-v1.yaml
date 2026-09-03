@@ -328,6 +328,7 @@ paths:
       ]
     get:
       operationId: getApplicationRuntimeInventorySummary
+      description: Returns all inventory-kind aggregates within the same normalized operational scope used by the inventory list.
       parameters:
         - {
             name: operation,
@@ -2776,6 +2777,14 @@ components:
       type: object
       additionalProperties: false
       required: [identity_version, item_count, occurrence_count, first_seen_at, last_seen_at, kinds]
+      example:
+        identity_version: 1
+        item_count: 1
+        occurrence_count: 4
+        first_seen_at: '2026-08-18T09:00:00Z'
+        last_seen_at: '2026-08-18T10:00:00Z'
+        kinds:
+          - { kind: process, item_count: 1, occurrence_count: 4 }
       properties:
         identity_version: { type: integer, format: int32, minimum: 1 }
         item_count: { type: integer, format: int64, minimum: 0 }
@@ -2835,6 +2844,10 @@ components:
       type: object
       additionalProperties: false
       required: [items, next_cursor]
+      example:
+        items:
+          - { value: production, label: production, item_count: 12, occurrence_count: 48 }
+        next_cursor: null
       properties:
         items:
           {
@@ -2851,6 +2864,7 @@ components:
           }
     InventoryEvidenceLinks:
       type: object
+      description: Optional navigation conveniences generated from the current scoped identifiers. Clients should construct the four typed child routes from OpenAPI parameters; if a hint is used, validate it against the matching root-relative allowlist pattern and never treat it as an arbitrary fetch target.
       additionalProperties: false
       required: [releases, sightings, groups, occurrences]
       properties:
