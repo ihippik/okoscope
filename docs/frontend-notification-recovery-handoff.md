@@ -27,3 +27,7 @@ Do not display or persist bearer credentials, raw idempotency keys, signing secr
 - Unit tests cover confirmation, in-memory idempotency reuse, changed-command keys, eligibility controls, `409` refresh, bulk `has_more`, stale reads, and request-ID copy.
 - Playwright covers one retry, one queued cancellation, one bounded bulk command, and operation-history navigation.
 - Accessibility tests cover keyboard confirmation, focus restoration, status text independent of color, and `aria-live` command results.
+
+## Unified history retention
+
+Delivery attempts and manual actions now share the effective Project retention window. Expired deliveries and their details disappear together; shared operation summaries can retain aggregate counts while their affected-delivery lists shrink. Idempotency keys are remembered only while the operation record survives. See [retention settings and API](notification-retention-settings.md).

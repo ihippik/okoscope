@@ -223,3 +223,7 @@ curl -H 'Authorization: Bearer <api-credential>' \
 Pass `baseline_id=<release-uuid>` for an explicit comparison. Entries are `new`, `disappeared`, or `unchanged`; baseline and target counts are returned separately. Inspect attribution and summary state with `ops/queries/release-runtime-diff.sql`. Rollback can deploy the prior binaries while leaving migration `0005` in place; do not drop its nullable columns or tables while attributed data exists.
 
 Without `baseline_id`, episode transition evidence selects the replaced Release, including rollback to an older immutable Release. Responses identify `explicit`, `transition`, `concurrent_transition_fallback`, `legacy_deployment_order`, or `none` as the selection source. Application rollback may restore prior agent/server images but must leave migrations 0005 and 0019, Releases, episodes, runtime data, Secrets, and PostgreSQL storage intact.
+
+## Notification retention policies
+
+Migration 22 introduces Organization settings inherited by Projects and a unified history window. Follow [the retention upgrade guide](notification-retention-settings.md) before upgrading an installation with cleanup enabled. Legacy retention environment values initialize existing policies once; use the settings API/UI for subsequent changes and OKOSCOPE_NOTIFICATION_RETENTION_PAUSED for an operational pause.

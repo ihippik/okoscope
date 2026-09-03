@@ -60,6 +60,13 @@ pub struct NotificationArgs {
         default_value_t = false
     )]
     pub retention_enabled: bool,
+    /// Pause maintenance independently of tenant policies (legacy import is unaffected).
+    #[arg(
+        long,
+        env = "OKOSCOPE_NOTIFICATION_RETENTION_PAUSED",
+        default_value_t = false
+    )]
+    pub retention_paused: bool,
     #[arg(
         long,
         env = "OKOSCOPE_NOTIFICATION_TERMINAL_RETENTION_DAYS",
@@ -110,6 +117,7 @@ impl Default for NotificationArgs {
             max_response_bytes: 4096,
             shutdown_drain_seconds: 15,
             retention_enabled: false,
+            retention_paused: false,
             terminal_retention_days: 90,
             recovery_retention_days: 365,
             retention_batch_size: 1000,
@@ -208,13 +216,7 @@ impl NotificationArgs {
             max_response_bytes: self.max_response_bytes,
             shutdown_drain: Duration::from_secs(self.shutdown_drain_seconds),
             retention: crate::notification::retention::RetentionConfig {
-                enabled: self.retention_enabled,
-                terminal_window: Duration::from_secs(
-                    self.terminal_retention_days.saturating_mul(86_400),
-                ),
-                recovery_window: Duration::from_secs(
-                    self.recovery_retention_days.saturating_mul(86_400),
-                ),
+                enabled: !self.retention_paused,
                 batch_size: self.retention_batch_size,
                 poll_interval: Duration::from_secs(self.retention_poll_seconds),
             },
@@ -254,6 +256,20 @@ mod tests {
         assert!(!config.enabled);
         assert!(!config.allow_http);
         assert!(!config.allow_private_ips);
+        assert!(config.encryption_key.is_none());
+        assert!(config.retention.enabled);
+    }
+
+    #[test]
+    fn operational_pause_is_independent_of_legacy_policy_and_delivery() {
+        let args = NotificationArgs {
+            retention_enabled: true,
+            retention_paused: true,
+            ..NotificationArgs::default()
+        };
+        let config = args.build(false).unwrap();
+        assert!(!config.retention.enabled);
+        assert!(!config.enabled);
     }
 
     #[test]

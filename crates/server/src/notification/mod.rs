@@ -4,6 +4,8 @@ pub mod health;
 pub mod recovery;
 pub mod repository;
 pub mod retention;
+pub mod retention_api;
+pub mod retention_settings;
 pub mod webhook;
 pub mod worker;
 

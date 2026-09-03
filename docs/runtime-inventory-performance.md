@@ -55,3 +55,7 @@ On 2026-09-02, the hardening benchmark passed on PostgreSQL 17 at backend revisi
 - container-name facet: 5.06 ms; measured plan execution: 1.71 ms.
 
 All plans were captured with `EXPLAIN (ANALYZE, BUFFERS)`. Summary used the sightings primary-key bitmap scan plus item/release indexes; facets used release filtering, item primary-key lookup, and `runtime_inventory_sightings_item_recent_idx`. All requests were far below the two-second development ceiling, so the measurement did not justify a new projection index or migration. Higher distinct-value production profiles remain a deployment sizing check, not a blocker for the bounded API contract.
+
+## Expanded aggregate verification (2026-09-03)
+
+See [high-cardinality verification](data-visualizations-high-cardinality.md) for 40,000 identities, real HTTP p99 samples, full aggregate query plans, and the confirmed default 5 / maximum 10 entry limits. The historical index-only distribution plan above explains a simplified lookup, not the full materialized-scope/window aggregate. The new oversized-label probe also demonstrates that bounded entry count does not enforce a fixed response-byte maximum; frontend task 5.4 remains open for that contract decision.

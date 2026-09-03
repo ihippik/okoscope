@@ -612,6 +612,10 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
             NOTIFICATION_RETENTION_ENABLED.load(Ordering::Relaxed),
         ),
         (
+            "okoscope_notification_retention_paused",
+            1 - NOTIFICATION_RETENTION_ENABLED.load(Ordering::Relaxed),
+        ),
+        (
             "okoscope_notification_retention_successes_total",
             NOTIFICATION_RETENTION_SUCCESSES.load(Ordering::Relaxed),
         ),

@@ -1,6 +1,26 @@
 use std::collections::HashSet;
 
 const LIVE_OPERATIONS: &[(&str, &str)] = &[
+    (
+        "/api/v1/organizations/{organization_id}/notification-retention",
+        "get",
+    ),
+    (
+        "/api/v1/organizations/{organization_id}/notification-retention",
+        "put",
+    ),
+    (
+        "/api/v1/projects/{project_id}/notification-retention",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/notification-retention",
+        "put",
+    ),
+    (
+        "/api/v1/projects/{project_id}/notification-retention",
+        "delete",
+    ),
     ("/api/v1/build-info", "get"),
     ("/api/v1/auth/register", "post"),
     ("/api/v1/auth/login", "post"),
@@ -278,7 +298,7 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     let documented = paths
         .values()
         .map(|item| {
-            ["get", "post", "patch", "delete"]
+            ["get", "post", "put", "patch", "delete"]
                 .into_iter()
                 .filter(|method| item.get(method).is_some())
                 .count()

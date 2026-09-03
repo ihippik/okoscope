@@ -37,6 +37,7 @@ struct ServerOptions {
     grpc_addr: SocketAddr,
     health_addr: SocketAddr,
     development_plaintext: bool,
+    retention: server::notification::retention::RetentionConfig,
     tls_certificate: Option<PathBuf>,
     tls_private_key: Option<PathBuf>,
 }
@@ -81,17 +82,12 @@ async fn serve(
                 shutdown_receiver.clone(),
             ))
         });
-    let retention_task = notifications
-        .as_ref()
-        .filter(|service| service.config.retention.enabled)
-        .map(|service| {
-            metrics::configure_notification_retention(true);
-            tokio::spawn(server::notification::retention::run(
-                pool.clone(),
-                service.config.retention,
-                shutdown_receiver.clone(),
-            ))
-        });
+    metrics::configure_notification_retention(options.retention.enabled);
+    let retention_task = tokio::spawn(server::notification::retention::run(
+        pool.clone(),
+        options.retention,
+        shutdown_receiver.clone(),
+    ));
     let policy_worker_task = tokio::spawn(server::policy_recompute::run(
         pool.clone(),
         shutdown_receiver.clone(),
@@ -134,9 +130,7 @@ async fn serve(
             tracing::warn!("notification worker drain timed out");
         }
     }
-    if let Some(retention_task) = retention_task {
-        let _ = retention_task.await;
-    }
+    let _ = retention_task.await;
     let _ = policy_worker_task.await;
     Ok(())
 }
@@ -396,18 +390,19 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
     let args = Args::parse();
+    let notification_config = args
+        .notification
+        .build(args.development_plaintext)
+        .map_err(anyhow::Error::msg)
+        .context("notification delivery configuration")?;
     let server_options = ServerOptions {
+        retention: notification_config.retention,
         grpc_addr: args.grpc_addr,
         health_addr: args.health_addr,
         development_plaintext: args.development_plaintext,
         tls_certificate: args.tls_certificate.clone(),
         tls_private_key: args.tls_private_key.clone(),
     };
-    let notification_config = args
-        .notification
-        .build(args.development_plaintext)
-        .map_err(anyhow::Error::msg)
-        .context("notification delivery configuration")?;
     anyhow::ensure!(
         (300..=2_592_000).contains(&args.session_lifetime_seconds),
         "session lifetime must be between 300 and 2592000 seconds"
@@ -452,6 +447,19 @@ async fn main() -> Result<()> {
     verify_schema(&pool)
         .await
         .context("database schema readiness")?;
+    server::notification::retention_settings::initialize(
+        &pool,
+        server::notification::retention_settings::RetentionPolicy {
+            enabled: args.notification.retention_enabled,
+            history_days: i32::try_from(
+                args.notification
+                    .terminal_retention_days
+                    .max(args.notification.recovery_retention_days),
+            )?,
+        },
+    )
+    .await
+    .context("initialize notification retention policies")?;
     if run_command(args.command, &pool, &notification_config).await? {
         return Ok(());
     }

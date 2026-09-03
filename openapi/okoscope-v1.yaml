@@ -8,6 +8,71 @@ servers:
 security:
   - sessionAuth: []
 paths:
+  /api/v1/organizations/{organization_id}/notification-retention:
+    parameters: [{ $ref: '#/components/parameters/OrganizationId' }]
+    get:
+      operationId: getOrganizationNotificationRetention
+      description: Read effective retention settings.
+      responses:
+        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: putOrganizationNotificationRetention
+      description: Organization owner required. Changes affect subsequent maintenance batches.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } } }
+      responses:
+        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{project_id}/notification-retention:
+    parameters: [{ $ref: '#/components/parameters/ProjectId' }]
+    get:
+      operationId: getProjectNotificationRetention
+      description: Read effective retention settings.
+      responses:
+        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectNotificationRetention' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: putProjectNotificationRetention
+      description: Organization owner required. Changes affect subsequent maintenance batches.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/NotificationRetentionPolicy' } } }
+      responses:
+        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectNotificationRetention' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteProjectNotificationRetention
+      description: Organization owner required. Changes affect subsequent maintenance batches.
+      responses:
+        '200': { description: Retention settings, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectNotificationRetention' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/build-info:
     get:
       operationId: getBuildInfo
@@ -935,6 +1000,28 @@ components:
   headers:
     RequestId: { schema: { type: string }, description: Correlation identifier for the request. }
   schemas:
+    NotificationRetentionPolicy:
+      type: object
+      additionalProperties: false
+      required: [enabled, history_days]
+      properties:
+        enabled: { type: boolean }
+        history_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: Days since the latest terminal transition; includes attempts and manual actions.
+    ProjectNotificationRetention:
+      type: object
+      required: [override, effective, inherited, source]
+      properties:
+        override:
+          anyOf:
+            - { $ref: '#/components/schemas/NotificationRetentionPolicy' }
+            - { type: 'null' }
+        effective: { $ref: '#/components/schemas/NotificationRetentionPolicy' }
+        inherited: { $ref: '#/components/schemas/NotificationRetentionPolicy' }
+        source: { type: string, enum: [organization, project] }
     PolicyVerdict: { type: string, enum: [unclassified, expected, requires_review, policy_conflict] }
     PolicyEvaluationState: { type: string, enum: [current, evaluation_pending] }
     PolicyEffect: { type: string, enum: [expected, requires_review] }
@@ -1322,7 +1409,7 @@ components:
         service_version: { type: string, example: 0.1.0 }
         git_commit: { type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a }
         api_version: { type: string, const: v1 }
-        required_database_migration: { type: integer, format: int64, example: 21 }
+        required_database_migration: { type: integer, format: int64, example: 22 }
     Organization:
       type: object
       additionalProperties: false
