@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "okoscope.fullname" . }}-server
+  labels:
+    {{- include "okoscope.labels" . | nindent 4 }}
+data:
+  OKOSCOPE_MIGRATE: "false"
+  OKOSCOPE_DEVELOPMENT_PLAINTEXT: "true"
+  OKOSCOPE_REGISTRATION_ENABLED: {{ .Values.server.registrationEnabled | quote }}
+  OKOSCOPE_SESSION_LIFETIME_SECONDS: {{ .Values.server.sessionLifetimeSeconds | quote }}
+  OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: {{ .Values.notifications.enabled | quote }}
+  OKOSCOPE_NOTIFICATION_POLL_MS: {{ .Values.notifications.pollMilliseconds | quote }}
+  OKOSCOPE_NOTIFICATION_CLAIM_SIZE: {{ .Values.notifications.claimSize | quote }}
+  OKOSCOPE_NOTIFICATION_CONCURRENCY: {{ .Values.notifications.concurrency | quote }}
+  OKOSCOPE_NOTIFICATION_LEASE_SECONDS: {{ .Values.notifications.leaseSeconds | quote }}
+  OKOSCOPE_NOTIFICATION_DRAIN_SECONDS: {{ .Values.notifications.drainSeconds | quote }}
+  RUST_LOG: info

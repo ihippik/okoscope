@@ -13,7 +13,7 @@ images:
   - name: ghcr.io/ihippik/okoscope-agent
     newTag: "c66e1539b304454f8b8bdaf2336086eef9e4902b"
   - name: ghcr.io/ihippik/okoscope-web
-    newTag: "e6c44b80e90f85ed75c5fcdc4fff541383d052a7"
+    newTag: "bdb270b2dd81c7e871bdfcc98a5903eeaaf99511"
 
 patches:
   - target:

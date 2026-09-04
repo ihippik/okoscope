@@ -67,7 +67,7 @@ impl WorkloadSelector {
     pub fn matches(&self, workload: &WorkloadMetadata) -> bool {
         self.namespace == workload.namespace
             && self.kind == workload.kind
-            && self.name == workload.name
+            && (self.name == "*" || self.name == workload.name)
             && self
                 .labels
                 .iter()
@@ -303,14 +303,7 @@ impl AgentConfig {
         {
             return Err(ConfigError::MissingObservation);
         }
-        if !self.server.development_plaintext
-            && self
-                .server
-                .ca_file
-                .as_deref()
-                .unwrap_or_default()
-                .is_empty()
-        {
+        if !self.server.development_plaintext && !self.server.endpoint.starts_with("https://") {
             return Err(ConfigError::TlsRequired);
         }
         if self.safety.queue_capacity == 0
@@ -489,6 +482,24 @@ observation:
         let config = AgentConfig::from_yaml(VALID, Architecture::X86_64).unwrap();
         assert_eq!(config.scope.workloads.len(), 1);
         assert!(!config.observation.network.connect);
+    }
+
+    #[test]
+    fn accepts_tls_with_system_trust_and_label_only_selector() {
+        let yaml = VALID
+            .replace(
+                "http://server:4317\n  developmentPlaintext: true",
+                "https://server:443",
+            )
+            .replace("      name: payment-api\n", "      name: \"*\"\n");
+        let config = AgentConfig::from_yaml(&yaml, Architecture::X86_64).unwrap();
+        let workload = WorkloadMetadata {
+            namespace: "production".into(),
+            kind: "Deployment".into(),
+            name: "any-name".into(),
+            labels: BTreeMap::from([("app.kubernetes.io/name".into(), "payment-api".into())]),
+        };
+        assert!(config.scope.workloads[0].matches(&workload));
     }
 
     #[test]

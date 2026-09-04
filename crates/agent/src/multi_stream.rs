@@ -207,7 +207,14 @@ async fn run_stream(
                             }
                             None => tracing::warn!(route_id=%credential.route_id, "unsupported server message"),
                         },
-                        Ok(None) | Err(_) => break,
+                        Ok(None) => {
+                            tracing::warn!(route_id=%credential.route_id, "server closed Application stream");
+                            break;
+                        }
+                        Err(error) => {
+                            tracing::warn!(route_id=%credential.route_id, %error, "Application stream receive failed");
+                            break;
+                        }
                     }
                 }
                 changed = shutdown.changed() => {

@@ -1,0 +1,7 @@
+{{- if and (not .Values.server.developmentPlaintext) (not (hasPrefix "https://" .Values.server.endpoint)) -}}
+{{- fail "server.endpoint must use https:// unless server.developmentPlaintext=true" -}}
+{{- end -}}
+{{- range $index, $mapping := .Values.workloads -}}
+{{- if and $mapping.name $mapping.labels }}{{ fail (printf "workloads[%d] must use name or labels, not both" $index) }}{{ end -}}
+{{- if and (not $mapping.name) (not $mapping.labels) }}{{ fail (printf "workloads[%d] must set name or labels" $index) }}{{ end -}}
+{{- end -}}

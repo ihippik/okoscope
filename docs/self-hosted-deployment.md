@@ -1,154 +1,81 @@
-# Self-hosted Kubernetes deployment
+# Production self-hosted deployment
 
-The repository is the source of truth for production deployment state. Build manifests directly with Kustomize from `deploy/kubernetes/common`; generated release bundles are not committed or uploaded by CI.
+Start with the [installation quick starts](installation.md). Helm is the supported public interface. Okoscope requires an existing PostgreSQL database and never creates, upgrades, backs up, restores, or deletes database infrastructure or storage.
 
-## Requirements and GitOps deployment
+## Production values
 
-- Kubernetes with `kubectl` and Kustomize support.
-- An existing `okoscope` namespace for external PostgreSQL, or the bundled install artifact for a new installation.
-- An externally managed `okoscope-secrets` Secret.
-- Immutable server, agent, and Web image references in the production Kustomization.
-- Optional Traefik `traefik.io/v1alpha1` and cert-manager `cert-manager.io/v1` CRDs when public routing is enabled.
+Use separate TLS hostnames for HTTP and gRPC. The first release gates examples for ingress-nginx and Traefik; other controllers require operator verification.
 
-On pull requests, CI tests the backend and validates the rendered production manifests. On `main`, it then publishes `ghcr.io/ihippik/okoscope-server:<commit-sha>` for `linux/amd64` and `linux/arm64`. Only after publication succeeds, CI updates the server `newTag`, rebuilds the overlay with Kustomize, and commits that one-line manifest change. Agent and Web tags are untouched. The promotion commit contains `[skip ci]`, preventing an Actions loop.
-
-Repository Actions settings must allow `GITHUB_TOKEN` read/write access, and branch protection must permit `github-actions[bot]` to create the promotion commit on the default branch.
-
-Render or apply the tracked state with:
-
-```bash
-kustomize build deploy/kubernetes/common
-kubectl apply -k deploy/kubernetes/common
+```yaml
+database:
+  existingSecret: production-database
+  urlKey: connection-url
+internalSecret:
+  existingSecret: okoscope-internal-production
+server:
+  replicas: 2
+  registrationEnabled: false
+web:
+  replicas: 2
+notifications:
+  enabled: true
+ingress:
+  web:
+    enabled: true
+    className: nginx
+    host: okoscope.example.com
+    tlsSecret: okoscope-web-tls
+  grpc:
+    enabled: true
+    className: nginx
+    host: grpc.okoscope.example.com
+    tlsSecret: okoscope-grpc-tls
 ```
 
-The one-time PostgreSQL install, migration/check Jobs, and optional routing remain separate Kustomize roots under `deploy/kubernetes/`; run them explicitly when required. Production application manifests never create or update `okoscope-secrets` or PostgreSQL resources.
+The chart supplies `nginx.ingress.kubernetes.io/backend-protocol: GRPC` for the nginx gRPC route. With `className: traefik`, it supplies the Traefik h2c service annotation. TLS terminates at the Ingress while the server uses cluster-internal plaintext. To have cert-manager create `Certificate` resources, set `certManager.enabled=true` and `certManager.clusterIssuer`; otherwise pre-create the TLS Secrets.
 
-The bundled PostgreSQL profile requests 100m CPU/256 MiB and limits 1 CPU/1 GiB. Server defaults are 100m/128 MiB requests and 1 CPU/512 MiB limits; agent defaults are 100m/96 MiB and 1 CPU/512 MiB. Tune these in a site overlay after measuring usage.
+For externally managed internal keys, the referenced Secret must contain `admin-credential`, `webhook-encryption-key`, and `identity-token-key`, or the alternative key names configured below `internalSecret`. Leaving `internalSecret.existingSecret` empty lets Helm generate them once with `lookup`; the Secret has a keep policy and values are reused on upgrades. Offline GitOps rendering must use an externally managed Secret because `lookup` cannot recover live state.
 
-The agent is the only host-aware workload. `hostPID` is required to map kernel PIDs to containers; read-only `/proc` and cgroup v2 mounts provide attribution; tracefs is writable for probe attachment. The container drops every capability except `BPF`, `PERFMON`, `SYS_RESOURCE`, and `SYS_ADMIN`; the latter is required by the reference cluster kernel for tracepoint `perf_event_open`. RBAC is read-only for Pods, ReplicaSets, Deployments, and the single `kube-system` Namespace used to discover its stable UID. It has no host network, host root mount, Secret read API, workload mutation, or broad `privileged` mode.
+Set `imagePullSecrets` for a private registry. Resource requests and limits live under `server.resources`, `web.resources`, and, when enabled, `okoscope-agent.resources`. Notifications are disabled by default and are enabled with `notifications.enabled=true`; the webhook encryption key must remain stable and separately recoverable.
 
-## Provision the Secret
+The optional local agent uses the same values contract as the standalone chart below `okoscope-agent`. It still requires an existing Application credential Secret and at least one workload mapping.
 
-Use [the placeholder schema](../deploy/kubernetes/common/secret.example.yaml) only as a key inventory. Create real values without writing a populated YAML file:
+## Upgrades and migrations
 
-```bash
-kubectx aliens
-read -rs OKOSCOPE_DATABASE_URL
-printf '\n'
-read -rs OKOSCOPE_POSTGRES_PASSWORD
-printf '\n'
-kubectl create secret generic okoscope-secrets -n okoscope \
-  --from-literal=database-url="$OKOSCOPE_DATABASE_URL" \
-  --from-literal=postgres-password="$OKOSCOPE_POSTGRES_PASSWORD" \
-  --from-literal=admin-credential="$(openssl rand -hex 32)" \
-  --from-literal=webhook-encryption-key="$(openssl rand -hex 32)"
-unset OKOSCOPE_DATABASE_URL OKOSCOPE_POSTGRES_PASSWORD
-```
-
-For an existing installation, do not run `create` again. Human access uses individually revocable user sessions, so there is no shared tenant API credential to rotate. Never put bootstrap passwords, session values, Application tokens, or other secrets in shell history, tickets, CI artifacts, or repository files. The preflight reports key names and validation reasons only.
-
-Before removing a legacy tenant API credential, migrate the database, create or resolve the target Organization, and establish its first owner through the one-shot command. Supply the password through a protected environment/secret injection rather than a command-line argument:
+Pin the same semantic version for both charts:
 
 ```bash
-read -rs OKOSCOPE_BOOTSTRAP_OWNER_PASSWORD
-export OKOSCOPE_BOOTSTRAP_OWNER_PASSWORD
-export OKOSCOPE_BOOTSTRAP_OWNER_EMAIL='owner@example.com'
-server --database-url "$OKOSCOPE_DATABASE_URL" bootstrap-owner \
-  --organization-id '<organization-uuid>'
-unset OKOSCOPE_BOOTSTRAP_OWNER_PASSWORD OKOSCOPE_BOOTSTRAP_OWNER_EMAIL
+helm upgrade okoscope oci://ghcr.io/ihippik/charts/okoscope \
+  --version <NEW_OKOSCOPE_VERSION> \
+  --namespace okoscope-system \
+  -f production-values.yaml \
+  --wait --timeout 10m
 ```
 
-The command is idempotent: if the Organization already has an owner, it does not replace credentials or create another membership. Back up PostgreSQL before migration `0016`; rollback after the legacy table drop requires restoring that backup with the previous server release.
+The idempotent migration hook runs before install and upgrade with bounded retry and deadline. A failure stops rollout. Inspect it with `kubectl get jobs,pods -n okoscope-system -l app.kubernetes.io/component=migration` and its Pod logs, correct database connectivity/permissions, then repeat the same `helm upgrade`. Never edit migration rows or attempt to reverse a schema migration.
 
-## Provision tenants and Application ingestion
+Use `helm rollback okoscope <REVISION> -n okoscope-system` only when the prior server version is forward-compatible with the applied database migration. Database backups and point-in-time recovery must be managed and tested outside Okoscope.
 
-The system admin credential creates Organizations, Projects, and Applications. Application creation returns a versioned `oko_app_v1_...` token exactly once; the database stores only its digest. Save that response directly into a secret-management workflow and never place the token in a ConfigMap, committed manifest, ticket, or log.
+## Uninstall ownership
 
-Create `okoscope-application-credentials` from the one-time response, with one key per Application, and project those keys as read-only files into the agent DaemonSet. Each workload selector references `applicationCredentialFile`; one agent process opens an independently bounded stream per distinct token. The agent reads the UID of `kube-system`, and the server automatically creates or reuses that Cluster inside the token-derived Organization.
+`helm uninstall okoscope -n okoscope-system` deletes chart-owned stateless resources. It does not delete the existing database Secret, external PostgreSQL, externally managed credentials, or externally managed TLS/CA Secrets. A chart-generated internal Secret is retained by policy and must be deliberately removed by the operator only after confirming it is no longer required.
 
-Rotation is overlap-first: issue an additional credential, update the Kubernetes Secret and roll the DaemonSet, verify its `last_used_at`, then revoke the old credential through the admin API. Revocation stops the affected stream at its next batch without stopping other Applications. Adding or rotating credentials requires a DaemonSet rollout in this release; hot reload is not supported.
+## Existing Kustomize installations
 
-## New bundled installation
+Fresh Helm installs are supported in the first release. Automatic adoption of existing Kustomize resources is not. Keep the database and Secrets, back them up, render the new chart with `helm template`, and compare names/selectors before a planned clean migration. Do not install Helm over identically named live resources without first resolving ownership metadata.
 
-Review the StorageClass and requested size in the install artifact before first use; those StatefulSet fields are intentionally not part of upgrades.
+The `deploy/kubernetes` Kustomize roots and bundled PostgreSQL manifests are internal/legacy during one compatibility window. They remain available to existing operators but are not a new-install contract. PostgreSQL manifests there must not be used as part of a new Okoscope installation.
 
-```bash
-kubectx aliens
-kubectl apply -f 01-install-bundled-postgres.yaml
-# Provision okoscope-secrets, then:
-deploy/scripts/preflight-secret.sh okoscope okoscope-secrets
-kubectl apply -k deploy/kubernetes/common
-```
+## Release and cluster verification
 
-For external PostgreSQL, create the namespace and Secret with the external `database-url`, skip `01-install-bundled-postgres.yaml`, and use the same migration and upgrade artifacts.
+Charts are published as `oci://ghcr.io/ihippik/charts/okoscope` and `oci://ghcr.io/ihippik/charts/okoscope-agent` with shared semantic versions. A release supplies verified immutable server, agent, and Web inputs and records required migration `23`. Publication must wait for chart policy tests and component availability.
 
-## Adopt an existing MVP installation
-
-Adoption is non-destructive. Before the first hardened release, record and compare the live identities:
+Repository release-candidate verification uses the `aliens` context:
 
 ```bash
 kubectx aliens
-kubectl get secret okoscope-secrets -n okoscope -o jsonpath='{.metadata.uid}{"\n"}'
-kubectl get statefulset postgres -n okoscope -o jsonpath='{.metadata.uid}{"\n"}'
-kubectl get pvc -n okoscope -l app=postgres
-kubectl get service okoscope-server postgres -n okoscope
-kubectl get ingressroute,middleware -n okoscope
-kubectl get certificate -n okoscope
+helm template okoscope deploy/helm/okoscope -f production-values.yaml
+kubectl rollout status deployment/okoscope-server -n okoscope-system --timeout=5m
 ```
 
-Do not apply the install artifact to the adopted environment. Keep the existing Secret, StatefulSet, PVC, Service names, Traefik routes, and Certificate until rendered resources have been diffed. The upgrade artifact adopts stateless resources by stable names and does not take ownership of Secret or PostgreSQL. If existing labels differ, update selectors only after confirming they continue to match live Pods.
-
-The 2026-08-17 `aliens` adoption dry-run found and corrected two compatibility issues before rollout: Kustomize labels were initially entering immutable workload selectors, and the existing Web Service exposes port 80 rather than 8080. The first live rollout then found two runtime-only requirements: the Web entrypoint creates `/tmp/okoscope-web`, and the reference kernel requires `SYS_ADMIN` for tracepoint `perf_event_open`. Web and agent were rolled back while remaining available; the manifests now provide a writable `/tmp` `emptyDir` and the explicit capability. Server migration and rollout succeeded without replacing Secret, PostgreSQL, or PVC identities.
-
-## Ordered upgrade and failure gate
-
-CI validates the tracked production overlay before publishing an image and again before committing its tag. A GitOps reconciler can watch the production Kustomization, or an operator can apply it directly after running the required database migration.
-
-```bash
-kubectx aliens
-deploy/tests/secret-preflight.sh
-# Run the release migration gate before reconciling a version that requires it.
-kubectl apply -k deploy/kubernetes/common
-kubectl rollout status deployment/okoscope-server -n okoscope --timeout=5m
-```
-
-The production server has `OKOSCOPE_MIGRATE=false`; migrations remain an explicit pre-rollout gate. Reapplying the production Kustomization is safe and does not modify Secrets or PostgreSQL resources.
-
-Notification delivery is disabled by default. Its non-secret bounded values are explicit patches in the production Kustomization. Change those tracked values deliberately and validate with `make deployment-test`; an absent, malformed, or all-zero encryption key still fails the cluster check.
-
-Before activation, review enabled destinations through the tenant-scoped API, confirm each receiver deduplicates by stable delivery ID, and verify it validates the timestamped HMAC signature. `okoscope_notification_worker_state` is a bounded gauge: `0=disabled`, `1=ready/idle`, `2=backlogged`, `3=retrying`, `4=failing`, and `5=draining`. Alert on oldest due work, due/retrying deliveries, terminal failures, expired leases, cycle failures, and drain timeouts. Receiver failures are delivery signals and do not make the core API unready.
-
-Authenticated users can read the equivalent Project-scoped snapshot from `GET /api/v1/projects/{project_id}/notification-health`. The response uses the string states `disabled`, `idle`, `backlogged`, `retrying`, `failing`, and `draining`; includes only bounded counts, nullable oldest-due age, and an observation timestamp; and never returns destination URLs or secret material. The endpoint is intended for 10-second UI polling and uses `Cache-Control: no-store`. Notification failure changes this snapshot but does not make the ingestion/API readiness probe fail.
-
-To pause delivery, set `OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED` to `false` in the production Kustomization and reconcile it. Workers stop taking new claims and drain in-flight work for the configured bounded interval; queued and retryable rows remain durable. Re-enable with the same key to resume. Back up the encryption key separately from the database. Rotation must use the destination rotation API so stored secrets are re-encrypted deliberately. Never delete delivery rows, outbox rows, or migrations as rollback.
-
-Public routing is stored at `deploy/kubernetes/common/routing.yaml`. Existing environments must retain their current Certificate name and issuer to avoid competing ownership of one TLS Secret.
-
-## Verification and rollback
-
-After rollout, verify `/readyz`, `/api/v1/build-info`, server migration logs, connected agent sessions, Certificate readiness, the HTTPS redirect, `/api` routing, Web fallback, and one bounded runtime-event smoke. The production Kustomization and Git history are the image provenance record.
-
-If application readiness fails after a successful additive migration, revert only the server `newTag` in the production Kustomization to the previous compatible image commit and reconcile it. Do not delete or roll back migration rows, Jobs, the Secret, StatefulSet, or PVC. If the previous server is not forward-compatible with the recorded migration, stop rather than forcing rollback.
-
-## PostgreSQL durability
-
-Bundled PostgreSQL is single-replica and is not highly available. A PVC protects against Pod replacement, not operator deletion, storage failure, or corruption. Schedule logical backups with `pg_dump`, encrypt and store them outside the cluster, and regularly test restore into a separate database. Snapshot support is storage-provider-specific. Internet-facing or production installations should use a managed/external PostgreSQL service with automated backups, point-in-time recovery, monitoring, and a documented recovery objective.
-
-## Legacy artifact transition
-
-`deploy/kubernetes/mvp.yaml` is deprecated. It embeds development credentials, runs startup migrations, and combines PostgreSQL with stateless upgrades. It remains for one release only to help compare existing resources; do not use it for new installs or upgrades. Recovery during the transition uses the last known immutable application images through `03-upgrade.yaml`, never the monolithic manifest.
-# Notification recovery and retention
-
-Notification recovery commands preserve the stable delivery identifier and prior attempts. A manual retry increments `recovery_generation`, resets only the current generation's attempt budget, and remains subject to the normal worker concurrency and signing path. Pending work can be cancelled, but an unexpired in-flight lease returns a conflict because Okoscope cannot prove that interrupting the local request prevents receiver processing.
-
-Every mutating recovery request requires an `Idempotency-Key`. The server stores only a keyed hash and a canonical request fingerprint; raw keys, bearer credentials, signing secrets, destination URLs, and payload bodies are excluded from operation audit records and logs. Bulk retry is capped at 200 deliveries per confirmed command and reports whether eligible work remains.
-
-Terminal history retention is disabled by default. Configure it explicitly with:
-
-- `OKOSCOPE_NOTIFICATION_RETENTION_ENABLED`;
-- `OKOSCOPE_NOTIFICATION_TERMINAL_RETENTION_DAYS` (1–3650, default 90);
-- `OKOSCOPE_NOTIFICATION_RECOVERY_RETENTION_DAYS` (1–3650, default 365);
-- `OKOSCOPE_NOTIFICATION_RETENTION_BATCH_SIZE` (1–10000, default 1000);
-- `OKOSCOPE_NOTIFICATION_RETENTION_POLL_SECONDS` (60–86400, default 3600).
-
-The maintenance loop deletes only terminal deliveries older than the boundary and preserves pending, retryable, and in-flight work. `server notification-retention` runs one independently callable bounded batch. Deletions are irreversible without a PostgreSQL backup; validate retention with representative volume before production activation.
+Also verify `/readyz`, `/api/v1/build-info`, required migration readiness, Web/API routing, TLS gRPC connectivity, agent authentication, workload matching, and one bounded runtime event. These checks must never mutate or replace the user-owned PostgreSQL lifecycle.

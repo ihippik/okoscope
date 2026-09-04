@@ -1,0 +1,23 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,
+  "required":["server","web","database","internalSecret","migration","notifications","ingress","certManager","imagePullSecrets","podDisruptionBudget","okoscope-agent"],
+  "properties":{
+    "fullnameOverride":{"type":"string"},
+    "server":{"$ref":"#/$defs/componentServer"},"web":{"$ref":"#/$defs/componentWeb"},
+    "database":{"type":"object","additionalProperties":false,"required":["existingSecret","urlKey"],"properties":{"existingSecret":{"type":"string","minLength":1},"urlKey":{"type":"string","minLength":1}}},
+    "internalSecret":{"type":"object","additionalProperties":false,"required":["existingSecret","adminCredentialKey","webhookEncryptionKey","identityTokenKey"],"properties":{"existingSecret":{"type":"string"},"adminCredentialKey":{"type":"string","minLength":1},"webhookEncryptionKey":{"type":"string","minLength":1},"identityTokenKey":{"type":"string","minLength":1}}},
+    "migration":{"type":"object","additionalProperties":false,"required":["backoffLimit","activeDeadlineSeconds"],"properties":{"backoffLimit":{"type":"integer","minimum":0,"maximum":6},"activeDeadlineSeconds":{"type":"integer","minimum":30,"maximum":3600}}},
+    "notifications":{"type":"object","additionalProperties":false,"required":["enabled","pollMilliseconds","claimSize","concurrency","leaseSeconds","drainSeconds"],"properties":{"enabled":{"type":"boolean"},"pollMilliseconds":{"type":"integer","minimum":100},"claimSize":{"type":"integer","minimum":1,"maximum":1000},"concurrency":{"type":"integer","minimum":1,"maximum":128},"leaseSeconds":{"type":"integer","minimum":1},"drainSeconds":{"type":"integer","minimum":1}}},
+    "ingress":{"type":"object","additionalProperties":false,"required":["web","grpc"],"properties":{"web":{"$ref":"#/$defs/ingress"},"grpc":{"$ref":"#/$defs/ingress"}}},
+    "certManager":{"type":"object","additionalProperties":false,"required":["enabled","clusterIssuer"],"properties":{"enabled":{"type":"boolean"},"clusterIssuer":{"type":"string"}}},
+    "imagePullSecrets":{"type":"array","items":{"type":"object","required":["name"],"additionalProperties":false,"properties":{"name":{"type":"string","minLength":1}}}},
+    "podDisruptionBudget":{"type":"object","additionalProperties":false,"required":["enabled","minAvailable"],"properties":{"enabled":{"type":"boolean"},"minAvailable":{"type":"integer","minimum":0}}},
+    "okoscope-agent":{"type":"object"}
+  },
+  "$defs":{
+    "image":{"type":"object","additionalProperties":false,"required":["repository","tag","digest","pullPolicy"],"properties":{"repository":{"type":"string","minLength":1},"tag":{"type":"string","pattern":"^([0-9a-f]{40}|v?[0-9]+\\.[0-9]+\\.[0-9]+([-.][0-9A-Za-z.-]+)?)$"},"digest":{"type":"string","pattern":"^$|^sha256:[0-9a-f]{64}$"},"pullPolicy":{"enum":["IfNotPresent","Always","Never"]}}},
+    "componentServer":{"type":"object","additionalProperties":false,"required":["replicas","image","resources","registrationEnabled","sessionLifetimeSeconds"],"properties":{"replicas":{"type":"integer","minimum":1},"image":{"$ref":"#/$defs/image"},"resources":{"type":"object"},"registrationEnabled":{"type":"boolean"},"sessionLifetimeSeconds":{"type":"integer","minimum":300}}},
+    "componentWeb":{"type":"object","additionalProperties":false,"required":["replicas","image","resources"],"properties":{"replicas":{"type":"integer","minimum":1},"image":{"$ref":"#/$defs/image"},"resources":{"type":"object"}}},
+    "ingress":{"type":"object","additionalProperties":false,"required":["enabled","className","host","annotations","tlsSecret"],"properties":{"enabled":{"type":"boolean"},"className":{"enum":["","nginx","traefik"]},"host":{"type":"string"},"annotations":{"type":"object","additionalProperties":{"type":"string"}},"tlsSecret":{"type":"string"}}}
+  }
+}

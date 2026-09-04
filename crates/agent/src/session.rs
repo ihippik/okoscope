@@ -31,7 +31,7 @@ pub async fn connect_with_backoff(
         match open_once(config, credential, hello.clone()).await {
             Ok(session) => return Ok(session),
             Err(error) if delay < Duration::from_secs(30) => {
-                tracing::warn!(%error, ?delay, "agent session connection failed; retrying");
+                tracing::warn!(error = ?error, ?delay, "agent session connection failed; retrying");
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(Duration::from_secs(30));
             }
@@ -71,13 +71,12 @@ async fn channel(config: &ServerConfig) -> Result<Channel> {
             .await
             .context("connect plaintext development channel");
     }
-    let ca_path = config
-        .ca_file
-        .as_deref()
-        .context("caFile is required for TLS")?;
-    let ca = tokio::fs::read(Path::new(ca_path)).await?;
-    endpoint =
-        endpoint.tls_config(ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca)))?;
+    let mut tls = ClientTlsConfig::new().with_native_roots();
+    if let Some(ca_path) = config.ca_file.as_deref() {
+        let ca = tokio::fs::read(Path::new(ca_path)).await?;
+        tls = tls.ca_certificate(Certificate::from_pem(ca));
+    }
+    endpoint = endpoint.tls_config(tls)?;
     endpoint.connect().await.context("connect TLS channel")
 }
 

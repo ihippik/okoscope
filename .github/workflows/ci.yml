@@ -55,6 +55,10 @@ jobs:
           grep "  $archive$" checksums.txt | sha256sum --check --strict
           tar -xzf "$archive" kustomize
           sudo install kustomize /usr/local/bin/kustomize
+      - name: Install pinned Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.6
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Lint userspace
@@ -86,6 +90,10 @@ jobs:
           sudo install kubeconform /usr/local/bin/kubeconform
       - name: Validate production manifests
         run: kubeconform -strict -summary /tmp/okoscope-production.yaml
+      - name: Validate Helm installation contracts
+        run: deploy/helm/test-charts.sh
+      - name: Validate installation documentation
+        run: deploy/helm/test-docs.sh
 
   publish-server:
     if: github.event_name != 'pull_request'
