@@ -111,7 +111,7 @@ mod linux {
             &config,
             &counters.snapshot(),
             process_exit_ready,
-            *lifecycle_readiness.borrow(),
+            *lifecycle_readiness.borrow() == agent::attribution::KubernetesWatchState::Ready,
             cluster_uid,
         );
         let streams = ApplicationStreams::start(
@@ -120,6 +120,8 @@ mod linux {
             &hello,
             &config.safety,
             counters.clone(),
+            &lifecycle_readiness,
+            config.observation.process_exit && !process_exit_ready,
         );
         tracing::info!(
             application_streams = streams.route_count(),
@@ -257,7 +259,7 @@ mod linux {
                         lifecycle_readiness_open = false;
                         tracing::warn!("Kubernetes lifecycle readiness channel closed");
                     } else {
-                        tracing::info!(ready = *lifecycle_readiness.borrow(), "Kubernetes lifecycle readiness changed");
+                        tracing::info!(state = ?*lifecycle_readiness.borrow(), "Kubernetes lifecycle readiness changed");
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -281,14 +283,15 @@ mod linux {
     ) -> Result<(
         Arc<AttributionCache>,
         tokio::sync::mpsc::Receiver<agent::lifecycle::LifecycleObservation>,
-        tokio::sync::watch::Receiver<bool>,
+        tokio::sync::watch::Receiver<agent::attribution::KubernetesWatchState>,
         tokio::sync::mpsc::Receiver<agent::attribution::ReleaseObservation>,
     )> {
         let cache = Arc::new(AttributionCache::new(Duration::from_secs(30)));
         let watch_cache = cache.clone();
         let watch_client = kube::Client::try_default().await?;
         let (lifecycle_sender, lifecycle_receiver) = tokio::sync::mpsc::channel(4096);
-        let (readiness_sender, readiness_receiver) = tokio::sync::watch::channel(false);
+        let (readiness_sender, readiness_receiver) =
+            tokio::sync::watch::channel(agent::attribution::KubernetesWatchState::Starting);
         let (release_sender, release_receiver) = tokio::sync::mpsc::channel(4096);
         tokio::spawn(async move {
             if let Err(error) = run_watches(
@@ -602,6 +605,7 @@ mod linux {
             capabilities.push(protocol::CONTAINER_LIFECYCLE_CAPABILITY.into());
         }
         capabilities.push(protocol::KUBERNETES_RELEASE_DISCOVERY_CAPABILITY.into());
+        capabilities.push(protocol::ONBOARDING_STATUS_CAPABILITY.into());
         AgentHello {
             agent_version: env!("CARGO_PKG_VERSION").into(),
             node_name: config.identity.node_name.clone(),

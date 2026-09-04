@@ -92,6 +92,8 @@ jobs:
         run: kubeconform -strict -summary /tmp/okoscope-production.yaml
       - name: Validate Helm installation contracts
         run: deploy/helm/test-charts.sh
+      - name: Validate onboarding metadata against agent chart
+        run: deploy/helm/test-onboarding-contract.sh
       - name: Validate installation documentation
         run: deploy/helm/test-docs.sh
 

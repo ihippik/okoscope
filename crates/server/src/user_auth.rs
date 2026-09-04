@@ -87,14 +87,18 @@ pub async fn bootstrap_owner(
     Ok(())
 }
 
-pub async fn verify_user_access(pool: &PgPool, registration_enabled: bool) -> anyhow::Result<()> {
+pub async fn verify_user_access(
+    pool: &PgPool,
+    registration_enabled: bool,
+    setup_enabled: bool,
+) -> anyhow::Result<()> {
     let owner_count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM organization_memberships WHERE role='owner'")
             .fetch_one(pool)
             .await?;
     anyhow::ensure!(
-        registration_enabled || owner_count > 0,
-        "no Organization owner exists; run bootstrap-owner or explicitly enable registration"
+        registration_enabled || setup_enabled || owner_count > 0,
+        "no Organization owner exists; configure setup authorization, run bootstrap-owner, or explicitly enable registration"
     );
     Ok(())
 }
@@ -189,7 +193,7 @@ struct OrganizationResponse {
     name: String,
 }
 
-fn valid_slug(value: &str) -> bool {
+pub(crate) fn valid_slug(value: &str) -> bool {
     (1..=63).contains(&value.len())
         && value
             .bytes()
@@ -199,11 +203,15 @@ fn valid_slug(value: &str) -> bool {
         && !value.contains("--")
 }
 
-fn valid_name(value: &str) -> bool {
+pub(crate) fn valid_name(value: &str) -> bool {
     value.trim() == value && (1..=120).contains(&value.chars().count())
 }
 
-fn session_cookie(token: &str, secure: bool, max_age: std::time::Duration) -> HeaderValue {
+pub(crate) fn session_cookie(
+    token: &str,
+    secure: bool,
+    max_age: std::time::Duration,
+) -> HeaderValue {
     let secure = if secure { "; Secure" } else { "" };
     HeaderValue::from_str(&format!(
         "{SESSION_COOKIE}={token}; HttpOnly{secure}; SameSite=Lax; Path=/; Max-Age={}",
@@ -220,7 +228,7 @@ fn expired_cookie(secure: bool) -> HeaderValue {
     .expect("generated expired cookie is a valid header")
 }
 
-async fn insert_session(
+pub(crate) async fn insert_session(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
     organization_id: Uuid,

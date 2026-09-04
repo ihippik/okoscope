@@ -164,6 +164,26 @@ struct Args {
     cors_origins: Vec<String>,
     #[arg(long, env = "OKOSCOPE_REGISTRATION_ENABLED", default_value_t = false)]
     registration_enabled: bool,
+    #[arg(long, env = "OKOSCOPE_SETUP_TOKEN", hide_env_values = true)]
+    setup_token: Option<String>,
+    #[arg(long, env = "OKOSCOPE_SETUP_TOKEN_EXPIRES_AT")]
+    setup_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[arg(long, env = "OKOSCOPE_AGENT_CHART_REFERENCE")]
+    agent_chart_reference: Option<String>,
+    #[arg(long, env = "OKOSCOPE_AGENT_CHART_VERSION")]
+    agent_chart_version: Option<String>,
+    #[arg(long, env = "OKOSCOPE_AGENT_RECOMMENDED_VERSION")]
+    agent_recommended_version: Option<String>,
+    #[arg(long, env = "OKOSCOPE_AGENT_MINIMUM_VERSION")]
+    agent_minimum_version: Option<String>,
+    #[arg(long, env = "OKOSCOPE_PUBLIC_GRPC_ENDPOINT")]
+    public_grpc_endpoint: Option<String>,
+    #[arg(long, env = "OKOSCOPE_AGENT_TLS_MODE", default_value = "system")]
+    agent_tls_mode: String,
+    #[arg(long, env = "OKOSCOPE_AGENT_CA_SECRET_NAME")]
+    agent_ca_secret_name: Option<String>,
+    #[arg(long, env = "OKOSCOPE_AGENT_CA_SECRET_KEY")]
+    agent_ca_secret_key: Option<String>,
     #[arg(
         long,
         env = "OKOSCOPE_SESSION_LIFETIME_SECONDS",
@@ -242,6 +262,64 @@ enum Command {
         )]
         password: String,
     },
+}
+
+fn build_installation_metadata(
+    args: &Args,
+) -> Result<Option<server::onboarding::AgentInstallationMetadata>> {
+    let supplied = [
+        args.agent_chart_reference.as_ref(),
+        args.agent_chart_version.as_ref(),
+        args.agent_recommended_version.as_ref(),
+        args.agent_minimum_version.as_ref(),
+        args.public_grpc_endpoint.as_ref(),
+    ];
+    if supplied.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        supplied.iter().all(Option::is_some),
+        "agent installation metadata must be configured completely"
+    );
+    let metadata = server::onboarding::AgentInstallationMetadata {
+        chart_reference: args.agent_chart_reference.clone().unwrap_or_default(),
+        chart_version: args.agent_chart_version.clone().unwrap_or_default(),
+        recommended_agent_version: args.agent_recommended_version.clone().unwrap_or_default(),
+        minimum_agent_version: args.agent_minimum_version.clone().unwrap_or_default(),
+        configuration_schema_version: 1,
+        grpc_endpoint: args.public_grpc_endpoint.clone().unwrap_or_default(),
+        tls_mode: args.agent_tls_mode.clone(),
+        ca_secret_name: args.agent_ca_secret_name.clone(),
+        ca_secret_key: args.agent_ca_secret_key.clone(),
+        namespace: "okoscope-system".into(),
+        credential_secret_name: "okoscope-agent-credentials".into(),
+        credential_secret_key: "application-token".into(),
+        supported_workload_kinds: vec!["Deployment".into()],
+    };
+    metadata.validate().map_err(anyhow::Error::msg)?;
+    Ok(Some(metadata))
+}
+
+fn build_web_api_config(args: &Args) -> Result<WebApiConfig> {
+    anyhow::ensure!(
+        (300..=2_592_000).contains(&args.session_lifetime_seconds),
+        "session lifetime must be between 300 and 2592000 seconds"
+    );
+    let metadata = build_installation_metadata(args)?;
+    WebApiConfig::new(args.cors_origins.clone())
+        .map_err(anyhow::Error::msg)
+        .context("web API configuration")
+        .map(|config| {
+            config
+                .with_user_auth(
+                    args.registration_enabled,
+                    !args.development_plaintext,
+                    std::time::Duration::from_secs(args.session_lifetime_seconds),
+                )
+                .with_setup_token(args.setup_token.as_deref())
+                .with_setup_token_expiry(args.setup_token_expires_at)
+                .with_agent_installation(metadata)
+        })
 }
 
 async fn check_notifications(
@@ -408,18 +486,7 @@ async fn main() -> Result<()> {
         tls_certificate: args.tls_certificate.clone(),
         tls_private_key: args.tls_private_key.clone(),
     };
-    anyhow::ensure!(
-        (300..=2_592_000).contains(&args.session_lifetime_seconds),
-        "session lifetime must be between 300 and 2592000 seconds"
-    );
-    let mut web_api_config = WebApiConfig::new(args.cors_origins.clone())
-        .map_err(anyhow::Error::msg)
-        .context("web API configuration")?
-        .with_user_auth(
-            args.registration_enabled,
-            !args.development_plaintext,
-            std::time::Duration::from_secs(args.session_lifetime_seconds),
-        );
+    let mut web_api_config = build_web_api_config(&args)?;
     let pool = PgPoolOptions::new()
         .max_connections(20)
         .connect(&args.database_url)
@@ -468,9 +535,13 @@ async fn main() -> Result<()> {
     if run_command(args.command, &pool, &notification_config).await? {
         return Ok(());
     }
-    server::user_auth::verify_user_access(&pool, args.registration_enabled)
-        .await
-        .context("user access readiness")?;
+    server::user_auth::verify_user_access(
+        &pool,
+        args.registration_enabled,
+        args.setup_token.is_some(),
+    )
+    .await
+    .context("user access readiness")?;
     let notifications = NotificationService::new(pool.clone(), notification_config);
     web_api_config = web_api_config.with_admin_authenticator(
         AdminAuthenticator::new(

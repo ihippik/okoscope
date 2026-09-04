@@ -9,6 +9,18 @@ data:
   OKOSCOPE_DEVELOPMENT_PLAINTEXT: "true"
   OKOSCOPE_REGISTRATION_ENABLED: {{ .Values.server.registrationEnabled | quote }}
   OKOSCOPE_SESSION_LIFETIME_SECONDS: {{ .Values.server.sessionLifetimeSeconds | quote }}
+  {{- if .Values.agentInstallation.publicGrpcEndpoint }}
+  OKOSCOPE_AGENT_CHART_REFERENCE: {{ .Values.agentInstallation.chartReference | quote }}
+  OKOSCOPE_AGENT_CHART_VERSION: {{ .Values.agentInstallation.chartVersion | quote }}
+  OKOSCOPE_AGENT_RECOMMENDED_VERSION: {{ .Values.agentInstallation.recommendedAgentVersion | quote }}
+  OKOSCOPE_AGENT_MINIMUM_VERSION: {{ .Values.agentInstallation.minimumAgentVersion | quote }}
+  OKOSCOPE_PUBLIC_GRPC_ENDPOINT: {{ .Values.agentInstallation.publicGrpcEndpoint | quote }}
+  OKOSCOPE_AGENT_TLS_MODE: {{ .Values.agentInstallation.tlsMode | quote }}
+  {{- if eq .Values.agentInstallation.tlsMode "custom_ca" }}
+  OKOSCOPE_AGENT_CA_SECRET_NAME: {{ .Values.agentInstallation.caSecret.name | quote }}
+  OKOSCOPE_AGENT_CA_SECRET_KEY: {{ .Values.agentInstallation.caSecret.key | quote }}
+  {{- end }}
+  {{- end }}
   OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: {{ .Values.notifications.enabled | quote }}
   OKOSCOPE_NOTIFICATION_POLL_MS: {{ .Values.notifications.pollMilliseconds | quote }}
   OKOSCOPE_NOTIFICATION_CLAIM_SIZE: {{ .Values.notifications.claimSize | quote }}

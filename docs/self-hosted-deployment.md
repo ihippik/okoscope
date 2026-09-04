@@ -34,6 +34,8 @@ ingress:
 
 The chart supplies `nginx.ingress.kubernetes.io/backend-protocol: GRPC` for the nginx gRPC route. With `className: traefik`, it supplies the Traefik h2c service annotation. TLS terminates at the Ingress while the server uses cluster-internal plaintext. To have cert-manager create `Certificate` resources, set `certManager.enabled=true` and `certManager.clusterIssuer`; otherwise pre-create the TLS Secrets.
 
+The Web container receives `OKOSCOPE_API_BASE_URL=/` and `OKOSCOPE_API_UPSTREAM=http://<release>-server:8080` from the chart, and proxies exact `/api` and `/api/*` requests to that internal Server Service while preserving their URI. Web ingress and `service/okoscope-web` port-forwarding therefore serve the UI and browser API together; the Server HTTP Service does not need separate public exposure.
+
 For externally managed internal keys, the referenced Secret must contain `admin-credential`, `webhook-encryption-key`, and `identity-token-key`, or the alternative key names configured below `internalSecret`. Leaving `internalSecret.existingSecret` empty lets Helm generate them once with `lookup`; the Secret has a keep policy and values are reused on upgrades. Offline GitOps rendering must use an externally managed Secret because `lookup` cannot recover live state.
 
 Set `imagePullSecrets` for a private registry. Resource requests and limits live under `server.resources`, `web.resources`, and, when enabled, `okoscope-agent.resources`. Notifications are disabled by default and are enabled with `notifications.enabled=true`; the webhook encryption key must remain stable and separately recoverable.
@@ -68,7 +70,7 @@ The `deploy/kubernetes` Kustomize roots and bundled PostgreSQL manifests are int
 
 ## Release and cluster verification
 
-Charts are published as `oci://ghcr.io/ihippik/charts/okoscope` and `oci://ghcr.io/ihippik/charts/okoscope-agent` with shared semantic versions. A release supplies verified immutable server, agent, and Web inputs and records required migration `23`. Publication must wait for chart policy tests and component availability.
+Charts are published as `oci://ghcr.io/ihippik/charts/okoscope` and `oci://ghcr.io/ihippik/charts/okoscope-agent` with shared semantic versions. A release supplies verified immutable server, agent, and Web inputs and records the server's required migration. Publication must wait for chart policy tests and component availability.
 
 Repository release-candidate verification uses the `aliens` context:
 

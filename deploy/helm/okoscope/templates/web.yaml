@@ -23,6 +23,11 @@ spec:
           imagePullPolicy: {{ .Values.web.image.pullPolicy }}
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           ports: [{name: http, containerPort: 8080}]
+          env:
+            - name: OKOSCOPE_API_BASE_URL
+              value: /
+            - name: OKOSCOPE_API_UPSTREAM
+              value: http://{{ include "okoscope.fullname" . }}-server:8080
           resources: {{ toYaml .Values.web.resources | nindent 12 }}
           startupProbe: {httpGet: {path: /healthz, port: http}, failureThreshold: 15, periodSeconds: 2}
           readinessProbe: {httpGet: {path: /healthz, port: http}}

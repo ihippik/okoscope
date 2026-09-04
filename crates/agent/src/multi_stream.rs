@@ -7,7 +7,7 @@ use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use crate::{
-    attribution::ReleaseObservation,
+    attribution::{KubernetesWatchState, ReleaseObservation},
     config::{LoadedApplicationCredential, SafetyLimits, ServerConfig},
     counters::Counters,
     delivery::EventBuffer,
@@ -35,6 +35,8 @@ impl ApplicationStreams {
         hello: &AgentHello,
         safety: &SafetyLimits,
         counters: Arc<Counters>,
+        watch_ready: &watch::Receiver<KubernetesWatchState>,
+        kernel_degraded: bool,
     ) -> Self {
         let (shutdown, _) = watch::channel(false);
         let mut routes = BTreeMap::new();
@@ -51,6 +53,8 @@ impl ApplicationStreams {
                 receiver,
                 shutdown.subscribe(),
                 counters.clone(),
+                watch_ready.clone(),
+                kernel_degraded,
             )));
         }
         Self {
@@ -130,6 +134,8 @@ async fn run_stream(
     mut receiver: mpsc::Receiver<StreamItem>,
     mut shutdown: watch::Receiver<bool>,
     counters: Arc<Counters>,
+    watch_ready: watch::Receiver<KubernetesWatchState>,
+    kernel_degraded: bool,
 ) {
     let mut buffer = EventBuffer::new(queue_capacity, batch_size);
     let mut release_pending = BTreeMap::<String, ReleaseObservation>::new();
@@ -156,7 +162,7 @@ async fn run_stream(
             }
         }
         let mut flush = tokio::time::interval(Duration::from_millis(10));
-        let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
         let mut release_dirty = true;
         loop {
             tokio::select! {
@@ -183,6 +189,11 @@ async fn run_stream(
                         })),
                     };
                     if session.sender.send(message).await.is_err() { break; }
+                    let selector_matched = !release_pending.is_empty();
+                    let kubernetes_watch_state = *watch_ready.borrow();
+                    if session.sender.send(onboarding_heartbeat(
+                        kubernetes_watch_state, selector_matched, kernel_degraded,
+                    )).await.is_err() { break; }
                 }
                 incoming = session.incoming.message() => {
                     match incoming {
@@ -223,6 +234,50 @@ async fn run_stream(
             }
         }
         tracing::warn!(route_id=%credential.route_id, "Application stream disconnected; reconnecting");
+    }
+}
+
+fn onboarding_heartbeat(
+    watch_state: KubernetesWatchState,
+    selector_matched: bool,
+    kernel_degraded: bool,
+) -> AgentMessage {
+    use protocol::v1::{OnboardingReason, OnboardingState};
+    let (state, reason) = if kernel_degraded {
+        (
+            OnboardingState::KernelUnsupported,
+            OnboardingReason::EbpfUnavailable,
+        )
+    } else if watch_state == KubernetesWatchState::PermissionDenied {
+        (
+            OnboardingState::PermissionDenied,
+            OnboardingReason::KubernetesWatchForbidden,
+        )
+    } else if watch_state == KubernetesWatchState::Ready && !selector_matched {
+        (
+            OnboardingState::WorkloadNotMatched,
+            OnboardingReason::SelectorNoMatch,
+        )
+    } else if selector_matched {
+        (
+            OnboardingState::WaitingForEvent,
+            OnboardingReason::EventNotObserved,
+        )
+    } else {
+        (
+            OnboardingState::AgentAuthenticated,
+            OnboardingReason::Unspecified,
+        )
+    };
+    AgentMessage {
+        protocol_version: event_model::PROTOCOL_VERSION,
+        message: Some(agent_message::Message::OnboardingStatus(
+            protocol::v1::OnboardingStatus {
+                observed_at_unix_nanos: Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+                state: state.into(),
+                reason: reason.into(),
+            },
+        )),
     }
 }
 
@@ -458,5 +513,65 @@ mod tests {
             panic!("event")
         };
         assert_eq!(received.attribution.application_id, healthy_route);
+    }
+
+    #[test]
+    fn onboarding_heartbeat_uses_only_bounded_reliable_states() {
+        use protocol::v1::{OnboardingReason, OnboardingState};
+        for (ready, matched, degraded, expected_state, expected_reason) in [
+            (
+                false,
+                false,
+                false,
+                OnboardingState::AgentAuthenticated,
+                OnboardingReason::Unspecified,
+            ),
+            (
+                true,
+                false,
+                false,
+                OnboardingState::WorkloadNotMatched,
+                OnboardingReason::SelectorNoMatch,
+            ),
+            (
+                true,
+                true,
+                false,
+                OnboardingState::WaitingForEvent,
+                OnboardingReason::EventNotObserved,
+            ),
+            (
+                true,
+                true,
+                true,
+                OnboardingState::KernelUnsupported,
+                OnboardingReason::EbpfUnavailable,
+            ),
+        ] {
+            let state = if ready {
+                KubernetesWatchState::Ready
+            } else {
+                KubernetesWatchState::Starting
+            };
+            let message = onboarding_heartbeat(state, matched, degraded)
+                .message
+                .unwrap();
+            let agent_message::Message::OnboardingStatus(status) = message else {
+                panic!("status")
+            };
+            assert_eq!(status.state, i32::from(expected_state));
+            assert_eq!(status.reason, i32::from(expected_reason));
+        }
+        let message = onboarding_heartbeat(KubernetesWatchState::PermissionDenied, false, false)
+            .message
+            .unwrap();
+        let agent_message::Message::OnboardingStatus(status) = message else {
+            panic!("status")
+        };
+        assert_eq!(status.state, i32::from(OnboardingState::PermissionDenied));
+        assert_eq!(
+            status.reason,
+            i32::from(OnboardingReason::KubernetesWatchForbidden)
+        );
     }
 }

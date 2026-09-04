@@ -71,13 +71,19 @@ async fn channel(config: &ServerConfig) -> Result<Channel> {
             .await
             .context("connect plaintext development channel");
     }
-    let mut tls = ClientTlsConfig::new().with_native_roots();
-    if let Some(ca_path) = config.ca_file.as_deref() {
-        let ca = tokio::fs::read(Path::new(ca_path)).await?;
-        tls = tls.ca_certificate(Certificate::from_pem(ca));
-    }
+    let tls = tls_config(config).await?;
     endpoint = endpoint.tls_config(tls)?;
     endpoint.connect().await.context("connect TLS channel")
+}
+
+async fn tls_config(config: &ServerConfig) -> Result<ClientTlsConfig> {
+    let Some(ca_path) = config.ca_file.as_deref() else {
+        return Ok(ClientTlsConfig::new().with_native_roots());
+    };
+    let ca = tokio::fs::read(Path::new(ca_path))
+        .await
+        .with_context(|| format!("read custom CA certificate from {ca_path}"))?;
+    Ok(ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca)))
 }
 
 #[must_use]
@@ -179,6 +185,40 @@ impl From<CounterSnapshot> for DropCounters {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tls_server_config(ca_file: Option<&str>) -> ServerConfig {
+        ServerConfig {
+            endpoint: "https://okoscope.example.com:443".into(),
+            development_plaintext: false,
+            ca_file: ca_file.map(str::to_owned),
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_ca_tls_does_not_require_native_roots() {
+        let path = std::env::temp_dir().join(format!("okoscope-ca-{}.pem", uuid::Uuid::new_v4()));
+        tokio::fs::write(&path, b"custom CA fixture").await.unwrap();
+        let config = tls_server_config(path.to_str());
+
+        let result = tls_config(&config).await;
+
+        tokio::fs::remove_file(path).await.unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn custom_ca_read_error_identifies_configured_file() {
+        let path = format!("/missing/okoscope-ca-{}.pem", uuid::Uuid::new_v4());
+        let error = tls_config(&tls_server_config(Some(&path)))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains(&path));
+    }
+
+    #[tokio::test]
+    async fn absent_custom_ca_keeps_system_roots_mode() {
+        assert!(tls_config(&tls_server_config(None)).await.is_ok());
+    }
 
     #[test]
     fn missing_control_variant_is_unsupported() {

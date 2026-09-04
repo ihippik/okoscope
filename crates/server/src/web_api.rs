@@ -24,6 +24,9 @@ pub struct WebApiConfig {
     pub registration_enabled: bool,
     pub secure_session_cookie: bool,
     pub session_lifetime: std::time::Duration,
+    pub setup_token_digest: Option<[u8; 32]>,
+    pub setup_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub agent_installation: Option<crate::onboarding::AgentInstallationMetadata>,
 }
 
 impl Default for WebApiConfig {
@@ -34,6 +37,9 @@ impl Default for WebApiConfig {
             registration_enabled: false,
             secure_session_cookie: true,
             session_lifetime: crate::auth::DEFAULT_SESSION_LIFETIME,
+            setup_token_digest: None,
+            setup_token_expires_at: None,
+            agent_installation: None,
         }
     }
 }
@@ -70,7 +76,35 @@ impl WebApiConfig {
             registration_enabled: false,
             secure_session_cookie: true,
             session_lifetime: crate::auth::DEFAULT_SESSION_LIFETIME,
+            setup_token_digest: None,
+            setup_token_expires_at: None,
+            agent_installation: None,
         })
+    }
+
+    #[must_use]
+    pub fn with_setup_token(mut self, token: Option<&str>) -> Self {
+        use sha2::{Digest, Sha256};
+        self.setup_token_digest = token.map(|value| Sha256::digest(value.as_bytes()).into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_setup_token_expiry(
+        mut self,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Self {
+        self.setup_token_expires_at = expires_at;
+        self
+    }
+
+    #[must_use]
+    pub fn with_agent_installation(
+        mut self,
+        metadata: Option<crate::onboarding::AgentInstallationMetadata>,
+    ) -> Self {
+        self.agent_installation = metadata;
+        self
     }
 
     #[must_use]
@@ -341,7 +375,7 @@ mod tests {
             service_version: "1",
             git_commit: "unknown",
             api_version: "v1",
-            required_database_migration: 23,
+            required_database_migration: 24,
         };
         let value = serde_json::to_value(info).unwrap();
         assert_eq!(value["git_commit"], "unknown");

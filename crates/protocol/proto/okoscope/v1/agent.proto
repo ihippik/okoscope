@@ -15,7 +15,32 @@ message AgentMessage {
     ControlResult control_result = 13;
     WorkloadRevisionEvidence revision_evidence = 14;
     RevisionReadinessSnapshot readiness_snapshot = 15;
+    OnboardingStatus onboarding_status = 16;
   }
+}
+
+message OnboardingStatus {
+  int64 observed_at_unix_nanos = 1;
+  OnboardingState state = 2;
+  OnboardingReason reason = 3;
+}
+
+enum OnboardingState {
+  ONBOARDING_STATE_UNSPECIFIED = 0;
+  ONBOARDING_STATE_AGENT_AUTHENTICATED = 1;
+  ONBOARDING_STATE_WORKLOAD_NOT_MATCHED = 2;
+  ONBOARDING_STATE_PERMISSION_DENIED = 3;
+  ONBOARDING_STATE_KERNEL_UNSUPPORTED = 4;
+  ONBOARDING_STATE_WAITING_FOR_EVENT = 5;
+}
+
+enum OnboardingReason {
+  ONBOARDING_REASON_UNSPECIFIED = 0;
+  ONBOARDING_REASON_SELECTOR_NO_MATCH = 1;
+  ONBOARDING_REASON_KUBERNETES_WATCH_FORBIDDEN = 2;
+  ONBOARDING_REASON_EBPF_UNAVAILABLE = 3;
+  ONBOARDING_REASON_BTF_UNAVAILABLE = 4;
+  ONBOARDING_REASON_EVENT_NOT_OBSERVED = 5;
 }
 
 message ServerMessage {

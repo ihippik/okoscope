@@ -34,6 +34,33 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "delete",
     ),
     ("/api/v1/build-info", "get"),
+    ("/api/v1/setup/status", "get"),
+    ("/api/v1/setup/complete", "post"),
+    ("/api/v1/agent-installation-metadata", "get"),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/installations",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/installations",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/installations/{installation_id}",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/installations/{installation_id}",
+        "patch",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/installations/{installation_id}/replace-credential",
+        "post",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/connection-readiness",
+        "get",
+    ),
     ("/api/v1/auth/register", "post"),
     ("/api/v1/auth/login", "post"),
     ("/api/v1/auth/me", "get"),
@@ -281,7 +308,11 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
         );
         if matches!(
             path,
-            "/api/v1/build-info" | "/api/v1/auth/register" | "/api/v1/auth/login"
+            "/api/v1/build-info"
+                | "/api/v1/auth/register"
+                | "/api/v1/auth/login"
+                | "/api/v1/setup/status"
+                | "/api/v1/setup/complete"
         ) {
             assert_eq!(operation["security"], serde_json::json!([]));
         } else if path == "/api/v1/organizations/{organization_id}/projects"

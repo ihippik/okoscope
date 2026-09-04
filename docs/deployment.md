@@ -63,7 +63,7 @@ docker run --rm --privileged --platform linux/amd64 \
 
 If attachment succeeds, the agent proceeds to server connection attempts. An `attach okoscope_exec` or `attach okoscope_sys_enter` error instead means the kernel-side smoke test failed. This smoke test validates probe loading and attachment only; Kubernetes attribution and PostgreSQL persistence are covered by the acceptance checks below.
 
-For a non-development installation, remove `developmentPlaintext`, issue a server certificate whose SAN contains the service hostname, mount its certificate/key into the server and the CA certificate into agents, and configure `OKOSCOPE_TLS_CERTIFICATE`, `OKOSCOPE_TLS_PRIVATE_KEY`, and `server.caFile`. Store every one-time Application credential in a Kubernetes Secret and never commit its value.
+For a non-development installation, remove `developmentPlaintext`, issue a server certificate whose SAN contains the service hostname, mount its certificate/key into the server and the CA certificate into agents, and configure `OKOSCOPE_TLS_CERTIFICATE`, `OKOSCOPE_TLS_PRIVATE_KEY`, and `server.caFile`. When `server.caFile` is set, the agent trusts that custom CA independently of the container's system root store; when it is absent, the agent uses system roots. Store every one-time Application credential in a Kubernetes Secret and never commit its value.
 
 ## Web UI API
 

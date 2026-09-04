@@ -47,7 +47,7 @@ kubectl rollout status daemonset/okoscope-agent-okoscope-agent \
   --namespace okoscope-system --timeout=5m
 ```
 
-For a private CA, create an additional Secret and configure `server.caSecret.name` and `server.caSecret.key`. System trust is used when `caSecret.name` is empty. Plaintext transport is an explicitly isolated development mode only: use an `http://` endpoint together with `server.developmentPlaintext=true`; never use it across untrusted networks.
+For a private CA, create an additional Secret and configure `server.caSecret.name` and `server.caSecret.key`. That CA is used independently of the container's system root store. System trust is used only when `caSecret.name` is empty. Plaintext transport is an explicitly isolated development mode only: use an `http://` endpoint together with `server.developmentPlaintext=true`; never use it across untrusted networks.
 
 Use `labels` instead of `name` for a bounded label selector. Do not set both. Multiple mappings may use different Secret names and keys. The chart grants read-only access to Pods, Deployments, ReplicaSets, and the `kube-system` Namespace, and requires Linux eBPF support described in [platform support](platform-support.md).
 
@@ -73,24 +73,33 @@ Install and verify:
 helm upgrade --install okoscope \
   oci://ghcr.io/ihippik/charts/okoscope \
   --version <OKOSCOPE_VERSION> \
-  --namespace okoscope-system
+  --namespace okoscope-system \
+  --set agentInstallation.publicGrpcEndpoint=grpc.example.com:443
 kubectl rollout status deployment/okoscope-server \
   --namespace okoscope-system --timeout=5m
 helm test okoscope --namespace okoscope-system
 kubectl port-forward -n okoscope-system service/okoscope-web 8080:80
 ```
 
-Open `http://127.0.0.1:8080`. The pre-install/pre-upgrade migration Job must succeed before application rollout. It reads `database.existingSecret`/`database.urlKey`; there is deliberately no `database.url` value.
+When agents must trust a private CA, set `agentInstallation.tlsMode=custom_ca`, `agentInstallation.caSecret.name=<SECRET>`, and `agentInstallation.caSecret.key=<KEY>`. The Secret must already exist in the namespace where the standalone agent will be installed; onboarding returns only its name and key, never certificate or key material. Leave the default `system` mode with an empty CA Secret name to use system roots.
 
-Fresh internal installs enable registration only to create the first Organization owner. Use the private port-forward, create that owner, and immediately close registration while preserving the installed values:
+Open `http://127.0.0.1:8080`. The pre-install/pre-upgrade migration Job must succeed before application rollout. It reads `database.existingSecret`/`database.urlKey`; there is deliberately no `database.url` value.
+The Web pod proxies same-origin `/api` requests to the chart's internal Server Service, so this single Web port-forward supports both the UI and API without exposing the Server Service.
+
+Ordinary registration is disabled by default. Retrieve the one-time setup authorization from its Kubernetes Secret, paste it into `/setup`, and create the first owner, Organization, and explicitly named Project:
 
 ```bash
-helm upgrade okoscope oci://ghcr.io/ihippik/charts/okoscope \
-  --version <OKOSCOPE_VERSION> --namespace okoscope-system \
-  --reuse-values --set server.registrationEnabled=false
+kubectl get secret -n okoscope-system okoscope-setup \
+  -o jsonpath='{.data.setup-token}' | base64 --decode
+printf '\n'
 ```
 
-The chart rejects public Web ingress while registration is enabled.
+Helm never prints the token. The Secret is preserved across upgrades, and setup permanently closes as soon as any owner exists. If the token is lost, use the existing `bootstrap-owner` operator command; setup never recovers or returns plaintext authorization. Application credentials are likewise shown only once. Connection readiness uses a 30-second compatible-agent heartbeat and becomes `stale` after five minutes; older agents remain usable but expose only authentication/event evidence.
+
+An externally managed setup Secret may also contain an RFC 3339 expiry under
+`setup-token-expires-at` (or `setupAuthorization.expiresAtKey`). Once expired, an ownerless
+installation reports `setup_unavailable`; rotate the external token and expiry to recover.
+Chart-generated tokens intentionally have no expiry and remain valid until the first owner claim.
 
 
 See [production installation and operations](self-hosted-deployment.md) for ingress-nginx and Traefik TLS examples, external internal Secrets, upgrades, rollback, uninstall, private registries, notifications, and Kustomize transition.

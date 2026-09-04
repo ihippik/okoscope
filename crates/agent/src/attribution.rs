@@ -481,7 +481,7 @@ pub async fn run_watches(
     cache: Arc<AttributionCache>,
     lifecycle_sender: mpsc::Sender<crate::lifecycle::LifecycleObservation>,
     counters: Arc<Counters>,
-    readiness: watch::Sender<bool>,
+    readiness: watch::Sender<KubernetesWatchState>,
     release_sender: mpsc::Sender<ReleaseObservation>,
     selectors: Arc<Vec<WorkloadSelector>>,
 ) -> anyhow::Result<()> {
@@ -489,11 +489,13 @@ pub async fn run_watches(
     let replicas: Api<ReplicaSet> = Api::all(client.clone());
     let deployments: Api<Deployment> = Api::all(client);
     let initialized = Arc::new(AtomicU8::new(0));
+    let forbidden = Arc::new(AtomicU8::new(0));
     let pod_context = Arc::new(PodWatchContext {
         cache: cache.clone(),
         lifecycle_sender,
         counters,
         initialized: initialized.clone(),
+        forbidden: forbidden.clone(),
         readiness: readiness.clone(),
         release_sender,
         selectors,
@@ -504,9 +506,10 @@ pub async fn run_watches(
             replicas,
             cache.clone(),
             initialized.clone(),
+            forbidden.clone(),
             readiness.clone(),
         ),
-        supervise_deployments(deployments, cache, initialized, readiness),
+        supervise_deployments(deployments, cache, initialized, forbidden, readiness),
     );
     Ok(())
 }
@@ -517,18 +520,61 @@ struct PodWatchContext {
     lifecycle_sender: mpsc::Sender<crate::lifecycle::LifecycleObservation>,
     counters: Arc<Counters>,
     initialized: Arc<AtomicU8>,
-    readiness: watch::Sender<bool>,
+    forbidden: Arc<AtomicU8>,
+    readiness: watch::Sender<KubernetesWatchState>,
     release_sender: mpsc::Sender<ReleaseObservation>,
     selectors: Arc<Vec<WorkloadSelector>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KubernetesWatchState {
+    Starting,
+    Ready,
+    PermissionDenied,
 }
 
 const WATCH_RETRY_MIN: Duration = Duration::from_secs(1);
 const WATCH_RETRY_MAX: Duration = Duration::from_secs(30);
 
-fn source_unavailable(initialized: &AtomicU8, bit: u8, readiness: &watch::Sender<bool>) -> bool {
+fn source_unavailable(
+    initialized: &AtomicU8,
+    forbidden: &AtomicU8,
+    bit: u8,
+    result: &anyhow::Result<()>,
+    readiness: &watch::Sender<KubernetesWatchState>,
+) -> bool {
     let was_initialized = initialized.fetch_and(!bit, Ordering::AcqRel) & bit != 0;
-    readiness.send_replace(false);
+    let denied = result.as_ref().is_err_and(is_permission_denied);
+    if denied {
+        forbidden.fetch_or(bit, Ordering::AcqRel);
+    } else {
+        forbidden.fetch_and(!bit, Ordering::AcqRel);
+    }
+    publish_watch_state(initialized, forbidden, readiness);
     was_initialized
+}
+
+fn is_permission_denied(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<kube::Error>()
+            .is_some_and(|error| matches!(error, kube::Error::Api(response) if matches!(response.code, 401 | 403)))
+    })
+}
+
+fn publish_watch_state(
+    initialized: &AtomicU8,
+    forbidden: &AtomicU8,
+    readiness: &watch::Sender<KubernetesWatchState>,
+) {
+    let state = if forbidden.load(Ordering::Acquire) != 0 {
+        KubernetesWatchState::PermissionDenied
+    } else if initialized.load(Ordering::Acquire) == 0b111 {
+        KubernetesWatchState::Ready
+    } else {
+        KubernetesWatchState::Starting
+    };
+    readiness.send_replace(state);
 }
 
 fn next_retry(current: Duration) -> Duration {
@@ -566,7 +612,13 @@ async fn supervise_pods(api: Api<Pod>, context: Arc<PodWatchContext>) {
     let mut retry = WATCH_RETRY_MIN;
     loop {
         let result = watch_pods(api.clone(), &context).await;
-        let was_initialized = source_unavailable(&context.initialized, 0b001, &context.readiness);
+        let was_initialized = source_unavailable(
+            &context.initialized,
+            &context.forbidden,
+            0b001,
+            &result,
+            &context.readiness,
+        );
         retry_watch("pods", result, was_initialized, &mut retry).await;
     }
 }
@@ -575,7 +627,8 @@ async fn supervise_replica_sets(
     api: Api<ReplicaSet>,
     cache: Arc<AttributionCache>,
     initialized: Arc<AtomicU8>,
-    readiness: watch::Sender<bool>,
+    forbidden: Arc<AtomicU8>,
+    readiness: watch::Sender<KubernetesWatchState>,
 ) {
     let mut retry = WATCH_RETRY_MIN;
     loop {
@@ -583,10 +636,12 @@ async fn supervise_replica_sets(
             api.clone(),
             cache.clone(),
             initialized.clone(),
+            forbidden.clone(),
             readiness.clone(),
         )
         .await;
-        let was_initialized = source_unavailable(&initialized, 0b010, &readiness);
+        let was_initialized =
+            source_unavailable(&initialized, &forbidden, 0b010, &result, &readiness);
         retry_watch("replicasets", result, was_initialized, &mut retry).await;
     }
 }
@@ -595,7 +650,8 @@ async fn supervise_deployments(
     api: Api<Deployment>,
     cache: Arc<AttributionCache>,
     initialized: Arc<AtomicU8>,
-    readiness: watch::Sender<bool>,
+    forbidden: Arc<AtomicU8>,
+    readiness: watch::Sender<KubernetesWatchState>,
 ) {
     let mut retry = WATCH_RETRY_MIN;
     loop {
@@ -603,19 +659,25 @@ async fn supervise_deployments(
             api.clone(),
             cache.clone(),
             initialized.clone(),
+            forbidden.clone(),
             readiness.clone(),
         )
         .await;
-        let was_initialized = source_unavailable(&initialized, 0b100, &readiness);
+        let was_initialized =
+            source_unavailable(&initialized, &forbidden, 0b100, &result, &readiness);
         retry_watch("deployments", result, was_initialized, &mut retry).await;
     }
 }
 
-fn source_initialized(initialized: &AtomicU8, bit: u8, readiness: &watch::Sender<bool>) {
-    let previous = initialized.fetch_or(bit, Ordering::AcqRel);
-    if previous | bit == 0b111 {
-        readiness.send_replace(true);
-    }
+fn source_initialized(
+    initialized: &AtomicU8,
+    forbidden: &AtomicU8,
+    bit: u8,
+    readiness: &watch::Sender<KubernetesWatchState>,
+) {
+    initialized.fetch_or(bit, Ordering::AcqRel);
+    forbidden.fetch_and(!bit, Ordering::AcqRel);
+    publish_watch_state(initialized, forbidden, readiness);
 }
 
 async fn watch_pods(api: Api<Pod>, context: &PodWatchContext) -> anyhow::Result<()> {
@@ -683,10 +745,22 @@ fn handle_pod_event(
             emit_readiness_snapshots(context);
         }
         Event::Init => {
-            source_unavailable(&context.initialized, 0b001, &context.readiness);
+            let ended = Ok(());
+            source_unavailable(
+                &context.initialized,
+                &context.forbidden,
+                0b001,
+                &ended,
+                &context.readiness,
+            );
         }
         Event::InitDone => {
-            source_initialized(&context.initialized, 0b001, &context.readiness);
+            source_initialized(
+                &context.initialized,
+                &context.forbidden,
+                0b001,
+                &context.readiness,
+            );
             emit_readiness_snapshots(context);
         }
     }
@@ -696,7 +770,8 @@ async fn watch_replica_sets(
     api: Api<ReplicaSet>,
     cache: Arc<AttributionCache>,
     initialized: Arc<AtomicU8>,
-    readiness: watch::Sender<bool>,
+    forbidden: Arc<AtomicU8>,
+    readiness: watch::Sender<KubernetesWatchState>,
 ) -> anyhow::Result<()> {
     let mut stream = watcher::watcher(api, watcher::Config::default()).boxed();
     while let Some(event) = stream.try_next().await? {
@@ -704,9 +779,10 @@ async fn watch_replica_sets(
             Event::Apply(resource) | Event::InitApply(resource) => {
                 cache.apply_replica_set(&resource);
             }
-            Event::InitDone => source_initialized(&initialized, 0b010, &readiness),
+            Event::InitDone => source_initialized(&initialized, &forbidden, 0b010, &readiness),
             Event::Init => {
-                source_unavailable(&initialized, 0b010, &readiness);
+                let ended = Ok(());
+                source_unavailable(&initialized, &forbidden, 0b010, &ended, &readiness);
             }
             Event::Delete(_) => {}
         }
@@ -718,7 +794,8 @@ async fn watch_deployments(
     api: Api<Deployment>,
     cache: Arc<AttributionCache>,
     initialized: Arc<AtomicU8>,
-    readiness: watch::Sender<bool>,
+    forbidden: Arc<AtomicU8>,
+    readiness: watch::Sender<KubernetesWatchState>,
 ) -> anyhow::Result<()> {
     let mut stream = watcher::watcher(api, watcher::Config::default()).boxed();
     while let Some(event) = stream.try_next().await? {
@@ -726,9 +803,10 @@ async fn watch_deployments(
             Event::Apply(resource) | Event::InitApply(resource) => {
                 cache.apply_deployment(&resource);
             }
-            Event::InitDone => source_initialized(&initialized, 0b100, &readiness),
+            Event::InitDone => source_initialized(&initialized, &forbidden, 0b100, &readiness),
             Event::Init => {
-                source_unavailable(&initialized, 0b100, &readiness);
+                let ended = Ok(());
+                source_unavailable(&initialized, &forbidden, 0b100, &ended, &readiness);
             }
             Event::Delete(_) => {}
         }
@@ -773,16 +851,30 @@ mod tests {
     #[test]
     fn lifecycle_readiness_requires_every_source_and_can_be_withheld() {
         let initialized = AtomicU8::new(0);
-        let (readiness, receiver) = watch::channel(false);
-        source_initialized(&initialized, 0b001, &readiness);
-        source_initialized(&initialized, 0b100, &readiness);
-        assert!(!*receiver.borrow());
-        source_initialized(&initialized, 0b010, &readiness);
-        assert!(*receiver.borrow());
-        assert!(source_unavailable(&initialized, 0b001, &readiness));
-        assert!(!*receiver.borrow());
+        let forbidden = AtomicU8::new(0);
+        let (readiness, receiver) = watch::channel(KubernetesWatchState::Starting);
+        source_initialized(&initialized, &forbidden, 0b001, &readiness);
+        source_initialized(&initialized, &forbidden, 0b100, &readiness);
+        assert_eq!(*receiver.borrow(), KubernetesWatchState::Starting);
+        source_initialized(&initialized, &forbidden, 0b010, &readiness);
+        assert_eq!(*receiver.borrow(), KubernetesWatchState::Ready);
+        let ended = Ok(());
+        assert!(source_unavailable(
+            &initialized,
+            &forbidden,
+            0b001,
+            &ended,
+            &readiness
+        ));
+        assert_eq!(*receiver.borrow(), KubernetesWatchState::Starting);
         assert_eq!(initialized.load(Ordering::Acquire), 0b110);
-        assert!(!source_unavailable(&initialized, 0b001, &readiness));
+        assert!(!source_unavailable(
+            &initialized,
+            &forbidden,
+            0b001,
+            &ended,
+            &readiness
+        ));
     }
 
     #[test]

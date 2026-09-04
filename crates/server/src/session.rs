@@ -67,6 +67,10 @@ impl AgentService for AgentSessionService {
             .capabilities
             .iter()
             .any(|value| value == protocol::KUBERNETES_RELEASE_DISCOVERY_CAPABILITY);
+        let onboarding_status_capable = hello
+            .capabilities
+            .iter()
+            .any(|value| value == protocol::ONBOARDING_STATUS_CAPABILITY);
         let (sender, receiver) = mpsc::channel(32);
         sender
             .send(Ok(ServerMessage {
@@ -114,6 +118,10 @@ impl AgentService for AgentSessionService {
                         Some(agent_message::Message::ReadinessSnapshot(value)) => {
                             let snapshot = event_model::RevisionReadinessSnapshot::try_from(value).map_err(|error| Status::invalid_argument(error.to_string()))?;
                             crate::release_discovery::persist_readiness_snapshot(&pool, scope, application_scope, &snapshot).await.map_err(internal)?;
+                        }
+                        Some(agent_message::Message::OnboardingStatus(_)) if !onboarding_status_capable => return Err(Status::failed_precondition("onboarding status requires onboarding.status/v1 capability")),
+                        Some(agent_message::Message::OnboardingStatus(value)) => {
+                            persist_onboarding_status(&pool, application_scope, &hello.node_name, value).await?;
                         }
                         Some(agent_message::Message::Hello(_)) => return Err(Status::invalid_argument("hello can only be sent once")),
                         None => return Err(Status::invalid_argument("unknown or missing typed agent message")),
@@ -220,6 +228,47 @@ async fn touch_agent(pool: &PgPool, agent_id: Uuid) -> Result<(), sqlx::Error> {
 fn internal(error: impl std::fmt::Display) -> Status {
     tracing::error!(%error, "agent session failure");
     Status::internal("internal server error")
+}
+
+async fn persist_onboarding_status(
+    pool: &PgPool,
+    scope: ApplicationCredentialScope,
+    node_name: &str,
+    value: protocol::v1::OnboardingStatus,
+) -> Result<(), Status> {
+    use protocol::v1::{OnboardingReason, OnboardingState};
+    let state = match OnboardingState::try_from(value.state).ok() {
+        Some(OnboardingState::AgentAuthenticated) => "agent_authenticated",
+        Some(OnboardingState::WorkloadNotMatched) => "workload_not_matched",
+        Some(OnboardingState::PermissionDenied) => "permission_denied",
+        Some(OnboardingState::KernelUnsupported) => "kernel_unsupported",
+        Some(OnboardingState::WaitingForEvent) => "waiting_for_event",
+        _ => return Err(Status::invalid_argument("onboarding state is invalid")),
+    };
+    let reason = match OnboardingReason::try_from(value.reason).ok() {
+        Some(OnboardingReason::Unspecified) => None,
+        Some(OnboardingReason::SelectorNoMatch) => Some("selector_no_match"),
+        Some(OnboardingReason::KubernetesWatchForbidden) => Some("kubernetes_watch_forbidden"),
+        Some(OnboardingReason::EbpfUnavailable) => Some("ebpf_unavailable"),
+        Some(OnboardingReason::BtfUnavailable) => Some("btf_unavailable"),
+        Some(OnboardingReason::EventNotObserved) => Some("event_not_observed"),
+        None => return Err(Status::invalid_argument("onboarding reason is invalid")),
+    };
+    let observed_at = chrono::DateTime::from_timestamp_nanos(value.observed_at_unix_nanos);
+    if (chrono::Utc::now() - observed_at)
+        .num_hours()
+        .unsigned_abs()
+        > 24
+    {
+        return Err(Status::invalid_argument(
+            "onboarding timestamp is outside the accepted window",
+        ));
+    }
+    sqlx::query("INSERT INTO application_installation_status(installation_id,node_name,state,reason,observed_at) SELECT i.id,$4,$5,$6,$7 FROM application_installations i WHERE i.organization_id=$1 AND i.project_id=$2 AND i.application_id=$3 ORDER BY i.created_at DESC LIMIT 1 ON CONFLICT(installation_id,node_name) DO UPDATE SET state=EXCLUDED.state,reason=EXCLUDED.reason,observed_at=EXCLUDED.observed_at,updated_at=now() WHERE application_installation_status.observed_at<=EXCLUDED.observed_at")
+        .bind(scope.organization_id).bind(scope.project_id).bind(scope.application_id)
+        .bind(node_name).bind(state).bind(reason).bind(observed_at)
+        .execute(pool).await.map_err(internal)?;
+    Ok(())
 }
 
 #[cfg(test)]

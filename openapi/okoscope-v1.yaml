@@ -258,6 +258,70 @@ paths:
       operationId: getBuildInfo
       security: []
       responses: { '200': { $ref: '#/components/responses/BuildInfoResponse' } }
+  /api/v1/setup/status:
+    get:
+      operationId: getSetupStatus
+      security: []
+      responses:
+        '200': { description: Bounded setup state, content: { application/json: { schema: { $ref: '#/components/schemas/SetupStatus' } } } }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/v1/setup/complete:
+    post:
+      operationId: completeSetup
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CompleteSetupRequest' } } } }
+      responses:
+        '201': { description: First owner, Organization, Project and session created, content: { application/json: { schema: { $ref: '#/components/schemas/CompleteSetupResponse' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/v1/agent-installation-metadata:
+    get:
+      operationId: getAgentInstallationMetadata
+      responses:
+        '200': { description: Server-owned agent chart contract, content: { application/json: { schema: { $ref: '#/components/schemas/AgentInstallationMetadata' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{project_id}/applications/{application_id}/installations:
+    parameters:
+      - { name: project_id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: application_id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listApplicationInstallations
+      responses: { '200': { description: Installation intent, content: { application/json: { schema: { $ref: '#/components/schemas/InstallationPage' } } } }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+    post:
+      operationId: createApplicationInstallation
+      parameters: [{ $ref: '#/components/parameters/ProvisioningIdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateInstallationRequest' } } } }
+      responses: { '201': { description: Installation and one-time credential, content: { application/json: { schema: { $ref: '#/components/schemas/IssuedInstallation' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /api/v1/projects/{project_id}/applications/{application_id}/installations/{installation_id}:
+    parameters:
+      - { name: project_id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: application_id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: installation_id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getApplicationInstallation
+      responses: { '200': { description: Installation intent, content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationInstallation' } } } }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+    patch:
+      operationId: updateApplicationInstallation
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateInstallationRequest' } } } }
+      responses: { '200': { description: Updated non-secret installation intent, content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationInstallation' } } } }, '400': { $ref: '#/components/responses/Error' }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+  /api/v1/projects/{project_id}/applications/{application_id}/installations/{installation_id}/replace-credential:
+    post:
+      operationId: replaceInstallationCredential
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: application_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: installation_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: One-time replacement credential, content: { application/json: { schema: { $ref: '#/components/schemas/IssuedInstallationCredential' } } } }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+  /api/v1/projects/{project_id}/applications/{application_id}/connection-readiness:
+    get:
+      operationId: getApplicationConnectionReadiness
+      parameters:
+        - { name: project_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: application_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Bounded readiness snapshot, content: { application/json: { schema: { $ref: '#/components/schemas/ConnectionReadiness' } } } }, '401': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
   /api/v1/auth/register:
     post:
       operationId: registerUser
@@ -1626,6 +1690,145 @@ components:
   headers:
     RequestId: { schema: { type: string }, description: Correlation identifier for the request. }
   schemas:
+    SetupStatus:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties: { state: { enum: [owner_required, ready, setup_unavailable] } }
+    CompleteSetupRequest:
+      type: object
+      additionalProperties: false
+      required: [setup_token, email, password, organization_slug, organization_name, project_slug, project_name]
+      properties:
+        setup_token: { type: string, minLength: 32, writeOnly: true }
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 12, maxLength: 256, writeOnly: true }
+        organization_slug: { type: string, minLength: 1, maxLength: 63 }
+        organization_name: { type: string, minLength: 1, maxLength: 120 }
+        project_slug: { type: string, minLength: 1, maxLength: 63 }
+        project_name: { type: string, minLength: 1, maxLength: 120 }
+    CompleteSetupResponse:
+      type: object
+      additionalProperties: false
+      required: [user_id, organization_id, project_id, role]
+      properties:
+        user_id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        role: { const: owner }
+    AgentInstallationMetadata:
+      type: object
+      additionalProperties: false
+      required: [chart_reference, chart_version, recommended_agent_version, minimum_agent_version, configuration_schema_version, grpc_endpoint, tls_mode, ca_secret_name, ca_secret_key, namespace, credential_secret_name, credential_secret_key, supported_workload_kinds]
+      properties:
+        chart_reference: { type: string, pattern: '^oci://' }
+        chart_version: { type: string }
+        recommended_agent_version: { type: string }
+        minimum_agent_version: { type: string }
+        configuration_schema_version: { type: integer, minimum: 1 }
+        grpc_endpoint: { type: string }
+        tls_mode: { enum: [system, custom_ca] }
+        ca_secret_name: { type: [string, 'null'] }
+        ca_secret_key: { type: [string, 'null'] }
+        namespace: { type: string }
+        credential_secret_name: { type: string }
+        credential_secret_key: { type: string }
+        supported_workload_kinds: { type: array, items: { const: Deployment }, minItems: 1, maxItems: 1 }
+      oneOf:
+        - properties: { tls_mode: { const: system }, ca_secret_name: { type: 'null' }, ca_secret_key: { type: 'null' } }
+        - properties: { tls_mode: { const: custom_ca }, ca_secret_name: { type: string, minLength: 1 }, ca_secret_key: { type: string, minLength: 1 } }
+    WorkloadIntent:
+      type: object
+      additionalProperties: false
+      required: [namespace, kind]
+      properties:
+        namespace: { type: string, minLength: 1, maxLength: 63 }
+        kind: { const: Deployment }
+        name: { type: string, minLength: 1, maxLength: 253 }
+        labels: { type: object, minProperties: 1, maxProperties: 16, additionalProperties: { type: string, minLength: 1, maxLength: 63 } }
+      oneOf: [{ required: [name] }, { required: [labels] }]
+    CreateInstallationRequest:
+      type: object
+      additionalProperties: false
+      required: [cluster_name, workload]
+      properties:
+        cluster_name: { type: string, minLength: 1, maxLength: 120 }
+        workload: { $ref: '#/components/schemas/WorkloadIntent' }
+    UpdateInstallationRequest:
+      type: object
+      additionalProperties: false
+      required: [cluster_name, workload]
+      properties:
+        cluster_name: { type: string, minLength: 1, maxLength: 120 }
+        workload: { $ref: '#/components/schemas/WorkloadIntent' }
+    ApplicationInstallation:
+      type: object
+      additionalProperties: false
+      required: [id, application_id, credential_id, cluster_name, workload_namespace, workload_kind, chart_version, configuration_schema_version, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        application_id: { type: string, format: uuid }
+        credential_id: { type: string, format: uuid }
+        cluster_name: { type: string }
+        workload_namespace: { type: string }
+        workload_kind: { const: Deployment }
+        workload_name: { type: [string, 'null'] }
+        workload_labels: { type: [object, 'null'], additionalProperties: { type: string } }
+        chart_version: { type: string }
+        configuration_schema_version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    InstallationPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties: { items: { type: array, items: { $ref: '#/components/schemas/ApplicationInstallation' } } }
+    IssuedInstallationCredential:
+      type: object
+      additionalProperties: false
+      required: [id, token, token_hint, shown_once]
+      properties:
+        id: { type: string, format: uuid }
+        token: { type: string, writeOnly: true }
+        token_hint: { type: string }
+        shown_once: { const: true }
+    InstallationCommandModel:
+      type: object
+      additionalProperties: false
+      required: [chart_reference, chart_version, namespace, secret_name, secret_key, grpc_endpoint, tls_mode, ca_secret_name, ca_secret_key]
+      properties:
+        chart_reference: { type: string }
+        chart_version: { type: string }
+        namespace: { type: string }
+        secret_name: { type: string }
+        secret_key: { type: string }
+        grpc_endpoint: { type: string }
+        tls_mode: { enum: [system, custom_ca] }
+        ca_secret_name: { type: [string, 'null'] }
+        ca_secret_key: { type: [string, 'null'] }
+      oneOf:
+        - properties: { tls_mode: { const: system }, ca_secret_name: { type: 'null' }, ca_secret_key: { type: 'null' } }
+        - properties: { tls_mode: { const: custom_ca }, ca_secret_name: { type: string, minLength: 1 }, ca_secret_key: { type: string, minLength: 1 } }
+    IssuedInstallation:
+      type: object
+      additionalProperties: false
+      required: [installation, credential, command]
+      properties:
+        installation: { $ref: '#/components/schemas/ApplicationInstallation' }
+        credential: { $ref: '#/components/schemas/IssuedInstallationCredential' }
+        command: { $ref: '#/components/schemas/InstallationCommandModel' }
+    ConnectionReadiness:
+      type: object
+      additionalProperties: false
+      required: [state, reporting_nodes, stale_after_seconds]
+      properties:
+        state: { enum: [credential_created, waiting_for_agent, agent_authenticated, workload_not_matched, permission_denied, kernel_unsupported, waiting_for_event, receiving_events, stale, credential_revoked] }
+        reason: { type: [string, 'null'], enum: [selector_no_match, kubernetes_watch_forbidden, ebpf_unavailable, btf_unavailable, event_not_observed, null] }
+        credential_last_used_at: { type: [string, 'null'], format: date-time }
+        first_event_at: { type: [string, 'null'], format: date-time }
+        last_event_at: { type: [string, 'null'], format: date-time }
+        reporting_nodes: { type: integer, minimum: 0 }
+        stale_after_seconds: { const: 300 }
     RuntimeRetentionCoverage:
       type: object
       additionalProperties: false
@@ -2803,7 +3006,7 @@ components:
         service_version: { type: string, example: 0.1.0 }
         git_commit: { type: string, example: ac23c0b4d042e8d430ea6880f6b66ed1a9d4580a }
         api_version: { type: string, const: v1 }
-        required_database_migration: { type: integer, format: int64, example: 22 }
+        required_database_migration: { type: integer, format: int64, example: 24 }
     Organization:
       type: object
       additionalProperties: false

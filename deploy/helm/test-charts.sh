@@ -31,7 +31,7 @@ grep -q 'name: production-database' "$work/self-hosted-ingress.yaml"
 grep -q 'nginx.ingress.kubernetes.io/backend-protocol: GRPC' "$work/self-hosted-ingress.yaml"
 helm template okoscope "$root/deploy/helm/okoscope" -f "$root/deploy/helm/fixtures/self-hosted-ingress.yaml" \
   --set ingress.grpc.className=traefik > "$work/self-hosted-traefik.yaml"
-grep -A8 'kind: Service' "$work/self-hosted-traefik.yaml" | grep -q 'traefik.ingress.kubernetes.io/service.serversscheme: h2c'
+grep -q 'traefik.ingress.kubernetes.io/service.serversscheme: h2c' "$work/self-hosted-traefik.yaml"
 grep -q '^kind: DaemonSet$' "$work/self-hosted-agent.yaml"
 grep -q 'name: okoscope-application-credentials' "$work/agent.yaml"
 grep -q 'name: payments-observability' "$work/agent-labels.yaml"
@@ -45,7 +45,30 @@ if helm template rejected "$root/deploy/helm/okoscope" -f "$root/deploy/helm/fix
   echo 'public Web ingress with open registration must be rejected' >&2
   exit 1
 fi
-grep -q 'OKOSCOPE_REGISTRATION_ENABLED: "true"' "$work/self-hosted.yaml"
+grep -q 'OKOSCOPE_REGISTRATION_ENABLED: "false"' "$work/self-hosted.yaml"
+grep -q 'name: OKOSCOPE_SETUP_TOKEN' "$work/self-hosted.yaml"
+grep -A1 'name: OKOSCOPE_API_BASE_URL' "$work/self-hosted.yaml" | grep -q 'value: /'
+grep -A1 'name: OKOSCOPE_API_UPSTREAM' "$work/self-hosted.yaml" | grep -q 'value: http://okoscope-server:8080'
+grep -q 'kind: Secret' "$work/self-hosted.yaml"
+helm template custom-ca "$root/deploy/helm/okoscope" \
+  --set agentInstallation.publicGrpcEndpoint=grpc.example.com:443 \
+  --set agentInstallation.tlsMode=custom_ca \
+  --set agentInstallation.caSecret.name=okoscope-private-ca \
+  --set agentInstallation.caSecret.key=root.crt > "$work/self-hosted-custom-ca.yaml"
+grep -q 'OKOSCOPE_AGENT_CA_SECRET_NAME: "okoscope-private-ca"' "$work/self-hosted-custom-ca.yaml"
+grep -q 'OKOSCOPE_AGENT_CA_SECRET_KEY: "root.crt"' "$work/self-hosted-custom-ca.yaml"
+if helm template rejected "$root/deploy/helm/okoscope" --set agentInstallation.tlsMode=custom_ca >/dev/null 2>&1; then
+  echo 'custom_ca mode without a CA Secret name must be rejected' >&2
+  exit 1
+fi
+if helm template rejected "$root/deploy/helm/okoscope" --set agentInstallation.caSecret.name=unexpected-ca >/dev/null 2>&1; then
+  echo 'system roots mode with a CA Secret name must be rejected' >&2
+  exit 1
+fi
+if helm template rejected "$root/deploy/helm/okoscope" --set setupAuthorization.token=unsafe >/dev/null 2>&1; then
+  echo 'plaintext setup authorization must be rejected by the values schema' >&2
+  exit 1
+fi
 if helm template rejected "$root/deploy/helm/okoscope-agent" -f "$root/deploy/helm/fixtures/agent-hosted.yaml" --set applicationCredential=oko_app_v1_unsafe >/dev/null 2>&1; then
   echo 'plaintext Application credentials must be rejected by the values schema' >&2
   exit 1
@@ -58,3 +81,5 @@ fi
 if command -v kubeconform >/dev/null; then
   kubeconform -strict -summary -ignore-missing-schemas "$work"/*.yaml
 fi
+
+true

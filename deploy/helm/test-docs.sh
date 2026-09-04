@@ -9,7 +9,8 @@ for expected in \
   'oci://ghcr.io/ihippik/charts/okoscope' \
   'database-url' \
   'credentialSecret' \
-  'database.existingSecret'; do
+  'database.existingSecret' \
+  'OKOSCOPE_API_UPSTREAM'; do
   grep -q "$expected" "${docs[@]}"
 done
 

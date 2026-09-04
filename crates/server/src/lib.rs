@@ -16,6 +16,7 @@ pub mod metrics;
 pub mod navigation;
 pub mod notification;
 pub mod notification_config;
+pub mod onboarding;
 pub mod policy;
 pub mod policy_api;
 pub mod policy_projection;

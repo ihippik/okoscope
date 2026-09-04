@@ -30,6 +30,7 @@ pub const FILE_ACTIVITY_CAPABILITY: &str = "file.activity.syscall-path/v1";
 pub const PROCESS_EXIT_CAPABILITY: &str = "process.exit/v1";
 pub const CONTAINER_LIFECYCLE_CAPABILITY: &str = "container.lifecycle/v1";
 pub const KUBERNETES_RELEASE_DISCOVERY_CAPABILITY: &str = "kubernetes.release-discovery/v1";
+pub const ONBOARDING_STATUS_CAPABILITY: &str = "onboarding.status/v1";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProtocolError {
