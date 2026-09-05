@@ -60,6 +60,8 @@ message AgentHello {
   repeated string capabilities = 5;
   DropCounters drop_counters = 6;
   string cluster_uid = 7;
+  // Display name only; cluster_uid remains the stable identity. Empty for legacy agents.
+  string cluster_name = 8;
 }
 
 message SessionAccepted {

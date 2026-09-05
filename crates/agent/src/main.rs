@@ -3,6 +3,79 @@ fn main() {
     eprintln!("okoscope-agent requires Linux; userspace libraries and tests support this host");
 }
 
+#[cfg(any(target_os = "linux", test))]
+mod handshake {
+    use agent::config::AgentConfig;
+    #[cfg(test)]
+    use agent::counters::Counters;
+    use protocol::v1::AgentHello;
+    #[cfg(test)]
+    use uuid::Uuid;
+
+    pub(super) fn hello(
+        config: &AgentConfig,
+        snapshot: &agent::counters::CounterSnapshot,
+        process_exit_ready: bool,
+        container_lifecycle_ready: bool,
+        cluster_uid: String,
+    ) -> AgentHello {
+        let mut capabilities = config.observation.capabilities();
+        if process_exit_ready {
+            capabilities.push(protocol::PROCESS_EXIT_CAPABILITY.into());
+        }
+        if container_lifecycle_ready {
+            capabilities.push(protocol::CONTAINER_LIFECYCLE_CAPABILITY.into());
+        }
+        capabilities.push(protocol::KUBERNETES_RELEASE_DISCOVERY_CAPABILITY.into());
+        capabilities.push(protocol::ONBOARDING_STATUS_CAPABILITY.into());
+        AgentHello {
+            agent_version: env!("CARGO_PKG_VERSION").into(),
+            node_name: config.identity.node_name.clone(),
+            architecture: std::env::consts::ARCH.into(),
+            kernel_release: kernel_release(),
+            capabilities,
+            drop_counters: Some((*snapshot).into()),
+            cluster_uid,
+            cluster_name: config.identity.cluster_name.clone(),
+        }
+    }
+
+    #[test]
+    fn hello_transmits_configured_cluster_display_name() {
+        let config: AgentConfig = serde_yaml::from_str(
+            r#"
+apiVersion: okoscope.io/v1alpha1
+kind: AgentConfiguration
+server:
+  endpoint: https://grpc.example.com:443
+identity:
+  nodeName: worker-1
+  clusterName: Production Europe
+scope:
+  workloads: []
+observation:
+  processExec: true
+"#,
+        )
+        .unwrap();
+        let uid = Uuid::new_v4().to_string();
+        let greeting = hello(
+            &config,
+            &Counters::default().snapshot(),
+            false,
+            false,
+            uid.clone(),
+        );
+        assert_eq!(greeting.cluster_name, "Production Europe");
+        assert_eq!(greeting.cluster_uid, uid);
+    }
+
+    fn kernel_release() -> String {
+        std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .map_or_else(|_| "unknown".into(), |value| value.trim().into())
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use std::{
@@ -11,6 +84,7 @@ mod linux {
         time::{Duration, Instant},
     };
 
+    use super::handshake::hello;
     use agent::{
         attribution::{AttributionCache, resolve_and_count, run_watches},
         cgroup, cluster_identity,
@@ -32,7 +106,6 @@ mod linux {
         EVENT_SCHEMA_VERSION, EventPayload, GenerationCorrelation, ProcessExec, ProcessExit,
         ProcessIdentity, RuntimeEvent, SyscallEvent, UnresolvedGenerationReason,
     };
-    use protocol::v1::AgentHello;
     use tracing_subscriber::EnvFilter;
     use uuid::Uuid;
 
@@ -590,37 +663,6 @@ mod linux {
         })
     }
 
-    fn hello(
-        config: &AgentConfig,
-        snapshot: &agent::counters::CounterSnapshot,
-        process_exit_ready: bool,
-        container_lifecycle_ready: bool,
-        cluster_uid: String,
-    ) -> AgentHello {
-        let mut capabilities = config.observation.capabilities();
-        if process_exit_ready {
-            capabilities.push(protocol::PROCESS_EXIT_CAPABILITY.into());
-        }
-        if container_lifecycle_ready {
-            capabilities.push(protocol::CONTAINER_LIFECYCLE_CAPABILITY.into());
-        }
-        capabilities.push(protocol::KUBERNETES_RELEASE_DISCOVERY_CAPABILITY.into());
-        capabilities.push(protocol::ONBOARDING_STATUS_CAPABILITY.into());
-        AgentHello {
-            agent_version: env!("CARGO_PKG_VERSION").into(),
-            node_name: config.identity.node_name.clone(),
-            architecture: std::env::consts::ARCH.into(),
-            kernel_release: kernel_release(),
-            capabilities,
-            drop_counters: Some((*snapshot).into()),
-            cluster_uid,
-        }
-    }
-
-    fn kernel_release() -> String {
-        std::fs::read_to_string("/proc/sys/kernel/osrelease")
-            .map_or_else(|_| "unknown".into(), |value| value.trim().into())
-    }
     fn command(bytes: &[u8; 16]) -> String {
         String::from_utf8_lossy(
             &bytes[..bytes

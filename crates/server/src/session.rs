@@ -166,12 +166,14 @@ async fn resolve_session_scope(
     if canonical_uid != hello.cluster_uid {
         return Err(Status::invalid_argument("cluster_uid must be canonical"));
     }
+    let cluster_name = cluster_display_name(&hello.cluster_name)?;
     let resolved_cluster_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO clusters(id,organization_id,external_id,name) VALUES($1,$2,$3,$3) ON CONFLICT(organization_id,external_id) DO UPDATE SET external_id=EXCLUDED.external_id RETURNING id",
+        "INSERT INTO clusters(id,organization_id,external_id,name) VALUES($1,$2,$3,COALESCE($4,$3)) ON CONFLICT(organization_id,external_id) DO UPDATE SET name=COALESCE($4,clusters.name) RETURNING id",
     )
     .bind(Uuid::new_v4())
     .bind(application.organization_id)
     .bind(canonical_uid)
+    .bind(cluster_name)
     .fetch_one(pool)
     .await
     .map_err(internal)?;
@@ -179,6 +181,18 @@ async fn resolve_session_scope(
         organization_id: application.organization_id,
         cluster_id: resolved_cluster_id,
     })
+}
+
+fn cluster_display_name(value: &str) -> Result<Option<&str>, Status> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.trim() != value || value.chars().count() > 64 || value.chars().any(char::is_control) {
+        return Err(Status::invalid_argument(
+            "cluster_name must be a trimmed name of 1 to 64 characters",
+        ));
+    }
+    Ok(Some(value))
 }
 
 fn bearer(metadata: &MetadataMap) -> Result<String, Status> {
@@ -307,6 +321,30 @@ mod tests {
             capabilities: vec!["process.exec/v1".into()],
             drop_counters: None,
             cluster_uid: Uuid::new_v4().to_string(),
+            cluster_name: "aliens".into(),
+        }
+    }
+
+    #[test]
+    fn validates_cluster_display_names_with_legacy_empty_support() {
+        assert_eq!(cluster_display_name("").unwrap(), None);
+        assert_eq!(
+            cluster_display_name("production").unwrap(),
+            Some("production")
+        );
+        assert!(cluster_display_name(&"я".repeat(64)).is_ok());
+        for invalid in [
+            " ",
+            " production",
+            "production ",
+            "a\0b",
+            "a\nb",
+            &"я".repeat(65),
+        ] {
+            assert_eq!(
+                cluster_display_name(invalid).unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
         }
     }
 
@@ -354,6 +392,85 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::database::MIGRATOR")]
     #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+    async fn cluster_name_refresh_preserves_identity_and_tenant_isolation(pool: PgPool) {
+        let first = bootstrap(&pool, &config("cluster-name-first"))
+            .await
+            .unwrap();
+        let second = bootstrap(&pool, &config("cluster-name-second"))
+            .await
+            .unwrap();
+        let application = ApplicationCredentialScope {
+            credential_id: Uuid::new_v4(),
+            organization_id: first.organization_id,
+            project_id: first.project_id,
+            application_id: first.application_id,
+        };
+        let other_application = ApplicationCredentialScope {
+            organization_id: second.organization_id,
+            project_id: second.project_id,
+            application_id: second.application_id,
+            ..application
+        };
+        let mut greeting = hello("worker", "x86_64", "6.8");
+        greeting.cluster_name.clear();
+        let original = resolve_session_scope(&pool, application, &greeting)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored_cluster_name(&pool, original.cluster_id).await,
+            greeting.cluster_uid
+        );
+        greeting.cluster_name = "other tenant".into();
+        let other = resolve_session_scope(&pool, other_application, &greeting)
+            .await
+            .unwrap();
+        assert_ne!(original.cluster_id, other.cluster_id);
+        for name in ["production", "renamed production", ""] {
+            greeting.cluster_name = name.into();
+            assert_eq!(
+                resolve_session_scope(&pool, application, &greeting)
+                    .await
+                    .unwrap(),
+                original
+            );
+            let expected = if name.is_empty() {
+                "renamed production"
+            } else {
+                name
+            };
+            assert_eq!(
+                stored_cluster_name(&pool, original.cluster_id).await,
+                expected
+            );
+            assert_eq!(
+                stored_cluster_name(&pool, other.cluster_id).await,
+                "other tenant"
+            );
+        }
+        greeting.cluster_name = " invalid ".into();
+        assert_eq!(
+            resolve_session_scope(&pool, application, &greeting)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+        assert_eq!(
+            stored_cluster_name(&pool, original.cluster_id).await,
+            "renamed production"
+        );
+    }
+
+    async fn stored_cluster_name(pool: &PgPool, id: Uuid) -> String {
+        sqlx::query_scalar("SELECT name FROM clusters WHERE id=$1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test(migrator = "crate::database::MIGRATOR")]
+    #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
     async fn application_scope_discovers_and_reuses_tenant_cluster(pool: PgPool) {
         let first = bootstrap(&pool, &config("session-scope-first"))
             .await
@@ -387,6 +504,10 @@ mod tests {
         let first_scope = first_scope.unwrap();
         let repeated_scope = repeated_scope.unwrap();
         assert_eq!(first_scope, repeated_scope);
+        assert_eq!(
+            stored_cluster_name(&pool, first_scope.cluster_id).await,
+            "aliens"
+        );
 
         let (first_registration, same_registration) = tokio::join!(
             register(&pool, first_scope, &first_hello),

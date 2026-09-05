@@ -81,6 +81,15 @@ workloads:
       key: payment-api
 ```
 
+`identity.clusterName` is the readable name chosen in onboarding, displayed for
+Application Worker nodes. Agents send it when connecting; reconnecting updates
+the name without changing cluster identity, which remains the Kubernetes cluster
+UID within the Organization. Use the same trimmed name (1–64 characters, without
+control characters) for all agents in a cluster. Upgrade both server and agents
+to versions supporting the cluster name in the handshake to replace historical
+UUID display names automatically. Older agents that omit the name retain the
+existing name; a newly discovered cluster from an older agent uses its UID.
+
 Install and verify:
 
 ```bash
