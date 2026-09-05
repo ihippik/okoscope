@@ -40,6 +40,14 @@ The chart supplies `nginx.ingress.kubernetes.io/backend-protocol: GRPC` for the 
 
 The Web container receives `OKOSCOPE_API_BASE_URL=/` and `OKOSCOPE_API_UPSTREAM=http://<release>-server:8080` from the chart, and proxies exact `/api` and `/api/*` requests to that internal Server Service while preserving their URI. Web ingress and `service/okoscope-web` port-forwarding therefore serve the UI and browser API together; the Server HTTP Service does not need separate public exposure.
 
+The chart also trusts the exact browser Origin derived from `ingress.web.host`:
+`https://<host>` when `ingress.web.tlsSecret` is configured, otherwise
+`http://<host>`. No domain is hardcoded. If another reverse proxy or a local UI
+address sends browser requests to the Server, add only those exact origins under
+`server.corsOrigins`; values must contain the scheme and host, with an optional
+port, but no path or wildcard. The chart safely serializes the derived and explicit
+origins into `OKOSCOPE_CORS_ORIGINS`.
+
 For externally managed internal keys, the referenced Secret must contain `admin-credential`, `webhook-encryption-key`, and `identity-token-key`, or the alternative key names configured below `internalSecret`. Leaving `internalSecret.existingSecret` empty lets Helm generate them once with `lookup`; the Secret has a keep policy and values are reused on upgrades. Offline GitOps rendering must use an externally managed Secret because `lookup` cannot recover live state.
 
 Set `imagePullSecrets` for a private registry. Resource requests and limits live under `server.resources`, `web.resources`, and, when enabled, `okoscope-agent.resources`. Notifications are disabled by default and are enabled with `notifications.enabled=true`; the webhook encryption key must remain stable and separately recoverable.

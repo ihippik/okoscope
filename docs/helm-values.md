@@ -39,6 +39,7 @@ Each chart also accepts `imagePullSecrets: []`, a list such as `[{name: registry
 | `web.resources.limits` | `{cpu: 250m, memory: 128Mi}` | Web Pod resource limits. |
 | `server.registrationEnabled` | `false` | Enable public signup; each signup creates an Organization and owner. Private installations use `/setup` for the first owner. |
 | `server.sessionLifetimeSeconds` | `43200` | Session lifetime in seconds; minimum `300`. |
+| `server.corsOrigins` | `[]` | Additional exact browser origins for external proxies or local access, for example `https://admin.example.com` or `http://127.0.0.1:3000`. Paths, wildcards, query strings, fragments, and commas are rejected. The Web ingress origin is added automatically. |
 | `podDisruptionBudget.enabled` | `true` | Create separate Server and Web disruption budgets. |
 | `podDisruptionBudget.minAvailable` | `1` | Minimum available Pods for each budget, minimum `0`. With one replica, `1` prevents voluntary eviction of that Pod. |
 | `okoscope-agent.enabled` | `false` | Install the optional local agent dependency. Put all its settings below `okoscope-agent`; see the agent reference below. |
@@ -63,18 +64,18 @@ The following settings apply independently below **both** `ingress.web` and `ing
 
 | Suffix | Default | Meaning / constraints |
 | --- | --- | --- |
-| `enabled` | `false` | Create the route. Requires nonempty `host` and `tlsSecret`. |
+| `enabled` | `false` | Create the route. Requires a nonempty `host`. The gRPC route also requires `tlsSecret`. |
 | `className` | `""` | Empty for the cluster default, or `nginx` / `traefik`. |
 | `host` | `""` | Public hostname; use separate Web/API and gRPC hosts. |
 | `annotations` | `{}` | Additional Ingress annotations with string values. The chart supplies controller-specific gRPC configuration. |
-| `tlsSecret` | `""` | TLS Secret name, pre-created unless cert-manager is enabled. |
+| `tlsSecret` | `""` | TLS Secret name, pre-created unless cert-manager is enabled. For Web ingress, empty renders HTTP and nonempty renders HTTPS; gRPC ingress requires TLS. |
 
 | Value | Default | Meaning |
 | --- | --- | --- |
 | `certManager.enabled` | `false` | Create Certificate resources for enabled routes; requires cert-manager installed. |
 | `certManager.clusterIssuer` | `""` | Required existing ClusterIssuer name when certificate management is enabled. |
 
-TLS terminates at ingress; chart-managed server traffic inside the cluster uses plaintext. Web proxies browser API requests to the internal Server Service.
+TLS terminates at ingress; chart-managed server traffic inside the cluster uses plaintext. Web proxies browser API requests to the internal Server Service. The chart automatically adds the exact Web ingress origin to `OKOSCOPE_CORS_ORIGINS`, using `https://` when `ingress.web.tlsSecret` is set and `http://` otherwise. It appends `server.corsOrigins` as a comma-separated, YAML-quoted value and removes exact duplicates.
 
 ### Agent installation wizard
 

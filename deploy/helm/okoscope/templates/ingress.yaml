@@ -10,7 +10,9 @@ metadata:
   {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.web.className }}
+  {{- if .Values.ingress.web.tlsSecret }}
   tls: [{hosts: [{{ .Values.ingress.web.host | quote }}], secretName: {{ .Values.ingress.web.tlsSecret }} }]
+  {{- end }}
   rules:
     - host: {{ .Values.ingress.web.host | quote }}
       http:

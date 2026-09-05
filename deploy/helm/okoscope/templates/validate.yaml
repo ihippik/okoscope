@@ -2,5 +2,9 @@
 {{- if not .Values.database.urlKey }}{{ fail "database.urlKey is required" }}{{ end -}}
 {{- if and .Values.certManager.enabled (not .Values.certManager.clusterIssuer) }}{{ fail "certManager.clusterIssuer is required when certManager.enabled=true" }}{{ end -}}
 {{- range $name, $route := dict "ingress.web" .Values.ingress.web "ingress.grpc" .Values.ingress.grpc -}}
-{{- if and $route.enabled (or (not $route.host) (not $route.tlsSecret)) }}{{ fail (printf "%s.host and tlsSecret are required when enabled" $name) }}{{ end -}}
+{{- if and $route.enabled (not $route.host) }}{{ fail (printf "%s.host is required when enabled" $name) }}{{ end -}}
+{{- if and $.Values.certManager.enabled $route.enabled (not $route.tlsSecret) }}{{ fail (printf "%s.tlsSecret is required when certManager.enabled=true" $name) }}{{ end -}}
 {{- end -}}
+{{- if and .Values.ingress.grpc.enabled (not .Values.ingress.grpc.tlsSecret) }}{{ fail "ingress.grpc.tlsSecret is required when enabled" }}{{ end -}}
+{{- $corsOrigins := include "okoscope.corsOrigins" . -}}
+{{- if and $corsOrigins (gt (len (splitList "," $corsOrigins)) 32) }}{{ fail "at most 32 total CORS origins are allowed" }}{{ end -}}

@@ -11,6 +11,20 @@ helm lint "$root/deploy/helm/okoscope-agent" -f "$root/deploy/helm/fixtures/agen
 
 helm template okoscope "$root/deploy/helm/okoscope" > "$work/self-hosted.yaml"
 helm template okoscope "$root/deploy/helm/okoscope" -f "$root/deploy/helm/fixtures/self-hosted-ingress.yaml" > "$work/self-hosted-ingress.yaml"
+helm template tls-origin "$root/deploy/helm/okoscope" \
+  -f "$root/deploy/helm/fixtures/self-hosted-ingress.yaml" \
+  --set ingress.web.host=observability.acme.test > "$work/self-hosted-tls-origin.yaml"
+helm template http-origin "$root/deploy/helm/okoscope" \
+  --set ingress.web.enabled=true \
+  --set ingress.web.className=nginx \
+  --set ingress.web.host=console.customer.example > "$work/self-hosted-http.yaml"
+helm template extra-origins "$root/deploy/helm/okoscope" \
+  -f "$root/deploy/helm/fixtures/self-hosted-ingress.yaml" \
+  --set-json 'server.corsOrigins=["http://127.0.0.1:3000","https://admin.customer.example"]' \
+  > "$work/self-hosted-extra-origins.yaml"
+helm template explicit-origin "$root/deploy/helm/okoscope" \
+  --set-json 'server.corsOrigins=["http://127.0.0.1:8080"]' \
+  > "$work/self-hosted-explicit-origin.yaml"
 helm template okoscope "$root/deploy/helm/okoscope" -f "$root/deploy/helm/fixtures/self-hosted-agent.yaml" > "$work/self-hosted-agent.yaml"
 helm template agent "$root/deploy/helm/okoscope-agent" -f "$root/deploy/helm/fixtures/agent-hosted.yaml" > "$work/agent.yaml"
 helm template agent "$root/deploy/helm/okoscope-agent" -f "$root/deploy/helm/fixtures/agent-labels.yaml" > "$work/agent-labels.yaml"
@@ -28,6 +42,15 @@ if grep -Eq '^kind: (StatefulSet|PersistentVolumeClaim)$|name: postgres' "$work/
 fi
 grep -q 'helm.sh/hook: pre-install,pre-upgrade' "$work/self-hosted.yaml"
 grep -q 'name: production-database' "$work/self-hosted-ingress.yaml"
+grep -q 'OKOSCOPE_CORS_ORIGINS: "https://okoscope.example.com"' "$work/self-hosted-ingress.yaml"
+grep -q 'OKOSCOPE_CORS_ORIGINS: "https://observability.acme.test"' "$work/self-hosted-tls-origin.yaml"
+grep -q 'OKOSCOPE_CORS_ORIGINS: "http://console.customer.example"' "$work/self-hosted-http.yaml"
+grep -q 'OKOSCOPE_CORS_ORIGINS: "https://okoscope.example.com,http://127.0.0.1:3000,https://admin.customer.example"' "$work/self-hosted-extra-origins.yaml"
+grep -q 'OKOSCOPE_CORS_ORIGINS: "http://127.0.0.1:8080"' "$work/self-hosted-explicit-origin.yaml"
+if grep -q '^  tls:' "$work/self-hosted-http.yaml"; then
+  echo 'HTTP Web ingress must not render TLS configuration' >&2
+  exit 1
+fi
 grep -q 'nginx.ingress.kubernetes.io/backend-protocol: GRPC' "$work/self-hosted-ingress.yaml"
 helm template okoscope "$root/deploy/helm/okoscope" -f "$root/deploy/helm/fixtures/self-hosted-ingress.yaml" \
   --set ingress.grpc.className=traefik > "$work/self-hosted-traefik.yaml"
@@ -39,6 +62,22 @@ grep -q 'name: worker-observability' "$work/agent-labels.yaml"
 
 if helm template rejected "$root/deploy/helm/okoscope" --set database.url=postgresql://unsafe >/dev/null 2>&1; then
   echo 'database.url must be rejected by the values schema' >&2
+  exit 1
+fi
+if helm template rejected "$root/deploy/helm/okoscope" \
+  --set-json 'server.corsOrigins=["https://first.example,https://second.example"]' >/dev/null 2>&1; then
+  echo 'CORS origins containing commas must be rejected by the values schema' >&2
+  exit 1
+fi
+if helm template rejected "$root/deploy/helm/okoscope" \
+  --set ingress.web.enabled=true \
+  --set-json 'ingress.web.host="first.example,https://second.example"' >/dev/null 2>&1; then
+  echo 'Web ingress host must not inject additional comma-separated origins' >&2
+  exit 1
+fi
+if helm template rejected "$root/deploy/helm/okoscope" \
+  --set ingress.grpc.enabled=true --set ingress.grpc.host=grpc.customer.example >/dev/null 2>&1; then
+  echo 'production gRPC ingress without TLS must be rejected' >&2
   exit 1
 fi
 helm template okoscope "$root/deploy/helm/okoscope" -f "$root/deploy/helm/fixtures/self-hosted-ingress.yaml" \

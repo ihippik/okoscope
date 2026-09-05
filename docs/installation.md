@@ -111,6 +111,11 @@ When agents must trust a private CA, set `agentInstallation.tlsMode=custom_ca`, 
 
 Open `http://127.0.0.1:8080`. The pre-install/pre-upgrade migration Job must succeed before application rollout. It reads `database.existingSecret`/`database.urlKey`; there is deliberately no `database.url` value.
 The Web pod proxies same-origin `/api` requests to the chart's internal Server Service, so this single Web port-forward supports both the UI and API without exposing the Server Service.
+When Web ingress is enabled, the chart automatically trusts its exact browser
+Origin, derived from `ingress.web.host` and whether `ingress.web.tlsSecret` is set.
+For browser entry points not represented by that ingress (for example an external
+reverse proxy or a separate local UI), list each exact `http://` or `https://`
+origin under `server.corsOrigins`; do not include paths or wildcards.
 
 Ordinary registration is disabled by default, including when Web ingress is enabled. For a public service where users create their own Organizations, explicitly set `server.registrationEnabled=true` in Helm values (or `--set server.registrationEnabled=true`); Web ingress supports this mode, and `/setup` is not required. Each signup creates an owner of a new Organization, not a global administrator or a membership in an existing Organization.
 

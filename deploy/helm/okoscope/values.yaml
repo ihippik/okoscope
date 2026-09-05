@@ -6,6 +6,7 @@ server:
     limits: {cpu: "1", memory: 512Mi}
   registrationEnabled: false
   sessionLifetimeSeconds: 43200
+  corsOrigins: []
 web:
   replicas: 1
   image: {repository: ghcr.io/ihippik/okoscope-web, tag: "0000000000000000000000000000000000000000", digest: "", pullPolicy: IfNotPresent}

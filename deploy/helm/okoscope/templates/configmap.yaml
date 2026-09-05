@@ -9,6 +9,10 @@ data:
   OKOSCOPE_DEVELOPMENT_PLAINTEXT: "true"
   OKOSCOPE_REGISTRATION_ENABLED: {{ .Values.server.registrationEnabled | quote }}
   OKOSCOPE_SESSION_LIFETIME_SECONDS: {{ .Values.server.sessionLifetimeSeconds | quote }}
+  {{- $corsOrigins := include "okoscope.corsOrigins" . }}
+  {{- if $corsOrigins }}
+  OKOSCOPE_CORS_ORIGINS: {{ $corsOrigins | quote }}
+  {{- end }}
   {{- if .Values.agentInstallation.publicGrpcEndpoint }}
   OKOSCOPE_AGENT_CHART_REFERENCE: {{ .Values.agentInstallation.chartReference | quote }}
   OKOSCOPE_AGENT_CHART_VERSION: {{ .Values.agentInstallation.chartVersion | quote }}
