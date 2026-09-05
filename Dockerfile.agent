@@ -44,7 +44,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && make -C crates/agent-ebpf-core CLANG=clang TARGET_ARCH="$CORE_ARCH" \
     && cp crates/agent-ebpf-core/build/process-exit.bpf.o /tmp/process-exit.bpf.o
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS runtime-base
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates \
+    && test -s /etc/ssl/certs/ca-certificates.crt \
+    && openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt -out /dev/null \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM runtime-base
 COPY --from=userspace /tmp/okoscope-agent /usr/local/bin/okoscope-agent
 COPY --from=ebpf /tmp/agent-ebpf /opt/okoscope/agent-ebpf
 COPY --from=ebpf /tmp/process-exit.bpf.o /opt/okoscope/process-exit.bpf.o

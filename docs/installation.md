@@ -15,10 +15,32 @@ a database URL or Application credential in a Helm values file or `--set` argume
 See the [Helm values reference](helm-values.md) for all chart settings, defaults, and
 required fields.
 
-## Connect Kubernetes to Okoscope
+## Okoscope Cloud
+
+Use [Okoscope Cloud onboarding](https://okoscope.com/onboarding) to select or create
+your Project and Application, then generate the Secret and agent installation
+commands for your Kubernetes cluster. Cloud operates the server and database;
+you install only the agent.
+
+The Cloud agent endpoint is `https://grpc.okoscope.com:443`. Use the chart version
+shown by onboarding and the system certificate trust store; no custom CA Secret
+is required. In the agent values example below, set `server.endpoint` to this
+Cloud endpoint.
+
+## Self-hosted
+
+If you operate your own Okoscope server, follow [Self-host Okoscope](#self-host-okoscope)
+below first. To connect to an existing installation, open that installation's
+onboarding page and use its public gRPC endpoint and chart version. The Cloud
+endpoint must not be used for an Application created on your own server. Configure
+a custom CA Secret only if your installation uses a private CA.
+
+## Connect Kubernetes: shared agent steps
 
 Create an Application in Okoscope, copy its one-time `oko_app_v1_...` credential,
-then follow the link to the authenticated onboarding wizard. The wizard is the
+then follow the link to the authenticated onboarding wizard. If the Application's
+Worker nodes section has no observations, its **Connect agent** button also opens
+the wizard, starting with project selection. The wizard is the
 authoritative source for the agent release namespace, Secret name, Secret key, and
 the exact safe `kubectl` command. Use those generated values verbatim. For example,
 if onboarding selects `okoscope-system`, `okoscope-application-credentials`, and
@@ -76,6 +98,13 @@ For a private CA, create an additional Secret and configure `server.caSecret.nam
 Use `labels` instead of `name` for a bounded label selector. Do not set both. Multiple mappings may use different Secret names and keys. The chart grants read-only access to Pods, Deployments, ReplicaSets, and the `kube-system` Namespace, and requires Linux eBPF support described in [platform support](platform-support.md).
 
 If the DaemonSet is not ready, inspect `kubectl logs -n okoscope-system daemonset/okoscope-agent-okoscope-agent`. Common causes are an unreachable TLS endpoint, an incorrect CA, unsupported kernel/BTF support, or a missing Secret key.
+
+The agent runtime image includes Debian's `ca-certificates` package for system
+TLS trust. Its build checks that the CA bundle is nonempty and can be parsed by
+OpenSSL. If agent logs report `no native certs found`, the running image has no
+usable system CA bundle: upgrade to a chart release that pins a corrected agent
+image. A Pod can remain `Running` while its Cloud connection is failing, so also
+check the agent logs and Application Worker nodes observations after rollout.
 
 ## Self-host Okoscope
 
