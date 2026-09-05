@@ -88,6 +88,18 @@ The `deploy/kubernetes` Kustomize roots and bundled PostgreSQL manifests are int
 
 Charts are published as `oci://ghcr.io/ihippik/charts/okoscope` and `oci://ghcr.io/ihippik/charts/okoscope-agent` with shared semantic versions. A release supplies verified immutable server, agent, and Web inputs and records the server's required migration. Publication must wait for chart policy tests and component availability.
 
+Chart publication is an explicit operator action; creating a Git tag is not required
+and does not trigger it. After CI has published verified server, agent, and Web images,
+run the `release-helm-charts` GitHub Actions workflow with a semantic `version` (without
+the `v` prefix) and the three `sha256:...` image digests. The workflow publishes both
+OCI charts and stamps the same agent chart version into the server chart's onboarding
+metadata. Only after publication succeeds should an operator deploy that server chart
+version, or configure an existing server with matching values for
+`OKOSCOPE_AGENT_CHART_REFERENCE`, `OKOSCOPE_AGENT_CHART_VERSION`,
+`OKOSCOPE_AGENT_RECOMMENDED_VERSION`, `OKOSCOPE_AGENT_MINIMUM_VERSION`, and
+`OKOSCOPE_PUBLIC_GRPC_ENDPOINT`. The endpoint must be externally reachable with TLS;
+otherwise the UI cannot offer a usable agent installation command.
+
 Repository release-candidate verification uses the `aliens` context:
 
 ```bash

@@ -37,7 +37,10 @@ jobs:
           INPUT_WEB: ${{ inputs.web_image }}
         run: |
           version=$INPUT_VERSION
-          test -n "$version"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must be a semantic version without a leading v" >&2
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           test -n "$INPUT_SERVER" && test -n "$INPUT_AGENT" && test -n "$INPUT_WEB"
           echo "server=$INPUT_SERVER" >> "$GITHUB_OUTPUT"
@@ -71,7 +74,10 @@ jobs:
           sed -i "s/^version: 0.1.0/version: $VERSION/" deploy/helm/okoscope-agent/Chart.yaml
           sed -i "s/version: 0.1.0/version: $VERSION/" deploy/helm/okoscope/Chart.yaml
           sed -i "s/0.1.0/$VERSION/g" deploy/helm/release-metadata.yaml
+          sed -i "s/chartVersion: \"0.1.0\"/chartVersion: \"$VERSION\"/" deploy/helm/okoscope/values.yaml
+          sed -i "s/recommendedAgentVersion: \"0.1.0\"/recommendedAgentVersion: \"$VERSION\"/" deploy/helm/okoscope/values.yaml
           deploy/helm/test-charts.sh
+          deploy/helm/test-onboarding-contract.sh
           mkdir -p dist
           helm package deploy/helm/okoscope-agent --version "$VERSION" --app-version "$VERSION" --destination dist
           helm dependency update deploy/helm/okoscope --skip-refresh
@@ -79,7 +85,11 @@ jobs:
       - name: Publish both OCI packages atomically after verification
         env:
           HELM_REGISTRY_CONFIG: ${{ runner.temp }}/helm-registry.json
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io --username '${{ github.actor }}' --password-stdin
-          helm push dist/okoscope-agent-*.tgz oci://ghcr.io/ihippik/charts
-          helm push dist/okoscope-*.tgz oci://ghcr.io/ihippik/charts
+          if ! helm push "dist/okoscope-agent-$VERSION.tgz" oci://ghcr.io/ihippik/charts; then
+            echo "agent chart publication failed; if GHCR rejected the existing version after a partial release, publish a new patch version" >&2
+            exit 1
+          fi
+          helm push "dist/okoscope-$VERSION.tgz" oci://ghcr.io/ihippik/charts

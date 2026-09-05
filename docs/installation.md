@@ -5,19 +5,43 @@ Okoscope publishes two charts with the same semantic release version:
 - `oci://ghcr.io/ihippik/charts/okoscope-agent` connects a cluster to an existing hosted or self-hosted server.
 - `oci://ghcr.io/ihippik/charts/okoscope` installs server, Web, migrations, and optionally the local agent. It never installs PostgreSQL.
 
-Production commands should always include `--version <OKOSCOPE_VERSION>`. Component images are pinned by the chart release. Never put a database URL or Application credential in a Helm values file or `--set` argument. See the [Helm values reference](helm-values.md) for all chart settings, defaults, and required fields.
+Production commands should always include `--version <OKOSCOPE_VERSION>`. This is a
+placeholder, not a predefined shell variable: replace it with the exact published
+semantic version shown by the authenticated Okoscope onboarding page, for example
+`--version 0.2.0`. If onboarding reports `installation_metadata_unavailable`, the
+Okoscope operator has not yet published/configured an installable agent release;
+do not guess a version. Component images are pinned by the chart release. Never put
+a database URL or Application credential in a Helm values file or `--set` argument.
+See the [Helm values reference](helm-values.md) for all chart settings, defaults, and
+required fields.
 
 ## Connect Kubernetes to Okoscope
 
-Create an Application in Okoscope and copy its one-time `oko_app_v1_...` credential into a Kubernetes Secret without writing it to disk:
+Create an Application in Okoscope, copy its one-time `oko_app_v1_...` credential,
+then follow the link to the authenticated onboarding wizard. The wizard is the
+authoritative source for the agent release namespace, Secret name, Secret key, and
+the exact safe `kubectl` command. Use those generated values verbatim. For example,
+if onboarding selects `okoscope-system`, `okoscope-application-credentials`, and
+`payment-api`, create the Secret without writing the credential to disk:
 
 ```bash
 kubectl create namespace okoscope-system
-read -rsp 'Application credential: ' OKOSCOPE_APPLICATION_TOKEN; printf '\n'
+printf 'Application credential: ' >&2
+IFS= read -rs OKOSCOPE_APPLICATION_TOKEN
+printf '\n' >&2
 kubectl -n okoscope-system create secret generic okoscope-application-credentials \
   --from-literal=payment-api="$OKOSCOPE_APPLICATION_TOKEN"
 unset OKOSCOPE_APPLICATION_TOKEN
 ```
+
+The separate `printf` prompt and `read -rs` form works in both Bash and zsh (the
+default interactive shell on current macOS). Do not replace it with Bash's
+`read -p`: in zsh, `-p` reads from a coprocess instead of displaying a prompt.
+PowerShell uses different variable and secure-input syntax, so run this block
+from Bash/zsh (including WSL or Git Bash). The Secret must be installed in the
+agent release namespace, which can differ from the observed workload namespace.
+Its name and data key must match the values shown by onboarding and referenced by
+`workloads[].credentialSecret.name` and `workloads[].credentialSecret.key`.
 
 Create `agent-values.yaml` containing only non-secret configuration:
 
@@ -61,7 +85,9 @@ Create the database Secret safely:
 
 ```bash
 kubectl create namespace okoscope-system
-read -rsp 'PostgreSQL connection URL: ' OKOSCOPE_DATABASE_URL; printf '\n'
+printf 'PostgreSQL connection URL: ' >&2
+IFS= read -rs OKOSCOPE_DATABASE_URL
+printf '\n' >&2
 kubectl -n okoscope-system create secret generic okoscope-database \
   --from-literal=database-url="$OKOSCOPE_DATABASE_URL"
 unset OKOSCOPE_DATABASE_URL
