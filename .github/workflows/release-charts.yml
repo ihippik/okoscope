@@ -76,6 +76,7 @@ jobs:
           sed -i "s/0.1.0/$VERSION/g" deploy/helm/release-metadata.yaml
           sed -i "s/chartVersion: \"0.1.0\"/chartVersion: \"$VERSION\"/" deploy/helm/okoscope/values.yaml
           sed -i "s/recommendedAgentVersion: \"0.1.0\"/recommendedAgentVersion: \"$VERSION\"/" deploy/helm/okoscope/values.yaml
+          helm dependency update deploy/helm/okoscope --skip-refresh
           deploy/helm/test-charts.sh
           deploy/helm/test-onboarding-contract.sh
           mkdir -p dist
