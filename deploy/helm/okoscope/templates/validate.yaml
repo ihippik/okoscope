@@ -1,6 +1,5 @@
 {{- if not .Values.database.existingSecret }}{{ fail "database.existingSecret is required" }}{{ end -}}
 {{- if not .Values.database.urlKey }}{{ fail "database.urlKey is required" }}{{ end -}}
-{{- if and .Values.server.registrationEnabled .Values.ingress.web.enabled }}{{ fail "server.registrationEnabled must be false before public Web ingress is enabled" }}{{ end -}}
 {{- if and .Values.certManager.enabled (not .Values.certManager.clusterIssuer) }}{{ fail "certManager.clusterIssuer is required when certManager.enabled=true" }}{{ end -}}
 {{- range $name, $route := dict "ingress.web" .Values.ingress.web "ingress.grpc" .Values.ingress.grpc -}}
 {{- if and $route.enabled (or (not $route.host) (not $route.tlsSecret)) }}{{ fail (printf "%s.host and tlsSecret are required when enabled" $name) }}{{ end -}}

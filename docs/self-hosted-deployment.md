@@ -4,6 +4,10 @@ Start with the [installation quick starts](installation.md). Helm is the support
 
 ## Production values
 
+See the [complete Helm values reference](helm-values.md) for both charts, defaults, required fields, and validation limits.
+
+Registration defaults to disabled. Keep `server.registrationEnabled: false` for a private installation and use `/setup` for its first owner. To offer public signup, set `server.registrationEnabled: true`; this is supported with Web ingress enabled. Each signup creates a new Organization and its owner. It does not grant global administration or join an existing Organization.
+
 Use separate TLS hostnames for HTTP and gRPC. The first release gates examples for ingress-nginx and Traefik; other controllers require operator verification.
 
 ```yaml
@@ -53,6 +57,18 @@ helm upgrade okoscope oci://ghcr.io/ihippik/charts/okoscope \
   -f production-values.yaml \
   --wait --timeout 10m
 ```
+
+For the existing `aliens` Helm release (`okoscope` in namespace `okoscope`), the repository Makefile provides:
+
+```bash
+make deploy-preview VERSION=<NEW_OKOSCOPE_VERSION>
+make deploy VERSION=<NEW_OKOSCOPE_VERSION>
+make deploy-status
+```
+
+`VERSION` is required and must identify a published chart. These commands upgrade an existing release; they do not install a new one or build/push local sources. They switch to `aliens` by default. Set `KUBE_NAMESPACE` and `HELM_RELEASE` for a different release in that context. `VALUES=production-values.yaml` optionally supplies overrides. Helm must support `--reset-then-reuse-values`: new chart defaults are merged with the previous release's explicit values and then the supplied overrides. Explicit image tags/digests in saved values therefore remain pinned; update those in `VALUES` when promoting new images. Preview uses a server-side dry run with Secret manifests hidden; migration hooks execute only on the real upgrade.
+
+The old Makefile Kustomize targets (`deploy-render`, `deploy-diff`, and `migrate`) have been removed. `make deploy` no longer checks for the legacy `okoscope-secrets` Secret or applies legacy manifests. Migration hooks are part of the Helm upgrade. `make deployment-test` remains available for the legacy manifest policy tests, independently of Helm deployment.
 
 The idempotent migration hook runs before install and upgrade with bounded retry and deadline. A failure stops rollout. Inspect it with `kubectl get jobs,pods -n okoscope-system -l app.kubernetes.io/component=migration` and its Pod logs, correct database connectivity/permissions, then repeat the same `helm upgrade`. Never edit migration rows or attempt to reverse a schema migration.
 

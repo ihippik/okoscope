@@ -1,8 +1,17 @@
 KUBE_CONTEXT ?= aliens
 KUBE_NAMESPACE ?= okoscope
-KUSTOMIZE_DIR ?= deploy/kubernetes/common
+HELM_RELEASE ?= okoscope
+HELM_CHART ?= oci://ghcr.io/ihippik/charts/okoscope
+DEPLOY_TIMEOUT ?= 10m
+VERSION ?=
+VALUES ?=
 
-.PHONY: build build-ebpf check test proto-check deployment-test deploy-render deploy-diff migrate deploy deploy-status
+HELM_UPGRADE = helm upgrade "$(HELM_RELEASE)" "$(HELM_CHART)" \
+	--namespace "$(KUBE_NAMESPACE)" --version "$(VERSION)" \
+	--reset-then-reuse-values $(if $(VALUES),--values "$(VALUES)") \
+	--wait --timeout "$(DEPLOY_TIMEOUT)"
+
+.PHONY: build build-ebpf check test proto-check deployment-test deploy-check deploy-preview deploy deploy-status
 
 build:
 	cargo build --workspace --exclude agent-ebpf
@@ -25,47 +34,20 @@ deployment-test:
 	deploy/tests/manifest-policy.sh
 	deploy/tests/secret-preflight.sh
 
-deploy-render:
-	kubectl kustomize $(KUSTOMIZE_DIR)
+# Existing Helm releases only. Migrations run through the chart's upgrade hook.
+deploy-check:
+	@test -n "$(VERSION)" || { echo 'Usage: make deploy VERSION=<published-chart-version> [VALUES=path/to/values.yaml]' >&2; exit 1; }
+	$(if $(VALUES),@test -f "$(VALUES)" || { echo 'VALUES file does not exist' >&2; exit 1; },@true)
 
-deploy-diff: deployment-test
-	kubectx $(KUBE_CONTEXT)
-	deploy/scripts/preflight-secret.sh $(KUBE_NAMESPACE)
-	kubectl diff -k $(KUSTOMIZE_DIR)
+deploy-preview: deploy-check
+	kubectx "$(KUBE_CONTEXT)"
+	$(HELM_UPGRADE) --dry-run=server --hide-secret
 
-migrate:
-	@set -eu; \
-	server_tag=$$(sed -n '/name: ghcr.io\/ihippik\/okoscope-server/{n;s/.*newTag: *"\([0-9a-f]*\)".*/\1/p;}' $(KUSTOMIZE_DIR)/kustomization.yaml); \
-	required_migration=$$(sed -nE 's/^pub const REQUIRED_MIGRATION: i64 = ([0-9]+);$$/\1/p' crates/server/src/database.rs); \
-	test $${#server_tag} -eq 40 || { echo "cannot read immutable server tag" >&2; exit 1; }; \
-	test -n "$$required_migration" || { echo "cannot read REQUIRED_MIGRATION" >&2; exit 1; }; \
-	short_tag=$$(printf '%s' "$$server_tag" | cut -c1-12); \
-	work=$$(mktemp -d /tmp/okoscope-migrate.XXXXXX); \
-	trap 'rm -rf "$$work"' EXIT; \
-	kubectl kustomize deploy/kubernetes/server/migration \
-		| sed -e "s/0000000000000000000000000000000000000000/$$server_tag/g" \
-			-e "s/okoscope-migrate-000000000000/okoscope-migrate-$$short_tag/g" \
-			-e "s/__REQUIRED_MIGRATION__/\"$$required_migration\"/g" \
-		> "$$work/job.yaml"; \
-	kubectx $(KUBE_CONTEXT); \
-	kubectl apply -f deploy/kubernetes/common/namespace.yaml; \
-	deploy/scripts/preflight-secret.sh $(KUBE_NAMESPACE); \
-	kubectl apply -f "$$work/job.yaml"; \
-	status=0; \
-	kubectl wait --for=condition=complete --timeout=5m "job/okoscope-migrate-$$short_tag" -n $(KUBE_NAMESPACE) || status=$$?; \
-	deploy/scripts/prune-job-history.sh $(KUBE_NAMESPACE) okoscope-migrate okoscope-notification-check; \
-	exit $$status
-
-deploy: deployment-test
-	kubectx $(KUBE_CONTEXT)
-	kubectl apply -f deploy/kubernetes/common/namespace.yaml
-	deploy/scripts/preflight-secret.sh $(KUBE_NAMESPACE)
-	$(MAKE) migrate
-	kubectl apply -k $(KUSTOMIZE_DIR)
-	kubectl rollout status deployment/okoscope-server -n $(KUBE_NAMESPACE) --timeout=5m
-	kubectl rollout status daemonset/okoscope-agent -n $(KUBE_NAMESPACE) --timeout=5m
-	kubectl rollout status deployment/okoscope-web -n $(KUBE_NAMESPACE) --timeout=5m
+deploy: deploy-check
+	kubectx "$(KUBE_CONTEXT)"
+	$(HELM_UPGRADE)
 
 deploy-status:
-	kubectx $(KUBE_CONTEXT)
-	kubectl get deployment,daemonset,pod -n $(KUBE_NAMESPACE)
+	kubectx "$(KUBE_CONTEXT)"
+	helm status "$(HELM_RELEASE)" --namespace "$(KUBE_NAMESPACE)"
+	kubectl get deployment,daemonset,pod -n "$(KUBE_NAMESPACE)" -l "app.kubernetes.io/instance=$(HELM_RELEASE)"

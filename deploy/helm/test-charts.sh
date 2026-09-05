@@ -41,10 +41,11 @@ if helm template rejected "$root/deploy/helm/okoscope" --set database.url=postgr
   echo 'database.url must be rejected by the values schema' >&2
   exit 1
 fi
-if helm template rejected "$root/deploy/helm/okoscope" -f "$root/deploy/helm/fixtures/self-hosted-ingress.yaml" --set server.registrationEnabled=true >/dev/null 2>&1; then
-  echo 'public Web ingress with open registration must be rejected' >&2
-  exit 1
-fi
+helm template okoscope "$root/deploy/helm/okoscope" -f "$root/deploy/helm/fixtures/self-hosted-ingress.yaml" \
+  --set server.registrationEnabled=true > "$work/self-hosted-public-registration.yaml"
+grep -q 'OKOSCOPE_REGISTRATION_ENABLED: "true"' "$work/self-hosted-public-registration.yaml"
+grep -q '^kind: Ingress$' "$work/self-hosted-public-registration.yaml"
+grep -q 'OKOSCOPE_REGISTRATION_ENABLED: "false"' "$work/self-hosted-ingress.yaml"
 grep -q 'OKOSCOPE_REGISTRATION_ENABLED: "false"' "$work/self-hosted.yaml"
 grep -q 'name: OKOSCOPE_SETUP_TOKEN' "$work/self-hosted.yaml"
 grep -A1 'name: OKOSCOPE_API_BASE_URL' "$work/self-hosted.yaml" | grep -q 'value: /'

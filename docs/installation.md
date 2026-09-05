@@ -5,7 +5,7 @@ Okoscope publishes two charts with the same semantic release version:
 - `oci://ghcr.io/ihippik/charts/okoscope-agent` connects a cluster to an existing hosted or self-hosted server.
 - `oci://ghcr.io/ihippik/charts/okoscope` installs server, Web, migrations, and optionally the local agent. It never installs PostgreSQL.
 
-Production commands should always include `--version <OKOSCOPE_VERSION>`. Component images are pinned by the chart release. Never put a database URL or Application credential in a Helm values file or `--set` argument.
+Production commands should always include `--version <OKOSCOPE_VERSION>`. Component images are pinned by the chart release. Never put a database URL or Application credential in a Helm values file or `--set` argument. See the [Helm values reference](helm-values.md) for all chart settings, defaults, and required fields.
 
 ## Connect Kubernetes to Okoscope
 
@@ -86,7 +86,9 @@ When agents must trust a private CA, set `agentInstallation.tlsMode=custom_ca`, 
 Open `http://127.0.0.1:8080`. The pre-install/pre-upgrade migration Job must succeed before application rollout. It reads `database.existingSecret`/`database.urlKey`; there is deliberately no `database.url` value.
 The Web pod proxies same-origin `/api` requests to the chart's internal Server Service, so this single Web port-forward supports both the UI and API without exposing the Server Service.
 
-Ordinary registration is disabled by default. Retrieve the one-time setup authorization from its Kubernetes Secret, paste it into `/setup`, and create the first owner, Organization, and explicitly named Project:
+Ordinary registration is disabled by default, including when Web ingress is enabled. For a public service where users create their own Organizations, explicitly set `server.registrationEnabled=true` in Helm values (or `--set server.registrationEnabled=true`); Web ingress supports this mode, and `/setup` is not required. Each signup creates an owner of a new Organization, not a global administrator or a membership in an existing Organization.
+
+For a private installation with registration disabled, retrieve the one-time setup authorization from its Kubernetes Secret, paste it into `/setup`, and create the first owner, Organization, and explicitly named Project:
 
 ```bash
 kubectl get secret -n okoscope-system okoscope-setup \
