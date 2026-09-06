@@ -15,6 +15,13 @@ a database URL or Application credential in a Helm values file or `--set` argume
 See the [Helm values reference](helm-values.md) for all chart settings, defaults, and
 required fields.
 
+Publishing a new component image does not update an existing chart release.
+Release operators must run `release-helm-charts` with a new semantic version and
+verified server, agent, and Web image digests. The workflow rejects any remaining
+empty digest before packaging. After publication, update the Cloud installation
+metadata to recommend the new agent chart version; existing installations keep
+their pinned version until explicitly upgraded.
+
 ## Okoscope Cloud
 
 Use [Okoscope Cloud onboarding](https://okoscope.com/onboarding) to select or create

@@ -57,7 +57,11 @@ jobs:
           test "${WEB_DIGEST#sha256:}" != "$WEB_DIGEST"
           sed -i "s/digest: \"\"/digest: \"$AGENT_DIGEST\"/" deploy/helm/okoscope-agent/values.yaml
           sed -i "0,/digest: \"\"/s//digest: \"$SERVER_DIGEST\"/" deploy/helm/okoscope/values.yaml
-          sed -i "0,/digest: \"\"/! s/digest: \"\"/digest: \"$WEB_DIGEST\"/" deploy/helm/okoscope/values.yaml
+          sed -i "s/digest: \"\"/digest: \"$WEB_DIGEST\"/" deploy/helm/okoscope/values.yaml
+          if grep -q 'digest: ""' deploy/helm/okoscope/values.yaml deploy/helm/okoscope-agent/values.yaml; then
+            echo "release charts must pin every component image digest" >&2
+            exit 1
+          fi
       - name: Verify immutable component images exist
         env:
           SERVER_DIGEST: ${{ steps.release.outputs.server }}
