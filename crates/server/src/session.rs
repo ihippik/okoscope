@@ -3,8 +3,9 @@ use std::pin::Pin;
 use futures::{Stream, StreamExt};
 use protocol::{
     v1::{
-        AgentHello, AgentMessage, BatchAcknowledgement, ServerMessage, SessionAccepted,
-        agent_message, agent_service_server::AgentService, server_message,
+        AgentHello, AgentMessage, BatchAcknowledgement, ResourceBatchAcknowledgement,
+        ServerMessage, SessionAccepted, agent_message, agent_service_server::AgentService,
+        server_message,
     },
     validate_protocol,
 };
@@ -34,6 +35,27 @@ impl AgentSessionService {
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<ServerMessage, Status>> + Send + 'static>>;
 
+#[derive(Clone, Copy)]
+struct AgentCapabilities {
+    mask: u8,
+}
+
+impl AgentCapabilities {
+    fn has(self, flag: u8) -> bool {
+        self.mask & flag != 0
+    }
+}
+
+fn agent_capabilities(hello: &AgentHello) -> AgentCapabilities {
+    let has = |capability: &str| hello.capabilities.iter().any(|value| value == capability);
+    AgentCapabilities {
+        mask: u8::from(has(protocol::FILE_ACTIVITY_CAPABILITY))
+            | u8::from(has(protocol::KUBERNETES_RELEASE_DISCOVERY_CAPABILITY)) << 1
+            | u8::from(has(protocol::ONBOARDING_STATUS_CAPABILITY)) << 2
+            | u8::from(has(protocol::RESOURCE_UTILIZATION_CAPABILITY)) << 3,
+    }
+}
+
 #[tonic::async_trait]
 impl AgentService for AgentSessionService {
     type OpenSessionStream = ResponseStream;
@@ -59,18 +81,7 @@ impl AgentService for AgentSessionService {
         let (agent_id, _session_id) = register(&self.pool, scope, &hello)
             .await
             .map_err(internal)?;
-        let file_activity_capable = hello
-            .capabilities
-            .iter()
-            .any(|value| value == protocol::FILE_ACTIVITY_CAPABILITY);
-        let release_discovery_capable = hello
-            .capabilities
-            .iter()
-            .any(|value| value == protocol::KUBERNETES_RELEASE_DISCOVERY_CAPABILITY);
-        let onboarding_status_capable = hello
-            .capabilities
-            .iter()
-            .any(|value| value == protocol::ONBOARDING_STATUS_CAPABILITY);
+        let capabilities = agent_capabilities(&hello);
         let (sender, receiver) = mpsc::channel(32);
         sender
             .send(Ok(ServerMessage {
@@ -95,7 +106,7 @@ impl AgentService for AgentSessionService {
                     match message.message {
                         Some(agent_message::Message::EventBatch(batch)) => {
                             let mut events = batch.events.into_iter().map(event_model::RuntimeEvent::try_from).collect::<Result<Vec<_>, _>>().map_err(|error| Status::invalid_argument(error.to_string()))?;
-                            if !file_activity_capable && events.iter().any(|event| matches!(event.payload,
+                            if !capabilities.has(1) && events.iter().any(|event| matches!(event.payload,
                                 event_model::EventPayload::FileCreate(_)
                                 | event_model::EventPayload::FileModify(_)
                                 | event_model::EventPayload::FileDelete(_)
@@ -109,8 +120,21 @@ impl AgentService for AgentSessionService {
                             sender.send(Ok(ServerMessage { protocol_version: event_model::PROTOCOL_VERSION, message: Some(server_message::Message::BatchAcknowledgement(BatchAcknowledgement { sequence: batch.sequence, accepted_events: accepted, retention_expired_events })) })).await.map_err(|_| Status::unavailable("session response channel closed"))?;
                         }
                         Some(agent_message::Message::Heartbeat(_)) => { touch_agent(&pool, agent_id).await.map_err(internal)?; }
+                        Some(agent_message::Message::ResourceSampleBatch(_)) if !capabilities.has(1 << 3) => return Err(Status::failed_precondition("resource samples require resource.utilization/v1 capability")),
+                        Some(agent_message::Message::ResourceSampleBatch(batch)) => {
+                            if batch.aggregates.len() > event_model::MAX_RESOURCE_BATCH_AGGREGATES {
+                                return Err(Status::invalid_argument("resource batch exceeds 256 aggregates"));
+                            }
+                            let acknowledgement = persist_resource_batch(
+                                &pool, scope, application_scope, agent_id, &hello.node_name, batch,
+                            ).await?;
+                            sender.send(Ok(ServerMessage {
+                                protocol_version: event_model::PROTOCOL_VERSION,
+                                message: Some(server_message::Message::ResourceBatchAcknowledgement(acknowledgement)),
+                            })).await.map_err(|_| Status::unavailable("session response channel closed"))?;
+                        }
                         Some(agent_message::Message::ControlResult(result)) => { tracing::info!(agent_id=%agent_id, request_id=%result.request_id, status=result.status, "agent control result"); }
-                        Some(agent_message::Message::RevisionEvidence(_) | agent_message::Message::ReadinessSnapshot(_)) if !release_discovery_capable => return Err(Status::failed_precondition("revision evidence requires kubernetes.release-discovery/v1 capability")),
+                        Some(agent_message::Message::RevisionEvidence(_) | agent_message::Message::ReadinessSnapshot(_)) if !capabilities.has(1 << 1) => return Err(Status::failed_precondition("revision evidence requires kubernetes.release-discovery/v1 capability")),
                         Some(agent_message::Message::RevisionEvidence(value)) => {
                             let evidence = event_model::WorkloadRevisionEvidence::try_from(value).map_err(|error| Status::invalid_argument(error.to_string()))?;
                             crate::release_discovery::persist_revision_evidence(&pool, scope, application_scope, &evidence).await.map_err(internal)?;
@@ -119,7 +143,7 @@ impl AgentService for AgentSessionService {
                             let snapshot = event_model::RevisionReadinessSnapshot::try_from(value).map_err(|error| Status::invalid_argument(error.to_string()))?;
                             crate::release_discovery::persist_readiness_snapshot(&pool, scope, application_scope, &snapshot).await.map_err(internal)?;
                         }
-                        Some(agent_message::Message::OnboardingStatus(_)) if !onboarding_status_capable => return Err(Status::failed_precondition("onboarding status requires onboarding.status/v1 capability")),
+                        Some(agent_message::Message::OnboardingStatus(_)) if !capabilities.has(1 << 2) => return Err(Status::failed_precondition("onboarding status requires onboarding.status/v1 capability")),
                         Some(agent_message::Message::OnboardingStatus(value)) => {
                             persist_onboarding_status(&pool, application_scope, &hello.node_name, value).await?;
                         }
@@ -136,6 +160,56 @@ impl AgentService for AgentSessionService {
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
+}
+
+async fn persist_resource_batch(
+    pool: &PgPool,
+    scope: SessionScope,
+    application_scope: ApplicationCredentialScope,
+    agent_id: Uuid,
+    node_name: &str,
+    batch: protocol::v1::ResourceSampleBatch,
+) -> Result<ResourceBatchAcknowledgement, Status> {
+    let mut accepted = 0_u32;
+    let mut duplicate = 0_u32;
+    let mut expired = 0_u32;
+    let mut invalid = 0_u32;
+    for wire in batch.aggregates {
+        let aggregate = match event_model::ResourceAggregate::try_from(wire) {
+            Ok(value) if value.node_name == node_name => value,
+            Ok(_) | Err(_) => {
+                invalid = invalid.saturating_add(1);
+                continue;
+            }
+        };
+        match crate::resources::persist_resource_aggregate(
+            pool,
+            scope,
+            application_scope,
+            agent_id,
+            &aggregate,
+        )
+        .await
+        .map_err(internal)?
+        {
+            crate::resources::PersistResourceOutcome::Accepted => {
+                accepted = accepted.saturating_add(1);
+            }
+            crate::resources::PersistResourceOutcome::Duplicate => {
+                duplicate = duplicate.saturating_add(1);
+            }
+            crate::resources::PersistResourceOutcome::Expired => {
+                expired = expired.saturating_add(1);
+            }
+        }
+    }
+    Ok(ResourceBatchAcknowledgement {
+        sequence: batch.sequence,
+        accepted_aggregates: accepted,
+        duplicate_aggregates: duplicate,
+        retention_expired_aggregates: expired,
+        invalid_aggregates: invalid,
+    })
 }
 
 async fn authenticate_application(
@@ -322,6 +396,7 @@ mod tests {
             drop_counters: None,
             cluster_uid: Uuid::new_v4().to_string(),
             cluster_name: "aliens".into(),
+            resource_counters: None,
         }
     }
 

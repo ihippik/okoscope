@@ -47,6 +47,7 @@ pub fn router(
         .merge(crate::attention::router((*pool).clone(), delivery_enabled))
         .merge(crate::inventory_api::router((*pool).clone()))
         .merge(crate::releases::router((*pool).clone()))
+        .merge(crate::resources::router((*pool).clone()))
         .merge(crate::navigation::router((*pool).clone()))
         .merge(crate::notification::retention_api::router((*pool).clone()))
         .merge(crate::runtime_retention::api::router((*pool).clone()))

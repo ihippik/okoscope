@@ -15,8 +15,9 @@ use event_model::{
     FileDelete, FileModify, FileRename, GenerationCorrelation, KubernetesAttribution,
     NetworkAccept, NetworkAddressFamily, NetworkConnect, NetworkConnectOutcome, NetworkDnsQuery,
     NetworkDnsResponse, NetworkListen, PROTOCOL_VERSION, ProcessExec, ProcessExit, ProcessIdentity,
-    ProcessTermination, ReleaseIdentity, RevisionReadinessSnapshot, RuntimeEvent, SyscallEvent,
-    UnresolvedGenerationReason, WorkloadRevisionEvidence,
+    ProcessTermination, ReleaseIdentity, ResourceAggregate, ResourceValues,
+    RevisionReadinessSnapshot, RuntimeEvent, SyscallEvent, UnresolvedGenerationReason,
+    WorkloadRevisionEvidence,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -54,6 +55,8 @@ pub enum ProtocolError {
     InvalidTermination(&'static str),
     #[error("invalid release identity")]
     InvalidReleaseIdentity,
+    #[error("invalid resource aggregate: {0}")]
+    InvalidResource(String),
 }
 
 fn encode_release_identity(identity: ReleaseIdentity) -> v1::ReleaseIdentity {
@@ -237,6 +240,145 @@ pub fn validate_protocol(version: u32) -> Result<(), ProtocolError> {
         Ok(())
     } else {
         Err(ProtocolError::UnsupportedProtocol(version))
+    }
+}
+
+pub const RESOURCE_UTILIZATION_CAPABILITY: &str = "resource.utilization/v1";
+
+impl TryFrom<v1::ResourceAggregate> for ResourceAggregate {
+    type Error = ProtocolError;
+
+    fn try_from(value: v1::ResourceAggregate) -> Result<Self, Self::Error> {
+        let values = value
+            .values
+            .ok_or(ProtocolError::Missing("resource.values"))?;
+        let aggregate = Self {
+            id: Uuid::parse_str(&value.aggregate_id).map_err(|_| ProtocolError::InvalidUuid {
+                field: "aggregate_id",
+                value: value.aggregate_id,
+            })?,
+            schema_version: u16::try_from(value.schema_version)
+                .map_err(|error| ProtocolError::InvalidResource(error.to_string()))?,
+            interval_start: timestamp(value.interval_start_unix_nanos)?,
+            interval_end: timestamp(value.interval_end_unix_nanos)?,
+            covered_usec: value.covered_usec,
+            sample_count: value.sample_count,
+            contributing_containers: value.contributing_containers,
+            ready_containers: value.ready_containers,
+            namespace: value.namespace,
+            workload_uid: value.workload_uid,
+            workload_kind: value.workload_kind,
+            workload_name: value.workload_name,
+            container_name: value.container_name,
+            node_name: value.node_name,
+            release_identity: value
+                .release_identity
+                .map(decode_release_identity)
+                .transpose()?,
+            unavailable_sources: value.unavailable_sources,
+            values: decode_resource_values(&values),
+        };
+        aggregate
+            .validate()
+            .map_err(|error| ProtocolError::InvalidResource(error.to_string()))?;
+        Ok(aggregate)
+    }
+}
+
+impl From<ResourceAggregate> for v1::ResourceAggregate {
+    fn from(value: ResourceAggregate) -> Self {
+        Self {
+            aggregate_id: value.id.to_string(),
+            schema_version: u32::from(value.schema_version),
+            interval_start_unix_nanos: value
+                .interval_start
+                .timestamp_nanos_opt()
+                .unwrap_or_default(),
+            interval_end_unix_nanos: value.interval_end.timestamp_nanos_opt().unwrap_or_default(),
+            covered_usec: value.covered_usec,
+            sample_count: value.sample_count,
+            contributing_containers: value.contributing_containers,
+            ready_containers: value.ready_containers,
+            namespace: value.namespace,
+            workload_uid: value.workload_uid,
+            workload_kind: value.workload_kind,
+            workload_name: value.workload_name,
+            container_name: value.container_name,
+            node_name: value.node_name,
+            release_identity: value.release_identity.map(encode_release_identity),
+            unavailable_sources: value.unavailable_sources,
+            values: Some(encode_resource_values(&value.values)),
+        }
+    }
+}
+
+fn decode_resource_values(value: &v1::ResourceValues) -> ResourceValues {
+    ResourceValues {
+        cpu_usage_usec: value.cpu_usage_usec,
+        cpu_nr_periods: value.cpu_nr_periods,
+        cpu_nr_throttled: value.cpu_nr_throttled,
+        cpu_throttled_usec: value.cpu_throttled_usec,
+        cpu_quota_usec: value.cpu_quota_usec,
+        cpu_period_usec: value.cpu_period_usec,
+        memory_current_sum_bytes: value.memory_current_sum_bytes,
+        memory_current_min_bytes: value.memory_current_min_bytes,
+        memory_current_max_bytes: value.memory_current_max_bytes,
+        memory_anon_sum_bytes: value.memory_anon_sum_bytes,
+        memory_file_sum_bytes: value.memory_file_sum_bytes,
+        memory_limit_bytes: value.memory_limit_bytes,
+        memory_high_events: value.memory_high_events,
+        memory_max_events: value.memory_max_events,
+        memory_oom_events: value.memory_oom_events,
+        memory_oom_kill_events: value.memory_oom_kill_events,
+        cpu_psi_some_usec: value.cpu_psi_some_usec,
+        cpu_psi_full_usec: value.cpu_psi_full_usec,
+        memory_psi_some_usec: value.memory_psi_some_usec,
+        memory_psi_full_usec: value.memory_psi_full_usec,
+        io_psi_some_usec: value.io_psi_some_usec,
+        io_psi_full_usec: value.io_psi_full_usec,
+        io_read_bytes: value.io_read_bytes,
+        io_write_bytes: value.io_write_bytes,
+        io_read_operations: value.io_read_operations,
+        io_write_operations: value.io_write_operations,
+        pids_current_sum: value.pids_current_sum,
+        pids_current_max: value.pids_current_max,
+        pids_limit: value.pids_limit,
+        pids_max_events: value.pids_max_events,
+    }
+}
+
+fn encode_resource_values(value: &ResourceValues) -> v1::ResourceValues {
+    v1::ResourceValues {
+        cpu_usage_usec: value.cpu_usage_usec,
+        cpu_nr_periods: value.cpu_nr_periods,
+        cpu_nr_throttled: value.cpu_nr_throttled,
+        cpu_throttled_usec: value.cpu_throttled_usec,
+        cpu_quota_usec: value.cpu_quota_usec,
+        cpu_period_usec: value.cpu_period_usec,
+        memory_current_sum_bytes: value.memory_current_sum_bytes,
+        memory_current_min_bytes: value.memory_current_min_bytes,
+        memory_current_max_bytes: value.memory_current_max_bytes,
+        memory_anon_sum_bytes: value.memory_anon_sum_bytes,
+        memory_file_sum_bytes: value.memory_file_sum_bytes,
+        memory_limit_bytes: value.memory_limit_bytes,
+        memory_high_events: value.memory_high_events,
+        memory_max_events: value.memory_max_events,
+        memory_oom_events: value.memory_oom_events,
+        memory_oom_kill_events: value.memory_oom_kill_events,
+        cpu_psi_some_usec: value.cpu_psi_some_usec,
+        cpu_psi_full_usec: value.cpu_psi_full_usec,
+        memory_psi_some_usec: value.memory_psi_some_usec,
+        memory_psi_full_usec: value.memory_psi_full_usec,
+        io_psi_some_usec: value.io_psi_some_usec,
+        io_psi_full_usec: value.io_psi_full_usec,
+        io_read_bytes: value.io_read_bytes,
+        io_write_bytes: value.io_write_bytes,
+        io_read_operations: value.io_read_operations,
+        io_write_operations: value.io_write_operations,
+        pids_current_sum: value.pids_current_sum,
+        pids_current_max: value.pids_current_max,
+        pids_limit: value.pids_limit,
+        pids_max_events: value.pids_max_events,
     }
 }
 
@@ -1106,6 +1248,43 @@ mod tests {
                 parent_command: Some("payment-api".into()),
             }),
         }
+    }
+
+    #[test]
+    fn resource_aggregate_round_trips_and_rejects_missing_values() {
+        let start = Utc::now();
+        let aggregate = ResourceAggregate {
+            id: Uuid::new_v4(),
+            schema_version: event_model::RESOURCE_SCHEMA_VERSION,
+            interval_start: start,
+            interval_end: start + chrono::Duration::minutes(1),
+            covered_usec: 60_000_000,
+            sample_count: 4,
+            contributing_containers: 1,
+            ready_containers: 1,
+            namespace: "production".into(),
+            workload_uid: "deployment-uid".into(),
+            workload_kind: "Deployment".into(),
+            workload_name: "payment-api".into(),
+            container_name: "payment-api".into(),
+            node_name: "node-1".into(),
+            release_identity: None,
+            unavailable_sources: 0,
+            values: ResourceValues {
+                cpu_usage_usec: Some(1_000_000),
+                memory_current_sum_bytes: Some(256 * 1024 * 1024),
+                ..ResourceValues::default()
+            },
+        };
+        let wire = v1::ResourceAggregate::from(aggregate.clone());
+        assert_eq!(ResourceAggregate::try_from(wire).unwrap(), aggregate);
+
+        let mut invalid = v1::ResourceAggregate::from(aggregate);
+        invalid.values = None;
+        assert!(matches!(
+            ResourceAggregate::try_from(invalid),
+            Err(ProtocolError::Missing("resource.values"))
+        ));
     }
 
     #[test]

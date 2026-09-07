@@ -229,6 +229,14 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
         "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff/summary",
         "get",
     ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/resources",
+        "get",
+    ),
+    (
+        "/api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/resource-comparison",
+        "get",
+    ),
     ("/api/v1/projects/{project_id}/webhook-destinations", "get"),
     ("/api/v1/projects/{project_id}/webhook-destinations", "post"),
     (

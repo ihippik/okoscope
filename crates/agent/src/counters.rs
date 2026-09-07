@@ -68,6 +68,17 @@ pub struct Counters {
     pub release_evidence_sent: AtomicU64,
     pub release_evidence_replayed: AtomicU64,
     pub release_evidence_dropped: AtomicU64,
+    pub resource_discovered: AtomicU64,
+    pub resource_parse_failed: AtomicU64,
+    pub resource_counter_reset: AtomicU64,
+    pub resource_attribution_failed: AtomicU64,
+    pub resource_state_capacity_dropped: AtomicU64,
+    pub resource_aggregate_capacity_dropped: AtomicU64,
+    pub resource_queue_dropped: AtomicU64,
+    pub resource_expired: AtomicU64,
+    pub resource_retried: AtomicU64,
+    pub resource_acknowledged: AtomicU64,
+    pub resource_unsupported_sources: AtomicU64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -186,6 +197,24 @@ pub struct ExitKernelCounters {
 }
 
 impl Counters {
+    #[must_use]
+    pub fn resource_snapshot(&self) -> protocol::v1::ResourceCounters {
+        let load = |value: &AtomicU64| value.load(Ordering::Relaxed);
+        protocol::v1::ResourceCounters {
+            discovered: load(&self.resource_discovered),
+            parse_failed: load(&self.resource_parse_failed),
+            counter_reset: load(&self.resource_counter_reset),
+            attribution_failed: load(&self.resource_attribution_failed),
+            state_capacity_dropped: load(&self.resource_state_capacity_dropped),
+            aggregate_capacity_dropped: load(&self.resource_aggregate_capacity_dropped),
+            queue_dropped: load(&self.resource_queue_dropped),
+            expired: load(&self.resource_expired),
+            retried: load(&self.resource_retried),
+            acknowledged: load(&self.resource_acknowledged),
+            unsupported_sources: load(&self.resource_unsupported_sources),
+        }
+    }
+
     pub fn update_exit_kernel(&self, value: ExitKernelCounters) {
         self.exit_kernel_lost
             .store(value.ring_lost, Ordering::Relaxed);

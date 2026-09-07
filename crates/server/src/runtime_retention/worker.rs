@@ -96,6 +96,8 @@ async fn tick(pool: &PgPool, cursor: &mut Uuid) -> Result<u64, sqlx::Error> {
         // Advance even on failure so one Project cannot starve the next tick.
         *cursor = project;
         count += process_project(pool, org, project, Utc::now(), 500).await?;
+        count += crate::resources::cleanup_project(pool, project, Utc::now(), 500).await?;
+        crate::resources::refresh_project_findings(pool, org, project).await;
         let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runtime_events e JOIN projects p ON p.id=e.project_id WHERE p.id=$1 AND e.observed_at<p.runtime_closed_before)").bind(project).fetch_one(pool).await?;
         backlog += u64::from(pending);
     }

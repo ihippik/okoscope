@@ -34,6 +34,14 @@ observation:
       enabled: false
       udp: true
       tcp: true
+  resources:
+    enabled: false
+    sampleIntervalSeconds: 15
+    aggregationIntervalSeconds: 60
+    maxCgroupStates: 4096
+    maxOpenAggregates: 1024
+    queueCapacity: 256
+    batchSize: 64
 safety:
   queueCapacity: 4096
   batchSize: 256

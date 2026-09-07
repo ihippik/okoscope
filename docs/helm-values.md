@@ -163,12 +163,19 @@ For the optional local agent, nest the same example under `okoscope-agent:` and 
 | `observation.network.dns.enabled` | `false` | Enable DNS observation. |
 | `observation.network.dns.udp` | `true` | Observe UDP DNS when DNS is enabled. |
 | `observation.network.dns.tcp` | `true` | Observe TCP DNS when DNS is enabled; at least one transport must remain enabled. |
+| `observation.resources.enabled` | `false` | Enable cgroup v2 CPU, memory, pressure, I/O, and PID sampling. |
+| `observation.resources.sampleIntervalSeconds` | `15` | Sampling interval, `10–60` seconds. |
+| `observation.resources.aggregationIntervalSeconds` | `60` | Fixed UTC aggregation interval; only `60` is accepted. |
+| `observation.resources.maxCgroupStates` | `4096` | Maximum tracked container cgroup lifetimes, `1–65536`. |
+| `observation.resources.maxOpenAggregates` | `1024` | Maximum open minute aggregates, `1–16384`. |
+| `observation.resources.queueCapacity` | `256` | Per-Application resource delivery queue, `1–4096`. |
+| `observation.resources.batchSize` | `64` | Resource aggregates per batch, `1–256` and no greater than the resource queue. |
 | `safety.queueCapacity` | `4096` | Event queue capacity, `1–4096`. |
 | `safety.batchSize` | `256` | Batch size, at least `1` and no greater than queue capacity. |
 | `safety.maxEventsPerSecond` | `1000` | Agent event rate limit. |
 | `safety.maxApplicationStreams` | `32` | Maximum distinct Application streams, `1–32`; must accommodate selected Applications. |
 
-`observation` and `safety` are passed into the agent configuration. Helm accepts these objects, but the agent also validates their fields at startup. See [file activity](file-activity-syscall-profile.md), [outbound networking](outbound-network-observation.md), [inbound networking](inbound-network-observation.md), and [DNS observation](dns-resolution-observation.md) for capability limits.
+`observation` and `safety` are passed into the agent configuration. Helm accepts these objects, but the agent also validates their fields at startup. See [resource utilization](resource-utilization.md), [file activity](file-activity-syscall-profile.md), [outbound networking](outbound-network-observation.md), [inbound networking](inbound-network-observation.md), and [DNS observation](dns-resolution-observation.md) for capability limits.
 
 ### Pod resources and scheduling
 

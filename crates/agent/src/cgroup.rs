@@ -1,4 +1,4 @@
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -18,7 +18,7 @@ pub enum CgroupError {
     MissingContainerId(String),
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub fn resolve_container_id(pid: u32, expected_cgroup_id: u64) -> Result<String, CgroupError> {
     use std::os::unix::fs::MetadataExt;
 
@@ -35,14 +35,22 @@ pub fn resolve_container_id(pid: u32, expected_cgroup_id: u64) -> Result<String,
     extract_container_id(relative).ok_or_else(|| CgroupError::MissingContainerId(relative.into()))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 #[derive(Debug)]
 pub struct CgroupResolver {
     root: PathBuf,
-    containers: HashMap<u64, String>,
+    containers: HashMap<u64, ContainerCgroup>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContainerCgroup {
+    pub inode: u64,
+    pub container_id: String,
+    pub path: PathBuf,
+}
+
+#[cfg(any(target_os = "linux", test))]
 impl CgroupResolver {
     pub fn new(root: impl Into<PathBuf>) -> Result<Self, CgroupError> {
         let mut resolver = Self {
@@ -55,17 +63,29 @@ impl CgroupResolver {
 
     pub fn resolve(&mut self, pid: u32, cgroup_id: u64) -> Result<String, CgroupError> {
         if let Some(container) = self.containers.get(&cgroup_id) {
-            return Ok(container.clone());
+            return Ok(container.container_id.clone());
         }
         if let Ok(container) = resolve_container_id(pid, cgroup_id) {
-            self.containers.insert(cgroup_id, container.clone());
+            self.containers.insert(
+                cgroup_id,
+                ContainerCgroup {
+                    inode: cgroup_id,
+                    container_id: container.clone(),
+                    path: PathBuf::new(),
+                },
+            );
             return Ok(container);
         }
         self.refresh()?;
         self.containers
             .get(&cgroup_id)
-            .cloned()
+            .map(|value| value.container_id.clone())
             .ok_or_else(|| CgroupError::MissingContainerId(format!("cgroup id {cgroup_id}")))
+    }
+
+    pub fn container_cgroups(&mut self) -> Result<Vec<ContainerCgroup>, CgroupError> {
+        self.refresh()?;
+        Ok(self.containers.values().cloned().collect())
     }
 
     fn refresh(&mut self) -> Result<(), CgroupError> {
@@ -84,7 +104,15 @@ impl CgroupResolver {
                 let Some(container) = extract_container_id(&path.to_string_lossy()) else {
                     continue;
                 };
-                containers.insert(entry.metadata()?.ino(), container);
+                let inode = entry.metadata()?.ino();
+                containers.insert(
+                    inode,
+                    ContainerCgroup {
+                        inode,
+                        container_id: container,
+                        path,
+                    },
+                );
             }
         }
         self.containers = containers;

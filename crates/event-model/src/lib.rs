@@ -1,9 +1,11 @@
 //! Transport-independent runtime event domain model.
 
 mod release;
+mod resource;
 mod termination;
 
 pub use release::*;
+pub use resource::*;
 pub use termination::*;
 
 use std::{

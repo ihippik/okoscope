@@ -86,7 +86,17 @@ workloads:
     credentialSecret:
       name: okoscope-application-credentials
       key: payment-api
+observation:
+  resources:
+    enabled: false
 ```
+
+Resource utilization collection is disabled by default. After completing a
+server migration and deploying a compatible Web version, enable it for a small
+canary by setting `observation.resources.enabled: true`. The defaults sample
+cgroup v2 every 15 seconds and send fixed one-minute aggregates. See the
+[resource utilization operator guide](resource-utilization.md) for prerequisites,
+cost controls, retention, API semantics, and rollback.
 
 `identity.clusterName` is the readable name chosen in onboarding, displayed for
 Application Worker nodes. Agents send it when connecting; reconnecting updates
@@ -96,6 +106,12 @@ control characters) for all agents in a cluster. Upgrade both server and agents
 to versions supporting the cluster name in the handshake to replace historical
 UUID display names automatically. Older agents that omit the name retain the
 existing name; a newly discovered cluster from an older agent uses its UID.
+
+For separate agent installations in different namespaces, use unique Helm
+release names: the generated ClusterRole and ClusterRoleBinding names are
+cluster-wide. Change both the release name after `--install` and `--namespace`
+in the command below, create the credential Secret in that agent namespace,
+and use the matching resource name and namespace in the verification commands.
 
 Install and verify:
 
@@ -121,6 +137,45 @@ OpenSSL. If agent logs report `no native certs found`, the running image has no
 usable system CA bundle: upgrade to a chart release that pins a corrected agent
 image. A Pod can remain `Running` while its Cloud connection is failing, so also
 check the agent logs and Application Worker nodes observations after rollout.
+
+### Remove the Cloud agent from your cluster
+
+To undo the installation, select the correct Kubernetes context and uninstall
+each agent Helm release. Use your actual release name and agent namespace:
+
+```bash
+kubectl config current-context
+helm uninstall okoscope-agent --namespace okoscope-system --wait
+```
+
+If agents are installed in several namespaces, find their releases with
+`helm list --all-namespaces` and repeat cleanup for each release in its own
+namespace. Removing one namespace does not remove the other installations.
+
+Helm removes the agent DaemonSet, ConfigMap, ServiceAccount, ClusterRole and
+ClusterRoleBinding, and its release history. This stops monitoring every
+Application served by that release; it does not delete your application
+Deployments. The credential Secret was created separately and remains: delete
+it only if nothing else uses it, using the actual name from your installation
+(`okoscope-application-credentials` in this guide, or the name from the wizard):
+
+```bash
+kubectl -n okoscope-system delete secret okoscope-application-credentials
+```
+
+If you created `okoscope-system` only for the agent and it contains no resources
+you need, you can then remove it:
+
+```bash
+kubectl delete namespace okoscope-system
+```
+
+Do not delete a shared namespace, the workload namespace, or shared Secrets.
+Remove any other Secrets you created solely for this installation, such as
+image-pull or private-CA Secrets, only after confirming they are unused. Revoke
+the corresponding agent credentials in the Cloud Application. Uninstalling the
+agent removes its cluster resources; it does not delete observations already
+sent to Cloud or restore unrelated changes made since installation.
 
 ## Self-host Okoscope
 

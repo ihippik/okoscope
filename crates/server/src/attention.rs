@@ -20,8 +20,8 @@ use crate::{
 };
 
 // Authentication plus a fixed repository statement sequence; neither budget depends on tenant cardinality.
-pub const ORGANIZATION_ATTENTION_QUERY_BUDGET: usize = 9;
-pub const APPLICATION_ATTENTION_QUERY_BUDGET: usize = 9;
+pub const ORGANIZATION_ATTENTION_QUERY_BUDGET: usize = 10;
+pub const APPLICATION_ATTENTION_QUERY_BUDGET: usize = 10;
 
 #[derive(Clone)]
 struct AttentionState {
@@ -179,6 +179,7 @@ enum ItemKind {
     NewDiscovery,
     OpenDiscovery,
     ContainerRestartLoop,
+    ResourceRegression,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -195,6 +196,13 @@ enum ReasonCode {
     PolicyConflict,
     PolicyUnclassified,
     PolicyEvaluationPending,
+    OomObserved,
+    MemoryLimitPressure,
+    CpuThrottlingIncreased,
+    CpuPressureIncreased,
+    MemoryPressureIncreased,
+    IoPressureIncreased,
+    ResourceUsageIncreased,
 }
 #[derive(Clone, Debug, Serialize)]
 struct RestartLoopFacts {
@@ -219,6 +227,8 @@ struct AttentionFacts {
     occurrence_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     restart_loop: Option<RestartLoopFacts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resource_regression: Option<Value>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -249,6 +259,13 @@ enum ResourceRef {
         target_release_display_name: String,
         baseline_release_id: Uuid,
         baseline_release_display_name: String,
+    },
+    ResourceComparison {
+        project_id: Uuid,
+        application_id: Uuid,
+        target_release_id: Uuid,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
     },
 }
 #[derive(Clone, Debug, Serialize)]
@@ -382,6 +399,7 @@ enum RecommendationKind {
     ReviewNotificationBacklog,
     ReviewReleaseChanges,
     ReviewNewDiscoveries,
+    ReviewResourceRegression,
 }
 #[derive(Clone, Debug, Serialize)]
 struct Recommendation {
@@ -408,6 +426,121 @@ struct NewDiscoveryScope {
     discovery_count: i64,
 }
 
+#[derive(Clone, Debug, FromRow)]
+struct ResourceFindingRow {
+    id: Uuid,
+    project_id: Uuid,
+    project_name: String,
+    project_slug: String,
+    application_id: Uuid,
+    application_name: String,
+    application_slug: String,
+    target_release_id: Uuid,
+    priority: String,
+    reason_code: String,
+    facts: Value,
+    opened_at: DateTime<Utc>,
+}
+
+async fn load_resource_findings(
+    tx: &mut Transaction<'_, Postgres>,
+    organization_id: Uuid,
+    application_id: Option<Uuid>,
+    from: DateTime<Utc>,
+    limit: i64,
+) -> Result<Vec<ResourceFindingRow>, sqlx::Error> {
+    sqlx::query_as("SELECT f.id,f.project_id,p.name project_name,p.slug project_slug,f.application_id,a.name application_name,a.slug application_slug,f.target_release_id,f.priority,f.reason_code,f.facts,f.opened_at FROM release_resource_findings f JOIN projects p ON p.organization_id=f.organization_id AND p.id=f.project_id JOIN applications a ON a.organization_id=f.organization_id AND a.project_id=f.project_id AND a.id=f.application_id WHERE f.organization_id=$1 AND ($2::uuid IS NULL OR f.application_id=$2) AND f.closed_at IS NULL AND f.opened_at >= $3 ORDER BY CASE f.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,f.opened_at DESC,f.id LIMIT $4")
+        .bind(organization_id).bind(application_id).bind(from).bind(limit).fetch_all(&mut **tx).await
+}
+
+fn resource_reason(value: &str) -> ReasonCode {
+    match value {
+        "oom_observed" => ReasonCode::OomObserved,
+        "memory_limit_pressure" => ReasonCode::MemoryLimitPressure,
+        "cpu_throttling_increased" => ReasonCode::CpuThrottlingIncreased,
+        "cpu_pressure_increased" => ReasonCode::CpuPressureIncreased,
+        "memory_pressure_increased" => ReasonCode::MemoryPressureIncreased,
+        "io_pressure_increased" => ReasonCode::IoPressureIncreased,
+        _ => ReasonCode::ResourceUsageIncreased,
+    }
+}
+
+fn resource_priority(value: &str) -> Priority {
+    match value {
+        "urgent" => Priority::Urgent,
+        "high" => Priority::High,
+        _ => Priority::Normal,
+    }
+}
+
+fn resource_item(row: &ResourceFindingRow) -> PriorityItem {
+    let from =
+        serde_json::from_value(row.facts["target_window"]["from"].clone()).unwrap_or(row.opened_at);
+    let to =
+        serde_json::from_value(row.facts["target_window"]["to"].clone()).unwrap_or(row.opened_at);
+    PriorityItem {
+        id: format!("resource_regression:{}", row.id),
+        kind: ItemKind::ResourceRegression,
+        priority: resource_priority(&row.priority),
+        reason_code: resource_reason(&row.reason_code),
+        facts: AttentionFacts {
+            reason_count: 1,
+            new_count: None,
+            disappeared_count: None,
+            failed_count: None,
+            occurrence_count: None,
+            restart_loop: None,
+            resource_regression: Some(row.facts.clone()),
+        },
+        occurred_at: row.opened_at,
+        project: ProjectRef {
+            id: row.project_id,
+            name: row.project_name.clone(),
+            slug: row.project_slug.clone(),
+        },
+        application: Some(ApplicationRef {
+            id: row.application_id,
+            name: row.application_name.clone(),
+            slug: row.application_slug.clone(),
+        }),
+        resource: ResourceRef::ResourceComparison {
+            project_id: row.project_id,
+            application_id: row.application_id,
+            target_release_id: row.target_release_id,
+            from,
+            to,
+        },
+        stable_id: row.id,
+    }
+}
+
+fn resource_recommendations(
+    rows: &[ResourceFindingRow],
+    now: DateTime<Utc>,
+) -> Vec<Recommendation> {
+    let mut seen = std::collections::HashSet::new();
+    rows.iter()
+        .filter(|row| seen.insert((row.application_id, row.target_release_id)))
+        .map(|row| {
+            let item = resource_item(row);
+            Recommendation {
+                id: format!(
+                    "review_resource_regression:{}:{}",
+                    row.application_id, row.target_release_id
+                ),
+                kind: RecommendationKind::ReviewResourceRegression,
+                priority: item.priority,
+                reason_code: item.reason_code,
+                facts: item.facts,
+                project: item.project,
+                application: item.application,
+                resource: item.resource,
+                created_from_snapshot_at: now,
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, FromRow, Serialize)]
 struct OrganizationTotals {
     new_discoveries: i64,
@@ -416,6 +549,7 @@ struct OrganizationTotals {
     changed_applications: i64,
     projects_with_notification_problems: i64,
     failed_notification_deliveries: i64,
+    resource_regressions: i64,
     policy: Value,
 }
 #[derive(Debug, Serialize)]
@@ -437,6 +571,7 @@ struct ApplicationTotals {
     disappeared_runtime_items: i64,
     unchanged_runtime_items: i64,
     total_runtime_items: i64,
+    resource_regressions: i64,
     policy: Value,
 }
 #[derive(Debug, Serialize)]
@@ -641,7 +776,8 @@ fn recommendation_stable_id(value: &Recommendation) -> Uuid {
         ResourceRef::Project { project_id } => project_id,
         ResourceRef::Application { application_id, .. }
         | ResourceRef::RuntimeGroup { application_id, .. }
-        | ResourceRef::RuntimeDiff { application_id, .. } => application_id,
+        | ResourceRef::RuntimeDiff { application_id, .. }
+        | ResourceRef::ResourceComparison { application_id, .. } => application_id,
     }
 }
 
@@ -669,6 +805,7 @@ fn build_recommendations(
                     failed_count: Some(p.failed_count),
                     occurrence_count: None,
                     restart_loop: None,
+                    resource_regression: None,
                 },
                 project: p.project.clone(),
                 application: None,
@@ -691,6 +828,7 @@ fn build_recommendations(
                     failed_count: None,
                     occurrence_count: None,
                     restart_loop: None,
+                    resource_regression: None,
                 },
                 project: p.project.clone(),
                 application: None,
@@ -718,6 +856,7 @@ fn build_recommendations(
                     failed_count: None,
                     occurrence_count: None,
                     restart_loop: None,
+                    resource_regression: None,
                 },
                 project: p.project.clone(),
                 application: None,
@@ -741,6 +880,7 @@ fn build_recommendations(
                 failed_count: None,
                 occurrence_count: None,
                 restart_loop: None,
+                resource_regression: None,
             },
             project: ProjectRef {
                 id: r.project_id,
@@ -772,6 +912,7 @@ fn build_recommendations(
                 failed_count: None,
                 occurrence_count: Some(r.discovery_count),
                 restart_loop: None,
+                resource_regression: None,
             },
             project: ProjectRef {
                 id: r.project_id,
@@ -871,6 +1012,7 @@ fn discovery_item(r: DiscoveryRow) -> PriorityItem {
             failed_count: None,
             occurrence_count: Some(r.occurrence_count),
             restart_loop,
+            resource_regression: None,
         },
         occurred_at: relevant,
         project: ProjectRef {
@@ -911,6 +1053,7 @@ fn changed_item(r: &ChangedRow) -> PriorityItem {
             failed_count: None,
             occurrence_count: None,
             restart_loop: None,
+            resource_regression: None,
         },
         occurred_at: r.target_deployed_at,
         project: ProjectRef {
@@ -1018,12 +1161,15 @@ async fn organization_summary(
     .await?;
     let new_discovery_scopes =
         load_new_discovery_scopes(&mut tx, principal.organization_id, from, now, rec_limit).await?;
-    let mut totals:OrganizationTotals=sqlx::query_as(&format!("{CHANGED_CTE} SELECT (SELECT count(*) FROM runtime_event_groups WHERE occurrence_count>0 AND organization_id=$1 AND first_seen_at BETWEEN $2 AND $3)::bigint new_discoveries,(SELECT count(*) FROM runtime_event_groups WHERE occurrence_count>0 AND organization_id=$1 AND status='open')::bigint open_discoveries,(SELECT count(*) FROM runtime_event_groups WHERE occurrence_count>0 AND organization_id=$1 AND status='acknowledged')::bigint acknowledged_discoveries,(SELECT count(*) FROM agg WHERE new_count+disappeared_count>0)::bigint changed_applications,0::bigint projects_with_notification_problems,(SELECT count(*) FROM notification_deliveries WHERE organization_id=$1 AND status='failed' AND terminal_at BETWEEN $2 AND $3)::bigint failed_notification_deliveries,(SELECT jsonb_build_object('factual_total',count(*),'actionable_total',count(*) FILTER(WHERE (e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>1 OR e.verdict<>'expected')),'evaluation_pending',count(*) FILTER(WHERE e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>1),'expected',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='expected'),'requires_review',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='requires_review'),'policy_conflict',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='policy_conflict'),'unclassified',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='unclassified')) FROM runtime_event_groups g LEFT JOIN runtime_group_policy_evaluations e ON e.group_id=g.id LEFT JOIN runtime_policy_states ps ON ps.organization_id=g.organization_id AND ps.project_id=g.project_id AND ps.application_id=g.application_id WHERE g.occurrence_count>0 AND g.organization_id=$1) policy" )).bind(principal.organization_id).bind(from).bind(now).fetch_one(&mut *tx).await?;
+    let resource_findings =
+        load_resource_findings(&mut tx, principal.organization_id, None, from, limit).await?;
+    let mut totals:OrganizationTotals=sqlx::query_as(&format!("{CHANGED_CTE} SELECT (SELECT count(*) FROM runtime_event_groups WHERE occurrence_count>0 AND organization_id=$1 AND first_seen_at BETWEEN $2 AND $3)::bigint new_discoveries,(SELECT count(*) FROM runtime_event_groups WHERE occurrence_count>0 AND organization_id=$1 AND status='open')::bigint open_discoveries,(SELECT count(*) FROM runtime_event_groups WHERE occurrence_count>0 AND organization_id=$1 AND status='acknowledged')::bigint acknowledged_discoveries,(SELECT count(*) FROM agg WHERE new_count+disappeared_count>0)::bigint changed_applications,0::bigint projects_with_notification_problems,(SELECT count(*) FROM notification_deliveries WHERE organization_id=$1 AND status='failed' AND terminal_at BETWEEN $2 AND $3)::bigint failed_notification_deliveries,(SELECT count(*) FROM release_resource_findings WHERE organization_id=$1 AND closed_at IS NULL)::bigint resource_regressions,(SELECT jsonb_build_object('factual_total',count(*),'actionable_total',count(*) FILTER(WHERE (e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>1 OR e.verdict<>'expected')),'evaluation_pending',count(*) FILTER(WHERE e.group_id IS NULL OR e.policy_state_version<>COALESCE(ps.state_version,0) OR e.evaluator_version<>1),'expected',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='expected'),'requires_review',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='requires_review'),'policy_conflict',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='policy_conflict'),'unclassified',count(*) FILTER(WHERE e.policy_state_version=COALESCE(ps.state_version,0) AND e.evaluator_version=1 AND e.verdict='unclassified')) FROM runtime_event_groups g LEFT JOIN runtime_group_policy_evaluations e ON e.group_id=g.id LEFT JOIN runtime_policy_states ps ON ps.organization_id=g.organization_id AND ps.project_id=g.project_id AND ps.application_id=g.application_id WHERE g.occurrence_count>0 AND g.organization_id=$1) policy" )).bind(principal.organization_id).bind(from).bind(now).fetch_one(&mut *tx).await?;
     totals.projects_with_notification_problems = total_problem_count;
     let mut items: Vec<_> = changed
         .iter()
         .map(changed_item)
         .chain(discoveries.into_iter().map(discovery_item))
+        .chain(resource_findings.iter().map(resource_item))
         .collect();
     for p in &problems {
         let count = if p.failed_count > 0 {
@@ -1053,6 +1199,7 @@ async fn organization_summary(
                 failed_count: Some(p.failed_count),
                 occurrence_count: None,
                 restart_loop: None,
+                resource_regression: None,
             },
             occurred_at: now,
             project: p.project.clone(),
@@ -1065,13 +1212,16 @@ async fn organization_summary(
     }
     sort_items(&mut items);
     items.truncate(usize::try_from(limit).unwrap_or_default());
-    let recommendations = build_recommendations(
+    let mut recommendations = build_recommendations(
         &problems,
         &changed,
         &new_discovery_scopes,
         now,
         usize::try_from(rec_limit).unwrap_or_default(),
     );
+    recommendations.extend(resource_recommendations(&resource_findings, now));
+    recommendations.sort_by(|a, b| a.priority.cmp(&b.priority).then_with(|| a.id.cmp(&b.id)));
+    recommendations.truncate(usize::try_from(rec_limit).unwrap_or_default());
     let changed_applications = selected_changed
         .into_iter()
         .map(|r| {
@@ -1132,7 +1282,16 @@ async fn application_summary(
         limit,
     )
     .await?;
+    let resource_findings = load_resource_findings(
+        &mut tx,
+        principal.organization_id,
+        Some(application_id),
+        from,
+        limit,
+    )
+    .await?;
     let mut items: Vec<_> = discoveries.into_iter().map(discovery_item).collect();
+    items.extend(resource_findings.iter().map(resource_item));
     let changed =
         load_application_changed(&mut tx, principal.organization_id, application_id).await?;
     if let Some(ref r) = changed
@@ -1184,6 +1343,7 @@ async fn application_summary(
                 failed_count: None,
                 occurrence_count: None,
                 restart_loop: None,
+                resource_regression: None,
             },
             project: project.clone(),
             application: Some(application.clone()),
@@ -1207,6 +1367,7 @@ async fn application_summary(
                 failed_count: None,
                 occurrence_count: Some(counts.0),
                 restart_loop: None,
+                resource_regression: None,
             },
             project: project.clone(),
             application: Some(application.clone()),
@@ -1217,7 +1378,17 @@ async fn application_summary(
             created_from_snapshot_at: now,
         });
     }
+    recommendations.extend(resource_recommendations(&resource_findings, now));
+    recommendations.sort_by(|a, b| a.priority.cmp(&b.priority).then_with(|| a.id.cmp(&b.id)));
     recommendations.truncate(usize::try_from(rec_limit).unwrap_or_default());
+    let resource_regressions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM release_resource_findings WHERE organization_id=$1 AND project_id=$2 AND application_id=$3 AND closed_at IS NULL",
+    )
+    .bind(principal.organization_id)
+    .bind(project_id)
+    .bind(application_id)
+    .fetch_one(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(Json(ApplicationSummary {
         generated_at: now,
@@ -1236,6 +1407,7 @@ async fn application_summary(
             disappeared_runtime_items,
             unchanged_runtime_items,
             total_runtime_items,
+            resource_regressions,
             policy,
         },
         release_comparison: comparison,
@@ -1265,8 +1437,8 @@ mod tests {
         assert_eq!(bounded(None, 20, 50, "limit").unwrap(), 20);
         assert_eq!(serde_json::to_string(&WindowKind::Day).unwrap(), "\"24h\"");
         assert!(serde_json::from_str::<WindowKind>("\"30d\"").is_err());
-        assert_eq!(ORGANIZATION_ATTENTION_QUERY_BUDGET, 9);
-        assert_eq!(APPLICATION_ATTENTION_QUERY_BUDGET, 9);
+        assert_eq!(ORGANIZATION_ATTENTION_QUERY_BUDGET, 10);
+        assert_eq!(APPLICATION_ATTENTION_QUERY_BUDGET, 10);
     }
     #[test]
     fn tuple_order_is_stable() {
@@ -1290,6 +1462,7 @@ mod tests {
                 failed_count: None,
                 occurrence_count: Some(count),
                 restart_loop: None,
+                resource_regression: None,
             },
             occurred_at: at,
             project: p.clone(),
@@ -1325,6 +1498,7 @@ mod tests {
                 failed_count: None,
                 occurrence_count: Some(4),
                 restart_loop: None,
+                resource_regression: None,
             },
             occurred_at: Utc::now(),
             project: ProjectRef {

@@ -107,6 +107,9 @@ pub fn server_message_kind(message: &protocol::v1::ServerMessage) -> &'static st
     match message.message {
         Some(server_message::Message::SessionAccepted(_)) => "session_accepted",
         Some(server_message::Message::BatchAcknowledgement(_)) => "batch_acknowledgement",
+        Some(server_message::Message::ResourceBatchAcknowledgement(_)) => {
+            "resource_batch_acknowledgement"
+        }
         Some(server_message::Message::Control(_)) => "control",
         None => "unknown",
     }

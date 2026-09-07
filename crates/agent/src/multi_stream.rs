@@ -1,14 +1,14 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use chrono::Utc;
-use event_model::RuntimeEvent;
+use event_model::{ResourceAggregate, RuntimeEvent};
 use protocol::v1::{AgentHello, AgentMessage, Heartbeat, agent_message, server_message};
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use crate::{
     attribution::{KubernetesWatchState, ReleaseObservation},
-    config::{LoadedApplicationCredential, SafetyLimits, ServerConfig},
+    config::{LoadedApplicationCredential, ResourceObservationConfig, SafetyLimits, ServerConfig},
     counters::Counters,
     delivery::EventBuffer,
     session::{connect_with_backoff, handle_control},
@@ -18,6 +18,7 @@ use crate::{
 enum StreamItem {
     Event(Box<RuntimeEvent>),
     Release(Box<ReleaseObservation>),
+    Resource(Box<ResourceAggregate>),
 }
 
 #[derive(Debug)]
@@ -29,11 +30,13 @@ pub struct ApplicationStreams {
 }
 
 impl ApplicationStreams {
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         server: &ServerConfig,
         credentials: Vec<LoadedApplicationCredential>,
         hello: &AgentHello,
         safety: &SafetyLimits,
+        resources: &ResourceObservationConfig,
         counters: Arc<Counters>,
         watch_ready: &watch::Receiver<KubernetesWatchState>,
         kernel_degraded: bool,
@@ -50,6 +53,8 @@ impl ApplicationStreams {
                 hello.clone(),
                 safety.queue_capacity,
                 safety.batch_size,
+                resources.queue_capacity,
+                resources.batch_size,
                 receiver,
                 shutdown.subscribe(),
                 counters.clone(),
@@ -112,6 +117,26 @@ impl ApplicationStreams {
         }
     }
 
+    pub fn route_resource(&self, route_id: Uuid, aggregate: ResourceAggregate) -> bool {
+        let Some(sender) = self.routes.get(&route_id) else {
+            self.counters
+                .resource_attribution_failed
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return false;
+        };
+        if sender
+            .try_send(StreamItem::Resource(Box::new(aggregate)))
+            .is_ok()
+        {
+            true
+        } else {
+            self.counters
+                .resource_queue_dropped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            false
+        }
+    }
+
     pub async fn shutdown(self) {
         let _ = self.shutdown.send(true);
         for task in self.tasks {
@@ -131,6 +156,8 @@ async fn run_stream(
     hello: AgentHello,
     queue_capacity: usize,
     batch_size: usize,
+    resource_queue_capacity: usize,
+    resource_batch_size: usize,
     mut receiver: mpsc::Receiver<StreamItem>,
     mut shutdown: watch::Receiver<bool>,
     counters: Arc<Counters>,
@@ -139,6 +166,9 @@ async fn run_stream(
 ) {
     let mut buffer = EventBuffer::new(queue_capacity, batch_size);
     let mut release_pending = BTreeMap::<String, ReleaseObservation>::new();
+    let mut resource_queued = Vec::<ResourceAggregate>::new();
+    let mut resource_pending = BTreeMap::<u64, Vec<ResourceAggregate>>::new();
+    let mut resource_sequence = 1_u64;
     loop {
         if *shutdown.borrow() {
             return;
@@ -161,6 +191,7 @@ async fn run_stream(
                 break;
             }
         }
+        let _ = replay_resource_batches(&session.sender, &resource_pending, &counters).await;
         let mut flush = tokio::time::interval(Duration::from_millis(10));
         let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
         let mut release_dirty = true;
@@ -169,7 +200,8 @@ async fn run_stream(
                 item = receiver.recv() => {
                     let Some(item) = item else { return };
                     buffer_stream_item(item, &mut buffer, &mut release_pending,
-                        queue_capacity, &mut release_dirty, &counters);
+                        &mut resource_queued, queue_capacity, resource_queue_capacity,
+                        &mut release_dirty, &counters);
                 }
                 _ = flush.tick() => {
                     flush_release_observations(&session.sender, &release_pending,
@@ -179,6 +211,11 @@ async fn run_stream(
                     {
                         break;
                     }
+                    if flush_resource_queue(
+                        &session.sender, &mut resource_queued, &mut resource_pending,
+                        &mut resource_sequence, resource_queue_capacity, resource_batch_size,
+                        &counters,
+                    ).await.is_err() { break; }
                 }
                 _ = heartbeat.tick() => {
                     let message = AgentMessage {
@@ -186,6 +223,7 @@ async fn run_stream(
                         message: Some(agent_message::Message::Heartbeat(Heartbeat {
                             sent_at_unix_nanos: Utc::now().timestamp_nanos_opt().unwrap_or_default(),
                             drop_counters: Some(counters.snapshot().into()),
+                            resource_counters: Some(counters.resource_snapshot()),
                         })),
                     };
                     if session.sender.send(message).await.is_err() { break; }
@@ -197,27 +235,10 @@ async fn run_stream(
                 }
                 incoming = session.incoming.message() => {
                     match incoming {
-                        Ok(Some(message)) => match message.message {
-                            Some(server_message::Message::BatchAcknowledgement(ack)) => {
-                                acknowledge_batch(&mut buffer, &counters, &ack);
-                            }
-                            Some(server_message::Message::Control(control)) => {
-                                let result = handle_control(control);
-                                if session.sender.send(AgentMessage {
-                                    protocol_version: event_model::PROTOCOL_VERSION,
-                                    message: Some(agent_message::Message::ControlResult(result)),
-                                }).await.is_err() { break; }
-                            }
-                            Some(server_message::Message::SessionAccepted(accepted)) => {
-                                tracing::info!(
-                                    route_id=%credential.route_id,
-                                    application_id=%accepted.application_id,
-                                    cluster_id=%accepted.cluster_id,
-                                    "Application stream accepted"
-                                );
-                            }
-                            None => tracing::warn!(route_id=%credential.route_id, "unsupported server message"),
-                        },
+                        Ok(Some(message)) => if handle_server_message(
+                            message, &mut buffer, &mut resource_pending, &counters,
+                            credential.route_id, &session.sender,
+                        ).await.is_err() { break; },
                         Ok(None) => {
                             tracing::warn!(route_id=%credential.route_id, "server closed Application stream");
                             break;
@@ -235,6 +256,96 @@ async fn run_stream(
         }
         tracing::warn!(route_id=%credential.route_id, "Application stream disconnected; reconnecting");
     }
+}
+
+async fn replay_resource_batches(
+    sender: &mpsc::Sender<AgentMessage>,
+    pending: &BTreeMap<u64, Vec<ResourceAggregate>>,
+    counters: &Counters,
+) -> Result<(), mpsc::error::SendError<AgentMessage>> {
+    for (&sequence, aggregates) in pending {
+        counters.resource_retried.fetch_add(
+            aggregates.len() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        send_resource_batch(sender, sequence, aggregates.clone()).await?;
+    }
+    Ok(())
+}
+
+async fn flush_resource_queue(
+    sender: &mpsc::Sender<AgentMessage>,
+    queued: &mut Vec<ResourceAggregate>,
+    pending: &mut BTreeMap<u64, Vec<ResourceAggregate>>,
+    sequence: &mut u64,
+    capacity: usize,
+    batch_size: usize,
+    counters: &Counters,
+) -> Result<(), mpsc::error::SendError<AgentMessage>> {
+    if queued.is_empty() {
+        return Ok(());
+    }
+    let pending_count = pending.values().map(Vec::len).sum::<usize>();
+    let available = capacity.saturating_sub(pending_count);
+    if available == 0 {
+        counters
+            .resource_queue_dropped
+            .fetch_add(queued.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        queued.clear();
+        return Ok(());
+    }
+    let split_at = queued.len().min(batch_size).min(available);
+    let aggregates = queued.drain(..split_at).collect::<Vec<_>>();
+    pending.insert(*sequence, aggregates.clone());
+    send_resource_batch(sender, *sequence, aggregates).await?;
+    *sequence = sequence.saturating_add(1);
+    Ok(())
+}
+
+async fn handle_server_message(
+    message: protocol::v1::ServerMessage,
+    buffer: &mut EventBuffer,
+    resource_pending: &mut BTreeMap<u64, Vec<ResourceAggregate>>,
+    counters: &Counters,
+    route_id: Uuid,
+    sender: &mpsc::Sender<AgentMessage>,
+) -> Result<(), mpsc::error::SendError<AgentMessage>> {
+    match message.message {
+        Some(server_message::Message::BatchAcknowledgement(ack)) => {
+            acknowledge_batch(buffer, counters, &ack);
+        }
+        Some(server_message::Message::ResourceBatchAcknowledgement(ack)) => {
+            if let Some(values) = resource_pending.remove(&ack.sequence) {
+                counters
+                    .resource_acknowledged
+                    .fetch_add(values.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                counters.resource_expired.fetch_add(
+                    u64::from(ack.retention_expired_aggregates),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+            }
+        }
+        Some(server_message::Message::Control(control)) => {
+            sender
+                .send(AgentMessage {
+                    protocol_version: event_model::PROTOCOL_VERSION,
+                    message: Some(agent_message::Message::ControlResult(handle_control(
+                        control,
+                    ))),
+                })
+                .await?;
+        }
+        Some(server_message::Message::SessionAccepted(accepted)) => {
+            tracing::info!(
+                %route_id,
+                application_id=%accepted.application_id,
+                cluster_id=%accepted.cluster_id,
+                "Application stream accepted"
+            );
+        }
+        None => tracing::warn!(%route_id, "unsupported server message"),
+    }
+    Ok(())
 }
 
 fn onboarding_heartbeat(
@@ -281,11 +392,14 @@ fn onboarding_heartbeat(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn buffer_stream_item(
     item: StreamItem,
     buffer: &mut EventBuffer,
     release_pending: &mut BTreeMap<String, ReleaseObservation>,
+    resource_queued: &mut Vec<ResourceAggregate>,
     queue_capacity: usize,
+    resource_queue_capacity: usize,
     release_dirty: &mut bool,
     counters: &Counters,
 ) {
@@ -310,7 +424,34 @@ fn buffer_stream_item(
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
+        StreamItem::Resource(aggregate) => {
+            if resource_queued.len() < resource_queue_capacity {
+                resource_queued.push(*aggregate);
+            } else {
+                counters
+                    .resource_queue_dropped
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
     }
+}
+
+async fn send_resource_batch(
+    sender: &mpsc::Sender<AgentMessage>,
+    sequence: u64,
+    aggregates: Vec<ResourceAggregate>,
+) -> Result<(), mpsc::error::SendError<AgentMessage>> {
+    sender
+        .send(AgentMessage {
+            protocol_version: event_model::PROTOCOL_VERSION,
+            message: Some(agent_message::Message::ResourceSampleBatch(
+                protocol::v1::ResourceSampleBatch {
+                    sequence,
+                    aggregates: aggregates.into_iter().map(Into::into).collect(),
+                },
+            )),
+        })
+        .await
 }
 
 async fn flush_release_observations(

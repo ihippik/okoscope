@@ -95,6 +95,34 @@ pub struct ObservationConfig {
     pub network: NetworkObservationConfig,
     #[serde(default)]
     pub files: FileObservationConfig,
+    #[serde(default)]
+    pub resources: ResourceObservationConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct ResourceObservationConfig {
+    pub enabled: bool,
+    pub sample_interval_seconds: u64,
+    pub aggregation_interval_seconds: u64,
+    pub max_cgroup_states: usize,
+    pub max_open_aggregates: usize,
+    pub queue_capacity: usize,
+    pub batch_size: usize,
+}
+
+impl Default for ResourceObservationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sample_interval_seconds: 15,
+            aggregation_interval_seconds: 60,
+            max_cgroup_states: 4_096,
+            max_open_aggregates: 1_024,
+            queue_capacity: 256,
+            batch_size: 64,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -300,6 +328,7 @@ impl AgentConfig {
             && !self.observation.network.accept
             && !self.observation.network.dns.enabled
             && !self.observation.files.enabled
+            && !self.observation.resources.enabled
         {
             return Err(ConfigError::MissingObservation);
         }
@@ -319,6 +348,24 @@ impl AgentConfig {
         }
         let dns = &self.observation.network.dns;
         let files = &self.observation.files;
+        let resources = &self.observation.resources;
+        if resources.enabled
+            && (!(10..=60).contains(&resources.sample_interval_seconds)
+                || resources.aggregation_interval_seconds != 60
+                || resources.max_cgroup_states == 0
+                || resources.max_cgroup_states > 65_536
+                || resources.max_open_aggregates == 0
+                || resources.max_open_aggregates > 16_384
+                || resources.queue_capacity == 0
+                || resources.queue_capacity > 4_096
+                || resources.batch_size == 0
+                || resources.batch_size > resources.queue_capacity
+                || resources.batch_size > event_model::MAX_RESOURCE_BATCH_AGGREGATES)
+        {
+            return Err(ConfigError::InvalidSelector(
+                "resource observation bounds are invalid".into(),
+            ));
+        }
         if files.enabled {
             if files.operations.is_empty() || files.include_paths.is_empty() {
                 return Err(ConfigError::InvalidSelector(
@@ -482,6 +529,23 @@ observation:
         let config = AgentConfig::from_yaml(VALID, Architecture::X86_64).unwrap();
         assert_eq!(config.scope.workloads.len(), 1);
         assert!(!config.observation.network.connect);
+    }
+
+    #[test]
+    fn resource_observation_is_opt_in_and_bounds_delivery() {
+        let enabled = VALID.replace(
+            "  processExec: true\n",
+            "  processExec: false\n  resources:\n    enabled: true\n",
+        );
+        let config = AgentConfig::from_yaml(&enabled, Architecture::X86_64).unwrap();
+        assert!(config.observation.resources.enabled);
+        assert_eq!(config.observation.resources.sample_interval_seconds, 15);
+
+        let invalid = enabled.replace(
+            "    enabled: true\n",
+            "    enabled: true\n    sampleIntervalSeconds: 9\n",
+        );
+        assert!(AgentConfig::from_yaml(&invalid, Architecture::X86_64).is_err());
     }
 
     #[test]

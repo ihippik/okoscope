@@ -15,5 +15,6 @@ pub mod multi_stream;
 #[cfg(target_os = "linux")]
 pub mod observer;
 pub mod process_runtime;
+pub mod resource;
 pub mod session;
 pub mod syscall;

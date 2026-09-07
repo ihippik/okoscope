@@ -1454,6 +1454,47 @@ paths:
       parameters:
         [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
       responses: { '200': { $ref: '#/components/responses/DeploymentEpisodePage' } }
+  /api/v1/projects/{project_id}/applications/{application_id}/resources:
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+      ]
+    get:
+      operationId: getApplicationResourceHistory
+      description: Returns bounded UTC resource rollups. Missing or insufficiently covered buckets remain explicit gaps and are never converted to zero. I/O rates are transferred data, not disk capacity utilization.
+      parameters:
+        - { name: metric, in: query, required: true, schema: { $ref: '#/components/schemas/ResourceMetric' } }
+        - { name: from, in: query, required: true, schema: { $ref: '#/components/schemas/Timestamp' } }
+        - { name: to, in: query, required: true, schema: { $ref: '#/components/schemas/Timestamp' } }
+        - { name: step, in: query, required: true, schema: { $ref: '#/components/schemas/ResourceStep' } }
+        - { name: release_id, in: query, schema: { type: string, format: uuid } }
+        - { name: container, in: query, schema: { type: string, minLength: 1, maxLength: 256 } }
+        - { name: mode, in: query, schema: { $ref: '#/components/schemas/ResourceNormalization' } }
+      responses:
+        '200': { $ref: '#/components/responses/ApplicationResourceHistory' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/resource-comparison:
+    parameters:
+      [
+        { $ref: '#/components/parameters/ProjectId' },
+        { $ref: '#/components/parameters/ApplicationId' },
+        { $ref: '#/components/parameters/TargetId' },
+      ]
+    get:
+      operationId: getReleaseResourceComparison
+      description: Compares equal stable windows and reports observations after a Release without claiming that the Release caused them.
+      parameters:
+        - { name: baseline_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/ReleaseResourceComparison' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /api/v1/projects/{project_id}/applications/{application_id}/releases/{target_id}/runtime-diff:
     parameters:
       [
@@ -2485,6 +2526,7 @@ components:
             new_discovery,
             open_discovery,
             container_restart_loop,
+            resource_regression,
           ],
       }
     AttentionReasonCode:
@@ -2505,6 +2547,13 @@ components:
             policy_conflict,
             policy_unclassified,
             policy_evaluation_pending,
+            oom_observed,
+            memory_limit_pressure,
+            cpu_throttling_increased,
+            cpu_pressure_increased,
+            memory_pressure_increased,
+            io_pressure_increased,
+            resource_usage_increased,
           ],
       }
     AttentionRecommendationKind:
@@ -2517,6 +2566,7 @@ components:
             review_notification_backlog,
             review_release_changes,
             review_new_discoveries,
+            review_resource_regression,
           ],
       }
     AttentionWindow:
@@ -2571,6 +2621,7 @@ components:
         failed_count: { type: integer, format: int64, minimum: 0 }
         occurrence_count: { type: integer, format: int64, minimum: 0 }
         restart_loop: { $ref: '#/components/schemas/AttentionRestartLoopFacts' }
+        resource_regression: { $ref: '#/components/schemas/AttentionResourceRegressionFacts' }
     AttentionRestartLoopFacts:
       type: object
       additionalProperties: false
@@ -2596,6 +2647,7 @@ components:
         - { $ref: '#/components/schemas/AttentionApplicationResourceRef' }
         - { $ref: '#/components/schemas/AttentionRuntimeGroupResourceRef' }
         - { $ref: '#/components/schemas/AttentionRuntimeDiffResourceRef' }
+        - { $ref: '#/components/schemas/AttentionResourceComparisonRef' }
     AttentionProjectResourceRef:
       type: object
       additionalProperties: false
@@ -2807,6 +2859,7 @@ components:
           changed_applications,
           projects_with_notification_problems,
           failed_notification_deliveries,
+          resource_regressions,
           policy,
         ]
       properties:
@@ -2817,6 +2870,7 @@ components:
           changed_applications: { type: integer, format: int64, minimum: 0 },
           projects_with_notification_problems: { type: integer, format: int64, minimum: 0 },
           failed_notification_deliveries: { type: integer, format: int64, minimum: 0 },
+          resource_regressions: { type: integer, format: int64, minimum: 0 },
           policy: { $ref: '#/components/schemas/AttentionPolicyTotals' },
         }
     OrganizationAttentionSummary:
@@ -2888,6 +2942,7 @@ components:
           disappeared_runtime_items,
           unchanged_runtime_items,
           total_runtime_items,
+          resource_regressions,
           policy,
         ]
       properties:
@@ -2899,6 +2954,7 @@ components:
           disappeared_runtime_items: { type: integer, format: int64, minimum: 0 },
           unchanged_runtime_items: { type: integer, format: int64, minimum: 0 },
           total_runtime_items: { type: integer, format: int64, minimum: 0 },
+          resource_regressions: { type: integer, format: int64, minimum: 0 },
           policy: { $ref: '#/components/schemas/AttentionPolicyTotals' },
         }
     AttentionPolicyTotals:
@@ -4091,12 +4147,7 @@ components:
         target: { $ref: '#/components/schemas/Release' }
         items: { type: array, items: { $ref: '#/components/schemas/RuntimeDiffEntry' } }
         next_cursor: { $ref: '#/components/schemas/NullableUuid' }
-        baseline_selection_source:
-          {
-            type: string,
-            enum:
-              [explicit, transition, concurrent_transition_fallback, legacy_deployment_order, none],
-          }
+        baseline_selection_source: { $ref: '#/components/schemas/BaselineSelectionSource' }
     RuntimeDiffClassificationCount:
       type: object
       additionalProperties: false
@@ -4142,12 +4193,7 @@ components:
         coverage: { $ref: '#/components/schemas/RuntimeRetentionCoverage' }
         baseline: { oneOf: [{ $ref: '#/components/schemas/Release' }, { type: 'null' }] }
         target: { $ref: '#/components/schemas/Release' }
-        baseline_selection_source:
-          {
-            type: string,
-            enum:
-              [explicit, transition, concurrent_transition_fallback, legacy_deployment_order, none],
-          }
+        baseline_selection_source: { $ref: '#/components/schemas/BaselineSelectionSource' }
         total_item_count: { type: integer, format: int64, minimum: 0 }
         classifications:
           {
@@ -4965,6 +5011,255 @@ components:
             items: { $ref: '#/components/schemas/InventoryOccurrence' },
           }
         next_cursor: { $ref: '#/components/schemas/NullableUuid' }
+    BaselineSelectionSource:
+      type: string
+      enum: [explicit, transition, concurrent_transition_fallback, legacy_deployment_order, none]
+    ResourceMetric:
+      type: string
+      enum:
+        [
+          cpu_usage_cores,
+          cpu_quota_ratio,
+          cpu_throttled_period_ratio,
+          cpu_throttled_seconds,
+          memory_current_bytes,
+          memory_anon_bytes,
+          memory_file_bytes,
+          memory_headroom_ratio,
+          memory_high_events,
+          memory_max_events,
+          oom_events,
+          oom_kill_events,
+          cpu_psi_some_ratio,
+          cpu_psi_full_ratio,
+          memory_psi_some_ratio,
+          memory_psi_full_ratio,
+          io_psi_some_ratio,
+          io_psi_full_ratio,
+          io_read_bytes,
+          io_write_bytes,
+          io_read_operations,
+          io_write_operations,
+          pids_current,
+          pids_limit_ratio,
+          pids_max_events,
+        ]
+    ResourceUnit: { type: string, enum: [cores, ratio, seconds, bytes, bytes_per_second, operations, operations_per_second, count] }
+    ResourceStep: { type: string, enum: [minute, hour] }
+    ResourceNormalization: { type: string, enum: [total, per_ready_replica], default: total }
+    ResourceAvailability: { type: string, enum: [available, unsupported, no_limit, insufficient_coverage] }
+    ResourceComparisonState: { type: string, enum: [collecting, insufficient_coverage, unavailable, comparable] }
+    ResourceInterpretation: { type: string, enum: [no_material_change, observed_increase, resource_pressure, resource_failure] }
+    ResourceFindingPriority: { type: string, enum: [urgent, high, normal] }
+    ResourceFindingReason:
+      type: string
+      enum:
+        [
+          oom_observed,
+          memory_limit_pressure,
+          cpu_throttling_increased,
+          cpu_pressure_increased,
+          memory_pressure_increased,
+          io_pressure_increased,
+          resource_usage_increased,
+        ]
+    ResourceCoverage:
+      type: object
+      additionalProperties: false
+      required: [covered_seconds, expected_seconds, ratio, sample_count, contributor_count, observed_replicas, ready_replicas, complete]
+      properties:
+        covered_seconds: { type: number, format: double, minimum: 0 }
+        expected_seconds: { type: number, format: double, exclusiveMinimum: 0 }
+        ratio: { type: number, format: double, minimum: 0, maximum: 1 }
+        sample_count: { type: integer, format: int64, minimum: 0 }
+        contributor_count: { type: integer, format: int64, minimum: 0 }
+        observed_replicas: { type: integer, minimum: 0 }
+        ready_replicas: { type: integer, minimum: 0 }
+        complete: { type: boolean }
+    ResourceLimit:
+      type: object
+      additionalProperties: false
+      required: [value, unit]
+      properties:
+        value: { type: number, format: double, minimum: 0 }
+        unit: { $ref: '#/components/schemas/ResourceUnit' }
+    ResourceReleaseRef:
+      type: object
+      additionalProperties: false
+      required: [id, display_name]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        display_name: { type: string, minLength: 1 }
+    ResourceHistoryPoint:
+      type: object
+      additionalProperties: false
+      required: [from, to, value, availability, coverage, release, container, limit]
+      properties:
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
+        value: { type: [number, 'null'], format: double }
+        availability: { $ref: '#/components/schemas/ResourceAvailability' }
+        coverage: { $ref: '#/components/schemas/ResourceCoverage' }
+        release: { anyOf: [{ $ref: '#/components/schemas/ResourceReleaseRef' }, { type: 'null' }] }
+        container: { type: [string, 'null'], maxLength: 256 }
+        limit: { anyOf: [{ $ref: '#/components/schemas/ResourceLimit' }, { type: 'null' }] }
+    ResourceReleaseMarker:
+      type: object
+      additionalProperties: false
+      required: [release, observed_at]
+      properties:
+        release: { $ref: '#/components/schemas/ResourceReleaseRef' }
+        observed_at: { $ref: '#/components/schemas/Timestamp' }
+    ApplicationResourceHistory:
+      type: object
+      additionalProperties: false
+      required: [metric, unit, step, normalization, from, to, availability, points, releases, containers]
+      properties:
+        metric: { $ref: '#/components/schemas/ResourceMetric' }
+        unit: { $ref: '#/components/schemas/ResourceUnit' }
+        step: { $ref: '#/components/schemas/ResourceStep' }
+        normalization: { $ref: '#/components/schemas/ResourceNormalization' }
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
+        availability: { $ref: '#/components/schemas/ResourceAvailability' }
+        points: { type: array, maxItems: 90000, items: { $ref: '#/components/schemas/ResourceHistoryPoint' } }
+        releases: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/ResourceReleaseMarker' } }
+        containers: { type: array, maxItems: 24, items: { type: string, minLength: 1, maxLength: 256 } }
+      example:
+        metric: memory_current_bytes
+        unit: bytes
+        step: minute
+        normalization: per_ready_replica
+        from: '2026-09-07T11:58:00Z'
+        to: '2026-09-07T12:02:00Z'
+        availability: available
+        containers: [api]
+        releases:
+          - { release: { id: '00000000-0000-0000-0000-000000000003', display_name: v1.8 }, observed_at: '2026-09-07T12:00:00Z' }
+        points:
+          - from: '2026-09-07T11:58:00Z'
+            to: '2026-09-07T11:59:00Z'
+            value: 440401920
+            availability: available
+            coverage: { covered_seconds: 120, expected_seconds: 120, ratio: 1, sample_count: 8, contributor_count: 2, observed_replicas: 2, ready_replicas: 2, complete: true }
+            release: null
+            container: api
+            limit: { value: 1073741824, unit: bytes }
+          - from: '2026-09-07T11:59:00Z'
+            to: '2026-09-07T12:00:00Z'
+            value: null
+            availability: insufficient_coverage
+            coverage: { covered_seconds: 0, expected_seconds: 120, ratio: 0, sample_count: 0, contributor_count: 0, observed_replicas: 0, ready_replicas: 2, complete: false }
+            release: null
+            container: api
+            limit: null
+    ResourceComparisonWindow:
+      type: object
+      additionalProperties: false
+      required: [from, to, duration_seconds, release, episode_id, coverage]
+      properties:
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
+        duration_seconds: { type: integer, format: int64, minimum: 0 }
+        release: { $ref: '#/components/schemas/ResourceReleaseRef' }
+        episode_id: { $ref: '#/components/schemas/Uuid' }
+        coverage: { $ref: '#/components/schemas/ResourceCoverage' }
+    ResourceMetricComparison:
+      type: object
+      additionalProperties: false
+      required: [metric, unit, state, interpretation, availability, baseline, target, absolute_change, relative_change, percentage_point_change, limit]
+      properties:
+        metric: { $ref: '#/components/schemas/ResourceMetric' }
+        unit: { $ref: '#/components/schemas/ResourceUnit' }
+        state: { $ref: '#/components/schemas/ResourceComparisonState' }
+        interpretation: { $ref: '#/components/schemas/ResourceInterpretation' }
+        availability: { $ref: '#/components/schemas/ResourceAvailability' }
+        baseline: { type: [number, 'null'], format: double }
+        target: { type: [number, 'null'], format: double }
+        absolute_change: { type: [number, 'null'], format: double }
+        relative_change: { type: [number, 'null'], format: double, description: Null when the baseline is zero or values are unavailable. }
+        percentage_point_change: { type: [number, 'null'], format: double, description: Used only for ratio metrics. }
+        limit: { anyOf: [{ $ref: '#/components/schemas/ResourceLimit' }, { type: 'null' }] }
+    ResourceRegressionFinding:
+      type: object
+      additionalProperties: false
+      required: [id, reason_code, priority, metric, rule_version, threshold, sustained_buckets, baseline, target, change]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        reason_code: { $ref: '#/components/schemas/ResourceFindingReason' }
+        priority: { $ref: '#/components/schemas/ResourceFindingPriority' }
+        metric: { $ref: '#/components/schemas/ResourceMetric' }
+        rule_version: { type: integer, minimum: 1 }
+        threshold: { type: number, format: double }
+        sustained_buckets: { type: integer, minimum: 1 }
+        baseline: { type: [number, 'null'], format: double }
+        target: { type: number, format: double }
+        change: { type: [number, 'null'], format: double }
+    ReleaseResourceComparison:
+      type: object
+      additionalProperties: false
+      required: [state, interpretation, baseline_selection_source, baseline_window, target_window, collection_progress, metrics, findings]
+      properties:
+        state: { $ref: '#/components/schemas/ResourceComparisonState' }
+        interpretation: { type: string, const: observed_after_release }
+        baseline_selection_source: { $ref: '#/components/schemas/BaselineSelectionSource' }
+        baseline_window: { anyOf: [{ $ref: '#/components/schemas/ResourceComparisonWindow' }, { type: 'null' }] }
+        target_window: { anyOf: [{ $ref: '#/components/schemas/ResourceComparisonWindow' }, { type: 'null' }] }
+        collection_progress: { type: number, format: double, minimum: 0, maximum: 1 }
+        metrics: { type: array, maxItems: 25, items: { $ref: '#/components/schemas/ResourceMetricComparison' } }
+        findings: { type: array, maxItems: 25, items: { $ref: '#/components/schemas/ResourceRegressionFinding' } }
+      example:
+        state: comparable
+        interpretation: observed_after_release
+        baseline_selection_source: transition
+        collection_progress: 1
+        baseline_window:
+          from: '2026-09-07T10:30:00Z'
+          to: '2026-09-07T11:00:00Z'
+          duration_seconds: 1800
+          release: { id: '00000000-0000-0000-0000-000000000002', display_name: v1.7 }
+          episode_id: '00000000-0000-0000-0000-000000000012'
+          coverage: { covered_seconds: 3480, expected_seconds: 3600, ratio: 0.9667, sample_count: 232, contributor_count: 60, observed_replicas: 2, ready_replicas: 2, complete: true }
+        target_window:
+          from: '2026-09-07T11:10:00Z'
+          to: '2026-09-07T11:40:00Z'
+          duration_seconds: 1800
+          release: { id: '00000000-0000-0000-0000-000000000003', display_name: v1.8 }
+          episode_id: '00000000-0000-0000-0000-000000000013'
+          coverage: { covered_seconds: 3500, expected_seconds: 3600, ratio: 0.9722, sample_count: 234, contributor_count: 60, observed_replicas: 2, ready_replicas: 2, complete: true }
+        metrics:
+          - { metric: cpu_throttled_period_ratio, unit: ratio, state: comparable, interpretation: resource_pressure, availability: available, baseline: 0.01, target: 0.18, absolute_change: 0.17, relative_change: 17, percentage_point_change: 17, limit: null }
+          - { metric: memory_current_bytes, unit: bytes, state: comparable, interpretation: observed_increase, availability: available, baseline: 440401920, target: 639631360, absolute_change: 199229440, relative_change: 0.4524, percentage_point_change: null, limit: { value: 1073741824, unit: bytes } }
+        findings:
+          - { id: '00000000-0000-0000-0000-000000000020', reason_code: cpu_throttling_increased, priority: high, metric: cpu_throttled_period_ratio, rule_version: 1, threshold: 0.05, sustained_buckets: 3, baseline: 0.01, target: 0.18, change: 0.17 }
+    AttentionResourceRegressionFacts:
+      type: object
+      additionalProperties: false
+      required: [finding_id, reason_code, metric, unit, rule_version, threshold, sustained_buckets, baseline, target, change, baseline_window, target_window]
+      properties:
+        finding_id: { $ref: '#/components/schemas/Uuid' }
+        reason_code: { $ref: '#/components/schemas/ResourceFindingReason' }
+        metric: { $ref: '#/components/schemas/ResourceMetric' }
+        unit: { $ref: '#/components/schemas/ResourceUnit' }
+        rule_version: { type: integer, minimum: 1 }
+        threshold: { type: number, format: double }
+        sustained_buckets: { type: integer, minimum: 1 }
+        baseline: { type: [number, 'null'], format: double }
+        target: { type: number, format: double }
+        change: { type: [number, 'null'], format: double }
+        baseline_window: { $ref: '#/components/schemas/ResourceComparisonWindow' }
+        target_window: { $ref: '#/components/schemas/ResourceComparisonWindow' }
+    AttentionResourceComparisonRef:
+      type: object
+      additionalProperties: false
+      required: [type, project_id, application_id, target_release_id, from, to]
+      properties:
+        type: { type: string, const: resource_comparison }
+        project_id: { $ref: '#/components/schemas/Uuid' }
+        application_id: { $ref: '#/components/schemas/Uuid' }
+        target_release_id: { $ref: '#/components/schemas/Uuid' }
+        from: { $ref: '#/components/schemas/Timestamp' }
+        to: { $ref: '#/components/schemas/Timestamp' }
     Uuid: { type: string, format: uuid }
     NullableUuid: { type: [string, 'null'], format: uuid }
     NullableOpaqueCursor: { type: [string, 'null'] }
@@ -5167,6 +5462,18 @@ components:
         content:
           { application/json: { schema: { $ref: '#/components/schemas/DeploymentEpisodePage' } } },
       }
+    ApplicationResourceHistory:
+      description: Bounded Application resource history with explicit gaps and coverage
+      headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApplicationResourceHistory' }
+    ReleaseResourceComparison:
+      description: Causal-neutral comparison of equal stable resource windows
+      headers: { X-Request-Id: { $ref: '#/components/headers/RequestId' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ReleaseResourceComparison' }
     RuntimeDiff:
       {
         description: Runtime behavior diff,

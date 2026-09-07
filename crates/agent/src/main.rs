@@ -17,6 +17,7 @@ mod handshake {
         snapshot: &agent::counters::CounterSnapshot,
         process_exit_ready: bool,
         container_lifecycle_ready: bool,
+        resource_ready: bool,
         cluster_uid: String,
     ) -> AgentHello {
         let mut capabilities = config.observation.capabilities();
@@ -28,6 +29,9 @@ mod handshake {
         }
         capabilities.push(protocol::KUBERNETES_RELEASE_DISCOVERY_CAPABILITY.into());
         capabilities.push(protocol::ONBOARDING_STATUS_CAPABILITY.into());
+        if resource_ready {
+            capabilities.push(protocol::RESOURCE_UTILIZATION_CAPABILITY.into());
+        }
         AgentHello {
             agent_version: env!("CARGO_PKG_VERSION").into(),
             node_name: config.identity.node_name.clone(),
@@ -37,6 +41,7 @@ mod handshake {
             drop_counters: Some((*snapshot).into()),
             cluster_uid,
             cluster_name: config.identity.cluster_name.clone(),
+            resource_counters: Some(protocol::v1::ResourceCounters::default()),
         }
     }
 
@@ -64,10 +69,40 @@ observation:
             &Counters::default().snapshot(),
             false,
             false,
+            false,
             uid.clone(),
         );
         assert_eq!(greeting.cluster_name, "Production Europe");
         assert_eq!(greeting.cluster_uid, uid);
+    }
+
+    #[test]
+    fn resource_capability_is_omitted_when_profile_is_not_ready() {
+        let config: AgentConfig = serde_yaml::from_str(
+            r#"
+apiVersion: okoscope.io/v1alpha1
+kind: AgentConfiguration
+server: { endpoint: https://grpc.example.com:443 }
+identity: { nodeName: worker-1, clusterName: test }
+scope: { workloads: [] }
+observation: { processExec: true }
+"#,
+        )
+        .unwrap();
+        let greeting = hello(
+            &config,
+            &Counters::default().snapshot(),
+            false,
+            false,
+            false,
+            Uuid::new_v4().to_string(),
+        );
+        assert!(
+            !greeting
+                .capabilities
+                .iter()
+                .any(|value| value == protocol::RESOURCE_UTILIZATION_CAPABILITY)
+        );
     }
 
     fn kernel_release() -> String {
@@ -96,6 +131,7 @@ mod linux {
         multi_stream::ApplicationStreams,
         observer::Observer,
         process_runtime::ProcessGenerationStore,
+        resource::ResourceSampler,
         syscall::{self, Architecture},
     };
     use agent_ebpf_common::KernelEvent;
@@ -172,6 +208,11 @@ mod linux {
         };
         let mut cgroup_resolver =
             cgroup::CgroupResolver::new("/sys/fs/cgroup").context("index host cgroup hierarchy")?;
+        let mut resource_sampler = config
+            .observation
+            .resources
+            .enabled
+            .then(|| ResourceSampler::new(&config.observation.resources));
         let mut rate_limiter = EventRateLimiter::new(config.safety.max_events_per_second);
         let mut dns_rate_limiter =
             EventRateLimiter::new(config.observation.network.dns.max_events_per_second);
@@ -185,6 +226,8 @@ mod linux {
             &counters.snapshot(),
             process_exit_ready,
             *lifecycle_readiness.borrow() == agent::attribution::KubernetesWatchState::Ready,
+            config.observation.resources.enabled
+                && std::path::Path::new("/sys/fs/cgroup/cgroup.controllers").is_file(),
             cluster_uid,
         );
         let streams = ApplicationStreams::start(
@@ -192,6 +235,7 @@ mod linux {
             credentials,
             &hello,
             &config.safety,
+            &config.observation.resources,
             counters.clone(),
             &lifecycle_readiness,
             config.observation.process_exit && !process_exit_ready,
@@ -202,9 +246,22 @@ mod linux {
         );
         let mut poll = tokio::time::interval(Duration::from_millis(10));
         let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
+        let mut resource_poll = tokio::time::interval(Duration::from_secs(
+            config.observation.resources.sample_interval_seconds,
+        ));
         let mut lifecycle_readiness_open = true;
         loop {
             tokio::select! {
+                _ = resource_poll.tick(), if resource_sampler.is_some() => {
+                    if let Some(sampler) = resource_sampler.as_mut() {
+                        for (route_id, aggregate) in sampler.sample(
+                            &mut cgroup_resolver, &cache, &config.identity.node_name,
+                            &config.scope.workloads, Utc::now(), &counters,
+                        ) {
+                            streams.route_resource(route_id, aggregate);
+                        }
+                    }
+                }
                 _ = poll.tick() => {
                     while let Ok(observation) = release_receiver.try_recv() {
                         streams.route_release_observation(observation);
