@@ -1,6 +1,6 @@
 dependencies:
 - name: okoscope-agent
   repository: file://../okoscope-agent
-  version: 0.2.0
-digest: sha256:baedb9b25d8ef23f8908c3b99472fee2b2aa6ef68370508db3f01df224f57d64
-generated: "2026-09-08T07:01:06.299859+03:00"
+  version: 0.2.1
+digest: sha256:fa8df18794d0b3260f5458696c2ddbc8d4390b432a51e23cee4ab42d105a0584
+generated: "2026-09-08T07:26:26.190238+03:00"

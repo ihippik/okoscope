@@ -8,7 +8,7 @@ Okoscope publishes two charts with the same semantic release version:
 Production commands should always include `--version <OKOSCOPE_VERSION>`. This is a
 placeholder, not a predefined shell variable: replace it with the exact published
 semantic version shown by the authenticated Okoscope onboarding page, for example
-`--version 0.2.0`. If onboarding reports `installation_metadata_unavailable`, the
+`--version 0.2.1`. If onboarding reports `installation_metadata_unavailable`, the
 Okoscope operator has not yet published/configured an installable agent release;
 do not guess a version. Component images are pinned by the chart release. Never put
 a database URL or Application credential in a Helm values file or `--set` argument.

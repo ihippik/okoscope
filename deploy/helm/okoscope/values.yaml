@@ -27,8 +27,8 @@ setupAuthorization:
   expiresAtKey: setup-token-expires-at
 agentInstallation:
   chartReference: oci://ghcr.io/ihippik/charts/okoscope-agent
-  chartVersion: "0.2.0"
-  recommendedAgentVersion: "0.2.0"
+  chartVersion: "0.2.1"
+  recommendedAgentVersion: "0.2.1"
   minimumAgentVersion: "0.1.0"
   publicGrpcEndpoint: ""
   tlsMode: system

@@ -1,11 +1,11 @@
 apiVersion: okoscope.io/v1alpha1
 kind: ReleaseMetadata
-version: 0.2.0
+version: 0.2.1
 charts:
-  okoscope: 0.2.0
-  okoscope-agent: 0.2.0
+  okoscope: 0.2.1
+  okoscope-agent: 0.2.1
 components:
-  server: 0.2.0
-  agent: 0.2.0
-  web: 0.2.0
+  server: 0.2.1
+  agent: 0.2.1
+  web: 0.2.1
 requiredDatabaseMigration: 25

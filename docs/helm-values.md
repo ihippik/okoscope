@@ -85,8 +85,8 @@ These values describe what the Server advertises to remote agents; they do not c
 | --- | --- | --- |
 | `agentInstallation.publicGrpcEndpoint` | `""` | Public TLS gRPC endpoint reachable from agent clusters, e.g. `https://grpc.okoscope.example.com:443`. Empty omits all agent-installation metadata from the Server environment. |
 | `agentInstallation.chartReference` | `oci://ghcr.io/ihippik/charts/okoscope-agent` | Agent OCI chart reference. |
-| `agentInstallation.chartVersion` | `0.2.0` in source | Chart version offered by the installation wizard. |
-| `agentInstallation.recommendedAgentVersion` | `0.2.0` in source | Recommended agent version. |
+| `agentInstallation.chartVersion` | `0.2.1` in source | Chart version offered by the installation wizard. |
+| `agentInstallation.recommendedAgentVersion` | `0.2.1` in source | Recommended agent version. |
 | `agentInstallation.minimumAgentVersion` | `0.1.0` in source | Minimum supported agent version. |
 | `agentInstallation.tlsMode` | `system` | `system` for system certificate trust, or `custom_ca` for a private CA. |
 | `agentInstallation.caSecret.name` | `""` | Required for `custom_ca`, must be empty for `system`. Names a CA Secret to create in the agent namespace; the server chart does not create it. |
