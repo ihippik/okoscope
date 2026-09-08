@@ -17,6 +17,7 @@ use crate::{
         ApplicationCredentialSummary, issue, list as list_credentials, revoke,
     },
     auth::{UserPrincipal, UserSessionAuthenticator, session_token},
+    transactional_mail::{Locale, MailConfig, MailError, TemplateData, enqueue},
     web_api::RequestId,
 };
 
@@ -25,9 +26,10 @@ struct ProvisioningState {
     pool: PgPool,
     admin: Option<AdminAuthenticator>,
     tenant: UserSessionAuthenticator,
+    mail: MailConfig,
 }
 
-pub fn router(pool: PgPool, admin: Option<AdminAuthenticator>) -> Router {
+pub fn router(pool: PgPool, admin: Option<AdminAuthenticator>, mail: MailConfig) -> Router {
     Router::new()
         .route("/api/v1/organizations", post(create_organization))
         .route("/api/v1/admin/organizations", get(list_organizations))
@@ -63,6 +65,7 @@ pub fn router(pool: PgPool, admin: Option<AdminAuthenticator>) -> Router {
             tenant: UserSessionAuthenticator::new(pool.clone()),
             pool,
             admin,
+            mail,
         })
 }
 
@@ -690,8 +693,8 @@ async fn create_application(
     let mut tx = state.pool.begin().await.map_err(|error| {
         ProvisioningError::database(&error, "application_slug_conflict", &request_id)
     })?;
-    let organization_id: Uuid =
-        sqlx::query_scalar("SELECT organization_id FROM projects WHERE id=$1")
+    let (organization_id, project_name): (Uuid, String) =
+        sqlx::query_as("SELECT organization_id,name FROM projects WHERE id=$1")
             .bind(project_id)
             .fetch_optional(&mut *tx)
             .await
@@ -730,11 +733,89 @@ async fn create_application(
         application,
         credential: issued_response(&credential),
     };
+    enqueue_application_mail(
+        &mut tx,
+        &state.mail,
+        organization_id,
+        &project_name,
+        &response.application,
+        &request_id,
+    )
+    .await?;
     complete_idempotency(&mut tx, &idempotency, response.application.id, &request_id).await?;
     tx.commit().await.map_err(|error| {
         ProvisioningError::database(&error, "application_slug_conflict", &request_id)
     })?;
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+async fn enqueue_application_mail(
+    tx: &mut Transaction<'_, Postgres>,
+    mail: &MailConfig,
+    organization_id: Uuid,
+    project_name: &str,
+    application: &ApplicationResponse,
+    request_id: &RequestId,
+) -> Result<(), ProvisioningError> {
+    if !mail.enabled {
+        return Ok(());
+    }
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT DISTINCT u.email,u.preferred_locale FROM organization_memberships m JOIN users u ON u.id=m.user_id WHERE m.organization_id=$1 AND m.role='owner' AND u.disabled_at IS NULL AND u.email_verified_at IS NOT NULL ORDER BY u.email LIMIT 101",
+    )
+    .bind(organization_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|error| ProvisioningError::database(&error, "application_slug_conflict", request_id))?;
+    if rows.len() > crate::transactional_mail::MAX_RECIPIENTS {
+        return Err(ProvisioningError::invalid(
+            "owners",
+            "verified owner recipient limit exceeded",
+            request_id,
+        ));
+    }
+    let recipients = rows
+        .into_iter()
+        .map(|(email, locale)| (email, locale.parse().unwrap_or(Locale::En)))
+        .collect::<Vec<_>>();
+    let payload = TemplateData::ApplicationCreated {
+        application_name: application.name.clone(),
+        project_name: project_name.to_owned(),
+    };
+    enqueue(
+        tx,
+        mail,
+        &format!("application-created:{}", application.id),
+        &recipients,
+        &payload,
+        None,
+        None,
+    )
+    .await
+    .map_err(|error| mail_error(error, request_id))
+}
+
+fn mail_error(error: MailError, request_id: &RequestId) -> ProvisioningError {
+    match error {
+        MailError::TooManyRecipients => ProvisioningError::invalid(
+            "owners",
+            "verified owner recipient limit exceeded",
+            request_id,
+        ),
+        MailError::Database(error) => {
+            ProvisioningError::database(&error, "application_slug_conflict", request_id)
+        }
+        MailError::InvalidPayload => {
+            tracing::error!(request_id=%request_id.0, "application mail payload rejected");
+            ProvisioningError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "internal_error",
+                message: "internal server error".into(),
+                request_id: request_id.clone(),
+                fields: None,
+            }
+        }
+    }
 }
 
 async fn owned_application(

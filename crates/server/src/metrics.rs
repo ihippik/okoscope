@@ -58,6 +58,13 @@ static WEB_API_DURATION_MICROSECONDS: AtomicU64 = AtomicU64::new(0);
 static AUTH_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static AUTH_SUCCESSES: AtomicU64 = AtomicU64::new(0);
 static AUTH_FAILURES: AtomicU64 = AtomicU64::new(0);
+static MAIL_ENABLED: AtomicU64 = AtomicU64::new(0);
+static MAIL_CLAIMS: AtomicU64 = AtomicU64::new(0);
+static MAIL_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static MAIL_SUCCESSES: AtomicU64 = AtomicU64::new(0);
+static MAIL_RETRIES: AtomicU64 = AtomicU64::new(0);
+static MAIL_TERMINAL_FAILURES: AtomicU64 = AtomicU64::new(0);
+static MAIL_LAST_SUCCESS: AtomicU64 = AtomicU64::new(0);
 static INVENTORY_PROJECTION_EVENTS: AtomicU64 = AtomicU64::new(0);
 static INVENTORY_PROJECTION_SKIPS: AtomicU64 = AtomicU64::new(0);
 static INVENTORY_ITEMS_CREATED: AtomicU64 = AtomicU64::new(0);
@@ -133,6 +140,27 @@ pub fn record_authentication(success: bool) {
         AUTH_SUCCESSES.fetch_add(1, Ordering::Relaxed);
     } else {
         AUTH_FAILURES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn configure_mail(enabled: bool) {
+    MAIL_ENABLED.store(u64::from(enabled), Ordering::Relaxed);
+}
+
+pub fn record_mail_claims(count: usize) {
+    MAIL_CLAIMS.fetch_add(u64::try_from(count).unwrap_or(u64::MAX), Ordering::Relaxed);
+}
+
+pub fn record_mail_attempt(success: bool, retry: bool, terminal: bool) {
+    MAIL_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+    MAIL_SUCCESSES.fetch_add(u64::from(success), Ordering::Relaxed);
+    MAIL_RETRIES.fetch_add(u64::from(retry), Ordering::Relaxed);
+    MAIL_TERMINAL_FAILURES.fetch_add(u64::from(terminal), Ordering::Relaxed);
+    if success {
+        MAIL_LAST_SUCCESS.store(
+            u64::try_from(chrono::Utc::now().timestamp()).unwrap_or_default(),
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -356,6 +384,17 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
     .fetch_one(pool)
     .await;
     let Ok((inventory_item_count, inventory_freshness_seconds)) = inventory_snapshot else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database metrics unavailable\n".to_owned(),
+        );
+    };
+    let mail_snapshot = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT count(*)::bigint,COALESCE(EXTRACT(EPOCH FROM (now()-min(available_at)))::bigint,0) FROM transactional_mail_outbox WHERE delivered_at IS NULL AND terminal_at IS NULL AND available_at<=now()",
+    )
+    .fetch_one(pool)
+    .await;
+    let Ok((mail_queue_depth, mail_oldest_due_seconds)) = mail_snapshot else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "database metrics unavailable\n".to_owned(),
@@ -706,6 +745,42 @@ async fn render(State(state): State<MetricsState>) -> impl IntoResponse {
         (
             "okoscope_authentication_failures_total",
             AUTH_FAILURES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_mail_enabled",
+            MAIL_ENABLED.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_mail_queue_depth",
+            u64::try_from(mail_queue_depth).unwrap_or_default(),
+        ),
+        (
+            "okoscope_mail_oldest_due_seconds",
+            u64::try_from(mail_oldest_due_seconds).unwrap_or_default(),
+        ),
+        (
+            "okoscope_mail_claims_total",
+            MAIL_CLAIMS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_mail_attempts_total",
+            MAIL_ATTEMPTS.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_mail_successes_total",
+            MAIL_SUCCESSES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_mail_retries_total",
+            MAIL_RETRIES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_mail_terminal_failures_total",
+            MAIL_TERMINAL_FAILURES.load(Ordering::Relaxed),
+        ),
+        (
+            "okoscope_mail_last_success_timestamp_seconds",
+            MAIL_LAST_SUCCESS.load(Ordering::Relaxed),
         ),
     ];
     let mut body = String::new();

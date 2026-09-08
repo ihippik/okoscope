@@ -8,4 +8,4 @@ components:
   server: 0.2.1
   agent: 0.2.1
   web: 0.2.1
-requiredDatabaseMigration: 25
+requiredDatabaseMigration: 26

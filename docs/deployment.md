@@ -75,6 +75,8 @@ All protected routes currently accept the operator bearer credential. Storing th
 
 Cross-origin browser access is disabled by default. Set `OKOSCOPE_CORS_ORIGINS` to a comma-separated list of exact `http` or `https` origins (for example `https://okoscope.example.com`); wildcards and URL paths are rejected at startup. Roll out first with an empty value, verify same-origin access, then add only the UI origin and check an authenticated preflight. CORS grants browser permission only—it never replaces bearer authentication.
 
+Transactional email uses standard authenticated SMTP and a PostgreSQL outbox. Prefer the Helm interface documented in [production self-hosting](self-hosted-deployment.md#transactional-email): it maps non-secret `mail` values to `OKOSCOPE_MAIL_*` / `OKOSCOPE_SMTP_*` settings and reads the SMTP username, password, and dedicated 64-hex-character mail encryption key only from Kubernetes Secrets. The worker is off by default. Production requires HTTPS action links plus STARTTLS or implicit TLS with certificate validation; plaintext SMTP is limited to an explicitly selected local development configuration.
+
 The server image receives `OKOSCOPE_GIT_COMMIT` as a Docker build argument in GitHub Actions; local builds deterministically report `unknown`. This milestone has no database migration. Rollback consists of deploying the previous server image and removing `OKOSCOPE_CORS_ORIGINS`; stored runtime data is unaffected.
 
 For navigation performance, run [`ops/queries/navigation.sql`](../ops/queries/navigation.sql) with tenant IDs from the installation and confirm PostgreSQL uses tenant/ownership indexes rather than unbounded scans.

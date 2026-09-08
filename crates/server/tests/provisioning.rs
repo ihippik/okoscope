@@ -14,14 +14,101 @@ use uuid::Uuid;
 const ADMIN: &str = "test-admin-credential-with-at-least-32-bytes";
 
 fn app(pool: sqlx::PgPool) -> axum::Router {
+    app_with_mail(pool, server::transactional_mail::MailConfig::default())
+}
+
+fn app_with_mail(pool: sqlx::PgPool, mail: server::transactional_mail::MailConfig) -> axum::Router {
     health::router(
         pool,
         true,
         None,
         &WebApiConfig::new(vec!["https://ui.example.com".into()])
             .unwrap()
-            .with_admin_authenticator(AdminAuthenticator::new(ADMIN).unwrap()),
+            .with_admin_authenticator(AdminAuthenticator::new(ADMIN).unwrap())
+            .with_mail(mail),
     )
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn application_mail_fans_out_only_to_verified_owners(pool: sqlx::PgPool) {
+    let mail = server::transactional_mail::MailConfig {
+        enabled: true,
+        encryption_key: [9; 32],
+        ..server::transactional_mail::MailConfig::default()
+    };
+    let app = app_with_mail(pool.clone(), mail);
+    let organization = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/v1/organizations",
+            Some(ADMIN),
+            r#"{"slug":"acme","name":"Acme"}"#,
+        ))
+        .await
+        .unwrap();
+    let organization_id = json(organization).await["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM transactional_mail_outbox")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    let project = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/v1/organizations/{organization_id}/projects"),
+            Some(ADMIN),
+            r#"{"slug":"core","name":"Core"}"#,
+        ))
+        .await
+        .unwrap();
+    let project_id = json(project).await["id"].as_str().unwrap().to_owned();
+    for (email, role, verified, locale) in [
+        ("owner-en@example.com", "owner", true, "en"),
+        ("owner-ru@example.com", "owner", true, "ru"),
+        ("pending@example.com", "owner", false, "en"),
+        ("member@example.com", "member", true, "en"),
+    ] {
+        let user_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO users(id,email,password_hash,email_verified_at,preferred_locale) VALUES($1,$2,$3,CASE WHEN $4 THEN now() END,$5)")
+            .bind(user_id).bind(email).bind("x".repeat(32)).bind(verified).bind(locale).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,$3)",
+        )
+        .bind(Uuid::parse_str(&organization_id).unwrap())
+        .bind(user_id)
+        .bind(role)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let created = app
+        .oneshot(request(
+            "POST",
+            &format!("/api/v1/projects/{project_id}/applications"),
+            Some(ADMIN),
+            r#"{"slug":"api","name":"API"}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let recipients: Vec<(String, String)> = sqlx::query_as(
+        "SELECT recipient_email,locale FROM transactional_mail_outbox ORDER BY recipient_email",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        recipients,
+        vec![
+            ("owner-en@example.com".into(), "en".into()),
+            ("owner-ru@example.com".into(), "ru".into())
+        ]
+    );
 }
 
 fn request(method: &str, uri: &str, credential: Option<&str>, body: &str) -> Request<Body> {

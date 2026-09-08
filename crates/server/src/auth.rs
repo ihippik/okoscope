@@ -201,6 +201,8 @@ pub struct AuthenticatedUser {
     pub organization_name: String,
     pub role: String,
     pub disabled_at: Option<DateTime<Utc>>,
+    pub email_verified_at: Option<DateTime<Utc>>,
+    pub preferred_locale: String,
 }
 
 #[cfg(test)]

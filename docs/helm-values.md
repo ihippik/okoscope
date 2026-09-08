@@ -54,6 +54,7 @@ Each chart also accepts `imagePullSecrets: []`, a list such as `[{name: registry
 | `internalSecret.adminCredentialKey` | `admin-credential` | Administrative credential key. |
 | `internalSecret.webhookEncryptionKey` | `webhook-encryption-key` | Stable webhook encryption key. |
 | `internalSecret.identityTokenKey` | `identity-token-key` | Identity token key. |
+| `internalSecret.mailEncryptionKey` | `mail-encryption-key` | Dedicated 32-byte, 64-hex-character key protecting secret-bearing mail outbox data. Generated and retained when `internalSecret.existingSecret` is empty; required in an external internal Secret. |
 | `setupAuthorization.existingSecret` | `""` | Existing first-owner setup Secret. Empty generates and retains a setup-token Secret, reused through `lookup`. Use an external Secret for offline GitOps rendering. |
 | `setupAuthorization.tokenKey` | `setup-token` | Setup authorization token key. |
 | `setupAuthorization.expiresAtKey` | `setup-token-expires-at` | Optional expiration key read only from an externally managed setup Secret. See the setup procedure in the installation guide. |
@@ -104,6 +105,32 @@ These values describe what the Server advertises to remote agents; they do not c
 | `notifications.concurrency` | `8` | Delivery concurrency, `1–128`. |
 | `notifications.leaseSeconds` | `30` | Delivery lease in seconds, minimum `1`. |
 | `notifications.drainSeconds` | `15` | Shutdown drain interval in seconds, minimum `1`. |
+
+### Transactional email
+
+Mail is disabled by default. SMTP username/password values are intentionally not accepted anywhere in the schema: create an existing Kubernetes Secret and configure only its name and key names. Organization creation is mail-free; enabled mail supports account security workflows and Application-created messages to verified owners.
+
+| Value | Default | Meaning / constraints |
+| --- | --- | --- |
+| `mail.enabled` | `false` | Enable transactional enqueueing and the PostgreSQL-backed SMTP worker. Required by public registration. |
+| `mail.publicWebUrl` | `""` | Browser origin used in action links. Required when mail is enabled; HTTPS is mandatory unless development plaintext is explicit. No path, query, fragment, or credentials. |
+| `mail.developmentPlaintext` | `false` | Permit local HTTP action links and plaintext SMTP. Unsuitable for shared or Internet-accessible installations. |
+| `mail.smtp.host` | `""` | Provider-neutral SMTP hostname, required when enabled. |
+| `mail.smtp.port` | `587` | SMTP TCP port, `1–65535`. |
+| `mail.smtp.tls` | `starttls` | `starttls`, `implicit`, or development-only `plaintext`. Production TLS verifies certificates. |
+| `mail.smtp.existingSecret` | `""` | Required existing Secret holding SMTP authentication credentials. |
+| `mail.smtp.usernameKey` | `username` | SMTP username key in the credential Secret. |
+| `mail.smtp.passwordKey` | `password` | SMTP password key in the credential Secret. |
+| `mail.sender.address` | `""` | Required RFC-style sender mailbox. Align its domain with the authenticated sender and DNS policy. |
+| `mail.sender.name` | `Okoscope` | Display name, `1–120` characters; newlines are rejected. |
+| `mail.defaultLocale` | `en` | Default template locale: `en` or `ru`. User-targeted mail uses the stored user locale. |
+| `mail.worker.pollMilliseconds` | `1000` | Queue polling interval, `100–60000`. |
+| `mail.worker.claimSize` | `25` | Rows claimed per poll, `1–100`. |
+| `mail.worker.concurrency` | `4` | Per-replica send concurrency, `1–32`. |
+| `mail.worker.leaseSeconds` | `60` | Claim lease, `10–600` seconds. |
+| `mail.worker.timeoutSeconds` | `15` | SMTP operation timeout, `1–120` seconds. |
+| `mail.worker.maxAttempts` | `8` | Terminal attempt bound, `1–20`. |
+| `mail.worker.retentionDays` | `30` | Non-secret terminal metadata retention, `1–365` days. Secret-bearing ciphertext is erased on success or terminal expiry. |
 
 ## `okoscope-agent`: node DaemonSet
 

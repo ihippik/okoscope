@@ -3,12 +3,16 @@ use axum::{
     extract::State,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sha2::{Digest, Sha256};
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 use crate::{
     auth::{
@@ -16,8 +20,13 @@ use crate::{
         UserSessionAuthenticator, hash_password, normalize_email, session_digest, session_token,
         validate_password, verify_password,
     },
+    transactional_mail::{Locale, MailConfig, TemplateData, enqueue},
     web_api::{RequestId, WebApiConfig},
 };
+
+const VERIFY_TTL_MINUTES: i64 = 24 * 60;
+const RESET_TTL_MINUTES: i64 = 30;
+const ACTION_COOLDOWN_SECONDS: i32 = 60;
 
 #[derive(Clone, Debug)]
 struct AuthState {
@@ -26,6 +35,7 @@ struct AuthState {
     registration_enabled: bool,
     secure_cookie: bool,
     session_lifetime: std::time::Duration,
+    mail: MailConfig,
 }
 
 pub fn router(pool: PgPool, config: &WebApiConfig) -> Router {
@@ -34,12 +44,31 @@ pub fn router(pool: PgPool, config: &WebApiConfig) -> Router {
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/auth/logout", post(logout))
+        .route(
+            "/api/v1/auth/email-verification-requests",
+            post(resend_verification),
+        )
+        .route(
+            "/api/v1/auth/email-verifications",
+            post(confirm_verification),
+        )
+        .route(
+            "/api/v1/auth/password-reset-requests",
+            post(request_password_reset),
+        )
+        .route(
+            "/api/v1/auth/password-resets",
+            post(complete_password_reset),
+        )
+        .route("/api/v1/auth/password", put(change_password))
+        .route("/api/v1/auth/preferences", put(update_preferences))
         .with_state(AuthState {
             authenticator: UserSessionAuthenticator::new(pool.clone()),
             pool,
             registration_enabled: config.registration_enabled,
             secure_cookie: config.secure_session_cookie,
             session_lifetime: config.session_lifetime,
+            mail: config.mail.clone(),
         })
 }
 
@@ -54,35 +83,21 @@ pub async fn bootstrap_owner(
     let password_hash =
         hash_password(password).map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let mut tx = pool.begin().await?;
-    let existing_owner: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM organization_memberships WHERE organization_id=$1 AND role='owner')",
-    )
-    .bind(organization_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    let existing_owner: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_memberships WHERE organization_id=$1 AND role='owner')")
+        .bind(organization_id).fetch_one(&mut *tx).await?;
     if existing_owner {
         tx.commit().await?;
         return Ok(());
     }
-    let organization_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1)")
-            .bind(organization_id)
-            .fetch_one(&mut *tx)
-            .await?;
-    anyhow::ensure!(organization_exists, "organization does not exist");
-    let user_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3) ON CONFLICT(email) DO UPDATE SET email=EXCLUDED.email RETURNING id",
-    )
-    .bind(Uuid::new_v4())
-    .bind(email)
-    .bind(password_hash)
-    .fetch_one(&mut *tx)
-    .await?;
-    sqlx::query("INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner') ON CONFLICT(organization_id,user_id) DO UPDATE SET role='owner'")
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1)")
         .bind(organization_id)
-        .bind(user_id)
-        .execute(&mut *tx)
+        .fetch_one(&mut *tx)
         .await?;
+    anyhow::ensure!(exists, "organization does not exist");
+    let user_id: Uuid = sqlx::query_scalar("INSERT INTO users(id,email,password_hash,email_verified_at) VALUES($1,$2,$3,now()) ON CONFLICT(email) DO UPDATE SET email_verified_at=coalesce(users.email_verified_at,now()) RETURNING id")
+        .bind(Uuid::new_v4()).bind(email).bind(password_hash).fetch_one(&mut *tx).await?;
+    sqlx::query("INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner') ON CONFLICT(organization_id,user_id) DO UPDATE SET role='owner'")
+        .bind(organization_id).bind(user_id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -125,9 +140,16 @@ impl AuthError {
             request_id: request_id.clone(),
         }
     }
-
+    fn validation(message: &'static str, request_id: &RequestId) -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "validation_failed",
+            message,
+            request_id,
+        )
+    }
     fn internal(error: &impl std::fmt::Display, request_id: &RequestId) -> Self {
-        tracing::error!(%error, request_id=%request_id.0, "user authentication database failure");
+        tracing::error!(%error, request_id=%request_id.0, "user authentication operation failed");
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
@@ -140,14 +162,14 @@ impl AuthError {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         #[derive(Serialize)]
-        struct ErrorBody {
+        struct Body {
             error: &'static str,
             message: &'static str,
             request_id: String,
         }
         (
             self.status,
-            Json(ErrorBody {
+            Json(Body {
                 error: self.code,
                 message: self.message,
                 request_id: self.request_id.0,
@@ -164,6 +186,7 @@ struct RegisterRequest {
     password: String,
     organization_slug: String,
     organization_name: String,
+    locale: Locale,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,6 +194,43 @@ struct RegisterRequest {
 struct LoginRequest {
     email: String,
     password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmailRequest {
+    email: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActionRequest {
+    token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResetRequest {
+    token: String,
+    new_password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreferencesRequest {
+    locale: Locale,
+}
+
+#[derive(Debug, Serialize)]
+struct Accepted {
+    status: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -184,6 +244,8 @@ struct AuthResponse {
 struct UserResponse {
     id: Uuid,
     email: String,
+    email_verified: bool,
+    preferred_locale: Locale,
 }
 
 #[derive(Debug, Serialize)]
@@ -217,7 +279,7 @@ pub(crate) fn session_cookie(
         "{SESSION_COOKIE}={token}; HttpOnly{secure}; SameSite=Lax; Path=/; Max-Age={}",
         max_age.as_secs()
     ))
-    .expect("generated session cookie is a valid header")
+    .expect("generated session cookie is valid")
 }
 
 fn expired_cookie(secure: bool) -> HeaderValue {
@@ -225,11 +287,11 @@ fn expired_cookie(secure: bool) -> HeaderValue {
     HeaderValue::from_str(&format!(
         "{SESSION_COOKIE}=; HttpOnly{secure}; SameSite=Lax; Path=/; Max-Age=0"
     ))
-    .expect("generated expired cookie is a valid header")
+    .expect("generated expired cookie is valid")
 }
 
 pub(crate) async fn insert_session(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut Transaction<'_, Postgres>,
     user_id: Uuid,
     organization_id: Uuid,
     lifetime: std::time::Duration,
@@ -239,24 +301,90 @@ pub(crate) async fn insert_session(
     let expires_at =
         Utc::now() + Duration::from_std(lifetime).unwrap_or_else(|_| Duration::hours(12));
     sqlx::query("INSERT INTO user_sessions(id,user_id,organization_id,token_hash,expires_at) VALUES($1,$2,$3,$4,$5)")
-        .bind(session_id)
-        .bind(user_id)
-        .bind(organization_id)
-        .bind(token.digest().to_vec())
-        .bind(expires_at)
-        .execute(&mut **tx)
-        .await?;
+        .bind(session_id).bind(user_id).bind(organization_id).bind(token.digest().to_vec())
+        .bind(expires_at).execute(&mut **tx).await?;
     Ok((session_id, token))
 }
 
-#[allow(clippy::too_many_lines)]
+struct ActionToken {
+    plaintext: Zeroizing<String>,
+    digest: [u8; 32],
+}
+
+fn generate_action(purpose: &str) -> ActionToken {
+    let mut bytes = [0_u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
+    let plaintext = Zeroizing::new(format!(
+        "oko_{purpose}_v1_{}",
+        URL_SAFE_NO_PAD.encode(bytes)
+    ));
+    let digest = Sha256::digest(plaintext.as_bytes()).into();
+    ActionToken { plaintext, digest }
+}
+
+fn action_digest(token: &str, purpose: &str) -> Option<[u8; 32]> {
+    let encoded = token.strip_prefix(&format!("oko_{purpose}_v1_"))?;
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).ok()?;
+    if bytes.len() != 32 || URL_SAFE_NO_PAD.encode(bytes) != encoded {
+        return None;
+    }
+    Some(Sha256::digest(token.as_bytes()).into())
+}
+
+fn action_url(config: &MailConfig, route: &str, token: &str) -> String {
+    format!(
+        "{}{route}#token={token}",
+        config.public_web_url.as_str().trim_end_matches('/')
+    )
+}
+
+struct ActionIssue<'a> {
+    user_id: Uuid,
+    email: &'a str,
+    locale: Locale,
+    purpose: &'a str,
+    logical_key: String,
+    ttl_minutes: i64,
+}
+
+async fn issue_action(
+    tx: &mut Transaction<'_, Postgres>,
+    config: &MailConfig,
+    issue: ActionIssue<'_>,
+    data: impl FnOnce(String) -> TemplateData,
+) -> Result<(), crate::transactional_mail::MailError> {
+    sqlx::query("UPDATE user_email_actions SET revoked_at=now() WHERE user_id=$1 AND purpose=$2 AND consumed_at IS NULL AND revoked_at IS NULL")
+        .bind(issue.user_id).bind(issue.purpose).execute(&mut **tx).await?;
+    let action_id = Uuid::new_v4();
+    let token = generate_action(issue.purpose);
+    let expires_at = Utc::now() + Duration::minutes(issue.ttl_minutes);
+    sqlx::query("INSERT INTO user_email_actions(id,user_id,purpose,token_digest,expires_at) VALUES($1,$2,$3,$4,$5)")
+        .bind(action_id).bind(issue.user_id).bind(issue.purpose).bind(token.digest.to_vec()).bind(expires_at)
+        .execute(&mut **tx).await?;
+    let route = if issue.purpose == "verify_email" {
+        "/verify-email"
+    } else {
+        "/reset-password"
+    };
+    let payload = data(action_url(config, route, token.plaintext.as_str()));
+    enqueue(
+        tx,
+        config,
+        &issue.logical_key,
+        &[(issue.email.to_owned(), issue.locale)],
+        &payload,
+        Some(action_id),
+        Some(expires_at),
+    )
+    .await
+}
+
 async fn register(
     State(state): State<AuthState>,
     Extension(request_id): Extension<RequestId>,
     Json(input): Json<RegisterRequest>,
 ) -> Result<Response, AuthError> {
-    if !state.registration_enabled {
-        crate::metrics::record_authentication(false);
+    if !state.registration_enabled || !state.mail.enabled {
         return Err(AuthError::new(
             StatusCode::NOT_FOUND,
             "registration_disabled",
@@ -264,26 +392,12 @@ async fn register(
             &request_id,
         ));
     }
-    let email = normalize_email(&input.email).map_err(|message| {
-        AuthError::new(
-            StatusCode::BAD_REQUEST,
-            "validation_failed",
-            message,
-            &request_id,
-        )
-    })?;
-    validate_password(&input.password).map_err(|message| {
-        AuthError::new(
-            StatusCode::BAD_REQUEST,
-            "validation_failed",
-            message,
-            &request_id,
-        )
-    })?;
+    let email = normalize_email(&input.email)
+        .map_err(|message| AuthError::validation(message, &request_id))?;
+    validate_password(&input.password)
+        .map_err(|message| AuthError::validation(message, &request_id))?;
     if !valid_slug(&input.organization_slug) || !valid_name(&input.organization_name) {
-        return Err(AuthError::new(
-            StatusCode::BAD_REQUEST,
-            "validation_failed",
+        return Err(AuthError::validation(
             "organization slug or name is invalid",
             &request_id,
         ));
@@ -297,79 +411,86 @@ async fn register(
         .begin()
         .await
         .map_err(|error| AuthError::internal(&error, &request_id))?;
-    let result = async {
-        sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)")
-            .bind(user_id)
-            .bind(&email)
-            .bind(password_hash)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("INSERT INTO organizations(id,slug,name) VALUES($1,$2,$3)")
-            .bind(organization_id)
-            .bind(&input.organization_slug)
-            .bind(&input.organization_name)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner')")
-            .bind(organization_id)
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-        let (_, token) = insert_session(
-            &mut tx,
-            user_id,
-            organization_id,
-            state.session_lifetime,
-        )
-        .await?;
-        Ok::<_, sqlx::Error>(token)
-    }
+    let result = create_registration(
+        &mut tx,
+        &state.mail,
+        &input,
+        &email,
+        &password_hash,
+        user_id,
+        organization_id,
+    )
     .await;
-    let token = match result {
-        Ok(token) => token,
-        Err(error)
-            if error
+    if let Err(error) = result {
+        if let crate::transactional_mail::MailError::Database(error) = &error
+            && error
                 .as_database_error()
-                .is_some_and(sqlx::error::DatabaseError::is_unique_violation) =>
+                .is_some_and(sqlx::error::DatabaseError::is_unique_violation)
         {
             return Err(AuthError::new(
                 StatusCode::CONFLICT,
                 "registration_conflict",
-                "registration identity already exists",
+                "email or organization slug is unavailable",
                 &request_id,
             ));
         }
-        Err(error) => return Err(AuthError::internal(&error, &request_id)),
-    };
+        return Err(AuthError::internal(&error, &request_id));
+    }
     tx.commit()
         .await
         .map_err(|error| AuthError::internal(&error, &request_id))?;
-    crate::metrics::record_authentication(true);
-    let mut response = (
-        StatusCode::CREATED,
-        Json(AuthResponse {
-            user: UserResponse { id: user_id, email },
-            organization: OrganizationResponse {
-                id: organization_id,
-                slug: input.organization_slug,
-                name: input.organization_name,
-            },
-            role: OrganizationRole::Owner,
-        }),
+    Ok((StatusCode::ACCEPTED, Json(Accepted { status: "accepted" })).into_response())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_registration(
+    tx: &mut Transaction<'_, Postgres>,
+    mail: &MailConfig,
+    input: &RegisterRequest,
+    email: &str,
+    password_hash: &str,
+    user_id: Uuid,
+    organization_id: Uuid,
+) -> Result<(), crate::transactional_mail::MailError> {
+    sqlx::query("INSERT INTO users(id,email,password_hash,email_verified_at,preferred_locale) VALUES($1,$2,$3,NULL,$4)")
+        .bind(user_id).bind(email).bind(password_hash).bind(input.locale.as_str()).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO organizations(id,slug,name) VALUES($1,$2,$3)")
+        .bind(organization_id)
+        .bind(&input.organization_slug)
+        .bind(&input.organization_name)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO organization_memberships(organization_id,user_id,role) VALUES($1,$2,'owner')",
     )
-        .into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        session_cookie(token.expose(), state.secure_cookie, state.session_lifetime),
-    );
-    Ok(response)
+    .bind(organization_id)
+    .bind(user_id)
+    .execute(&mut **tx)
+    .await?;
+    let organization_name = input.organization_name.clone();
+    issue_action(
+        tx,
+        mail,
+        ActionIssue {
+            user_id,
+            email,
+            locale: input.locale,
+            purpose: "verify_email",
+            logical_key: format!("registration:{user_id}"),
+            ttl_minutes: VERIFY_TTL_MINUTES,
+        },
+        |url| TemplateData::VerifyEmail {
+            action_url: url,
+            organization_name,
+            expires_minutes: VERIFY_TTL_MINUTES,
+        },
+    )
+    .await
 }
 
 async fn lookup_user(pool: &PgPool, email: &str) -> Result<Option<AuthenticatedUser>, sqlx::Error> {
-    sqlx::query_as("SELECT u.id user_id,u.email,u.password_hash,m.organization_id,o.slug organization_slug,o.name organization_name,m.role,u.disabled_at FROM users u JOIN organization_memberships m ON m.user_id=u.id JOIN organizations o ON o.id=m.organization_id WHERE u.email=$1 ORDER BY m.created_at,m.organization_id LIMIT 1")
-        .bind(email)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as("SELECT u.id user_id,u.email,u.password_hash,m.organization_id,o.slug organization_slug,o.name organization_name,m.role,u.disabled_at,u.email_verified_at,u.preferred_locale FROM users u JOIN organization_memberships m ON m.user_id=u.id JOIN organizations o ON o.id=m.organization_id WHERE u.email=$1 ORDER BY m.created_at,m.organization_id LIMIT 1")
+        .bind(email).fetch_optional(pool).await
 }
 
 async fn login(
@@ -384,13 +505,13 @@ async fn login(
         .map_err(|error| AuthError::internal(&error, &request_id))?;
     let dummy_hash = hash_password("okoscope enumeration resistance")
         .map_err(|error| AuthError::internal(&error, &request_id))?;
-    let verified = found.as_ref().is_some_and(|user| {
-        user.disabled_at.is_none() && verify_password(&input.password, &user.password_hash)
-    });
+    let password_ok = found
+        .as_ref()
+        .is_some_and(|user| verify_password(&input.password, &user.password_hash));
     if found.is_none() {
         let _ = verify_password(&input.password, &dummy_hash);
     }
-    let Some(user) = found.filter(|_| verified) else {
+    let Some(user) = found.filter(|user| password_ok && user.disabled_at.is_none()) else {
         crate::metrics::record_authentication(false);
         return Err(AuthError::new(
             StatusCode::UNAUTHORIZED,
@@ -399,27 +520,44 @@ async fn login(
             &request_id,
         ));
     };
+    if user.email_verified_at.is_none() {
+        return Err(AuthError::new(
+            StatusCode::FORBIDDEN,
+            "email_verification_required",
+            "email verification is required",
+            &request_id,
+        ));
+    }
+    establish_session(&state, &headers, &request_id, user).await
+}
+
+async fn establish_session(
+    state: &AuthState,
+    headers: &HeaderMap,
+    request_id: &RequestId,
+    user: AuthenticatedUser,
+) -> Result<Response, AuthError> {
     let role = user.role.parse().map_err(|()| {
         AuthError::new(
             StatusCode::UNAUTHORIZED,
             "invalid_credentials",
             "invalid email or password",
-            &request_id,
+            request_id,
         )
     })?;
     let mut tx = state
         .pool
         .begin()
         .await
-        .map_err(|error| AuthError::internal(&error, &request_id))?;
-    if let Some(old) = session_token(&headers).and_then(session_digest) {
+        .map_err(|error| AuthError::internal(&error, request_id))?;
+    if let Some(old) = session_token(headers).and_then(session_digest) {
         sqlx::query(
             "UPDATE user_sessions SET revoked_at=coalesce(revoked_at,now()) WHERE token_hash=$1",
         )
         .bind(old.to_vec())
         .execute(&mut *tx)
         .await
-        .map_err(|error| AuthError::internal(&error, &request_id))?;
+        .map_err(|error| AuthError::internal(&error, request_id))?;
     }
     let (_, token) = insert_session(
         &mut tx,
@@ -428,24 +566,13 @@ async fn login(
         state.session_lifetime,
     )
     .await
-    .map_err(|error| AuthError::internal(&error, &request_id))?;
+    .map_err(|error| AuthError::internal(&error, request_id))?;
     tx.commit()
         .await
-        .map_err(|error| AuthError::internal(&error, &request_id))?;
+        .map_err(|error| AuthError::internal(&error, request_id))?;
     crate::metrics::record_authentication(true);
-    let mut response = Json(AuthResponse {
-        user: UserResponse {
-            id: user.user_id,
-            email: user.email,
-        },
-        organization: OrganizationResponse {
-            id: user.organization_id,
-            slug: user.organization_slug,
-            name: user.organization_name,
-        },
-        role,
-    })
-    .into_response();
+    let locale = user.preferred_locale.parse().unwrap_or(Locale::En);
+    let mut response = Json(response_from_user(&user, role, locale)).into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
         session_cookie(token.expose(), state.secure_cookie, state.session_lifetime),
@@ -453,52 +580,399 @@ async fn login(
     Ok(response)
 }
 
-async fn me(
+fn response_from_user(
+    user: &AuthenticatedUser,
+    role: OrganizationRole,
+    locale: Locale,
+) -> AuthResponse {
+    AuthResponse {
+        user: UserResponse {
+            id: user.user_id,
+            email: user.email.clone(),
+            email_verified: user.email_verified_at.is_some(),
+            preferred_locale: locale,
+        },
+        organization: OrganizationResponse {
+            id: user.organization_id,
+            slug: user.organization_slug.clone(),
+            name: user.organization_name.clone(),
+        },
+        role,
+    }
+}
+
+async fn resend_verification(
     State(state): State<AuthState>,
-    headers: HeaderMap,
     Extension(request_id): Extension<RequestId>,
-) -> Result<Json<AuthResponse>, AuthError> {
-    let principal = state
-        .authenticator
-        .authenticate(session_token(&headers).unwrap_or_default())
+    Json(input): Json<EmailRequest>,
+) -> Result<Response, AuthError> {
+    issue_requested_action(&state, &request_id, input.email, "verify_email").await
+}
+
+async fn request_password_reset(
+    State(state): State<AuthState>,
+    Extension(request_id): Extension<RequestId>,
+    Json(input): Json<EmailRequest>,
+) -> Result<Response, AuthError> {
+    issue_requested_action(&state, &request_id, input.email, "reset_password").await
+}
+
+async fn issue_requested_action(
+    state: &AuthState,
+    request_id: &RequestId,
+    raw_email: String,
+    purpose: &str,
+) -> Result<Response, AuthError> {
+    let email = normalize_email(&raw_email)
+        .map_err(|message| AuthError::validation(message, request_id))?;
+    if !state.mail.enabled {
+        return Ok((StatusCode::ACCEPTED, Json(Accepted { status: "accepted" })).into_response());
+    }
+    let Some(user) = lookup_user(&state.pool, &email)
+        .await
+        .map_err(|error| AuthError::internal(&error, request_id))?
+    else {
+        return Ok((StatusCode::ACCEPTED, Json(Accepted { status: "accepted" })).into_response());
+    };
+    let eligible = user.disabled_at.is_none()
+        && ((purpose == "verify_email" && user.email_verified_at.is_none())
+            || (purpose == "reset_password" && user.email_verified_at.is_some()));
+    if eligible {
+        enqueue_requested_action(state, user, purpose)
+            .await
+            .map_err(|error| AuthError::internal(&error, request_id))?;
+    }
+    Ok((StatusCode::ACCEPTED, Json(Accepted { status: "accepted" })).into_response())
+}
+
+async fn enqueue_requested_action(
+    state: &AuthState,
+    user: AuthenticatedUser,
+    purpose: &str,
+) -> Result<(), crate::transactional_mail::MailError> {
+    let mut tx = state.pool.begin().await?;
+    let locale = user.preferred_locale.parse().unwrap_or(Locale::En);
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(user.user_id)
+        .execute(&mut *tx)
+        .await?;
+    let cooling_down: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_email_actions WHERE user_id=$1 AND purpose=$2 AND created_at>now()-make_interval(secs=>$3))")
+        .bind(user.user_id).bind(purpose).bind(f64::from(ACTION_COOLDOWN_SECONDS))
+        .fetch_one(&mut *tx).await?;
+    if cooling_down {
+        tx.commit().await?;
+        return Ok(());
+    }
+    let logical = format!(
+        "{purpose}:{}:{}",
+        user.user_id,
+        Utc::now().timestamp() / i64::from(ACTION_COOLDOWN_SECONDS)
+    );
+    if purpose == "verify_email" {
+        let organization = user.organization_name;
+        issue_action(
+            &mut tx,
+            &state.mail,
+            ActionIssue {
+                user_id: user.user_id,
+                email: &user.email,
+                locale,
+                purpose,
+                logical_key: logical,
+                ttl_minutes: VERIFY_TTL_MINUTES,
+            },
+            |url| TemplateData::VerifyEmail {
+                action_url: url,
+                organization_name: organization,
+                expires_minutes: VERIFY_TTL_MINUTES,
+            },
+        )
+        .await?;
+    } else {
+        issue_action(
+            &mut tx,
+            &state.mail,
+            ActionIssue {
+                user_id: user.user_id,
+                email: &user.email,
+                locale,
+                purpose,
+                logical_key: logical,
+                ttl_minutes: RESET_TTL_MINUTES,
+            },
+            |url| TemplateData::ResetPassword {
+                action_url: url,
+                expires_minutes: RESET_TTL_MINUTES,
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn confirm_verification(
+    State(state): State<AuthState>,
+    Extension(request_id): Extension<RequestId>,
+    Json(input): Json<ActionRequest>,
+) -> Result<Response, AuthError> {
+    let digest =
+        action_digest(&input.token, "verify_email").ok_or_else(|| unusable_action(&request_id))?;
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    let user_id = consume_action(&mut tx, digest, "verify_email")
         .await
         .map_err(|error| AuthError::internal(&error, &request_id))?
+        .ok_or_else(|| unusable_action(&request_id))?;
+    sqlx::query("UPDATE users SET email_verified_at=coalesce(email_verified_at,now()),updated_at=now() WHERE id=$1")
+        .bind(user_id).execute(&mut *tx).await.map_err(|error| AuthError::internal(&error, &request_id))?;
+    sqlx::query("UPDATE user_email_actions SET revoked_at=now() WHERE user_id=$1 AND purpose='verify_email' AND consumed_at IS NULL AND revoked_at IS NULL")
+        .bind(user_id).execute(&mut *tx).await.map_err(|error| AuthError::internal(&error, &request_id))?;
+    tx.commit()
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+fn unusable_action(request_id: &RequestId) -> AuthError {
+    AuthError::new(
+        StatusCode::BAD_REQUEST,
+        "action_token_invalid",
+        "action token is invalid or expired",
+        request_id,
+    )
+}
+
+async fn consume_action(
+    tx: &mut Transaction<'_, Postgres>,
+    digest: [u8; 32],
+    purpose: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    sqlx::query_scalar("UPDATE user_email_actions SET consumed_at=now() WHERE id=(SELECT id FROM user_email_actions WHERE token_digest=$1 AND purpose=$2 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE) RETURNING user_id")
+        .bind(digest.to_vec()).bind(purpose).fetch_optional(&mut **tx).await
+}
+
+async fn complete_password_reset(
+    State(state): State<AuthState>,
+    Extension(request_id): Extension<RequestId>,
+    Json(input): Json<ResetRequest>,
+) -> Result<Response, AuthError> {
+    validate_password(&input.new_password)
+        .map_err(|message| AuthError::validation(message, &request_id))?;
+    let digest = action_digest(&input.token, "reset_password")
+        .ok_or_else(|| unusable_action(&request_id))?;
+    let password_hash = hash_password(&input.new_password)
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    let user_id = consume_action(&mut tx, digest, "reset_password")
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?
+        .ok_or_else(|| unusable_action(&request_id))?;
+    sqlx::query("UPDATE users SET password_hash=$2,updated_at=now() WHERE id=$1")
+        .bind(user_id)
+        .bind(password_hash)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    revoke_security_state(&mut tx, user_id, None)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    enqueue_password_changed(&mut tx, &state.mail, user_id)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    tx.commit()
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn authenticate(
+    state: &AuthState,
+    headers: &HeaderMap,
+    request_id: &RequestId,
+) -> Result<crate::auth::UserPrincipal, AuthError> {
+    state
+        .authenticator
+        .authenticate(session_token(headers).unwrap_or_default())
+        .await
+        .map_err(|error| AuthError::internal(&error, request_id))?
         .ok_or_else(|| {
             AuthError::new(
                 StatusCode::UNAUTHORIZED,
                 "unauthorized",
                 "authentication required",
-                &request_id,
+                request_id,
             )
-        })?;
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT u.email,o.slug,o.name FROM users u JOIN organizations o ON o.id=$2 WHERE u.id=$1",
+        })
+}
+
+async fn change_password(
+    State(state): State<AuthState>,
+    headers: HeaderMap,
+    Extension(request_id): Extension<RequestId>,
+    Json(input): Json<ChangePasswordRequest>,
+) -> Result<Response, AuthError> {
+    validate_password(&input.new_password)
+        .map_err(|message| AuthError::validation(message, &request_id))?;
+    let principal = authenticate(&state, &headers, &request_id).await?;
+    let user = lookup_user_by_id(&state.pool, principal.user_id, principal.organization_id)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?
+        .ok_or_else(|| unusable_session(&request_id))?;
+    if !verify_password(&input.current_password, &user.password_hash) {
+        return Err(AuthError::new(
+            StatusCode::BAD_REQUEST,
+            "current_password_invalid",
+            "current password is incorrect",
+            &request_id,
+        ));
+    }
+    let password_hash = hash_password(&input.new_password)
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    sqlx::query("UPDATE users SET password_hash=$2,updated_at=now() WHERE id=$1")
+        .bind(user.user_id)
+        .bind(password_hash)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    revoke_security_state(&mut tx, user.user_id, Some(principal.session_id))
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    sqlx::query("UPDATE user_sessions SET revoked_at=now() WHERE id=$1")
+        .bind(principal.session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    let (_, token) = insert_session(
+        &mut tx,
+        user.user_id,
+        user.organization_id,
+        state.session_lifetime,
     )
-    .bind(principal.user_id)
-    .bind(principal.organization_id)
-    .fetch_optional(&state.pool)
     .await
     .map_err(|error| AuthError::internal(&error, &request_id))?;
-    let (email, slug, name) = row.ok_or_else(|| {
-        AuthError::new(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "authentication required",
-            &request_id,
+    enqueue_password_changed(&mut tx, &state.mail, user.user_id)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    tx.commit()
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    let locale = user.preferred_locale.parse().unwrap_or(Locale::En);
+    let role = user
+        .role
+        .parse()
+        .map_err(|()| unusable_session(&request_id))?;
+    let mut response = Json(response_from_user(&user, role, locale)).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        session_cookie(token.expose(), state.secure_cookie, state.session_lifetime),
+    );
+    Ok(response)
+}
+
+async fn revoke_security_state(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+    except_session: Option<Uuid>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE user_sessions SET revoked_at=coalesce(revoked_at,now()) WHERE user_id=$1 AND ($2::uuid IS NULL OR id<>$2)")
+        .bind(user_id).bind(except_session).execute(&mut **tx).await?;
+    sqlx::query("UPDATE user_email_actions SET revoked_at=coalesce(revoked_at,now()) WHERE user_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL")
+        .bind(user_id).execute(&mut **tx).await?;
+    Ok(())
+}
+
+async fn enqueue_password_changed(
+    tx: &mut Transaction<'_, Postgres>,
+    mail: &MailConfig,
+    user_id: Uuid,
+) -> Result<(), crate::transactional_mail::MailError> {
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT email,preferred_locale FROM users WHERE id=$1")
+            .bind(user_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    if let Some((email, locale)) = row {
+        enqueue(
+            tx,
+            mail,
+            &format!("password-changed:{user_id}:{}", Utc::now().timestamp()),
+            &[(email, locale.parse().unwrap_or(Locale::En))],
+            &TemplateData::PasswordChanged,
+            None,
+            None,
         )
-    })?;
-    Ok(Json(AuthResponse {
-        user: UserResponse {
-            id: principal.user_id,
-            email,
-        },
-        organization: OrganizationResponse {
-            id: principal.organization_id,
-            slug,
-            name,
-        },
-        role: principal.role,
-    }))
+        .await?;
+    }
+    Ok(())
+}
+
+async fn update_preferences(
+    State(state): State<AuthState>,
+    headers: HeaderMap,
+    Extension(request_id): Extension<RequestId>,
+    Json(input): Json<PreferencesRequest>,
+) -> Result<Json<AuthResponse>, AuthError> {
+    let principal = authenticate(&state, &headers, &request_id).await?;
+    sqlx::query("UPDATE users SET preferred_locale=$2,updated_at=now() WHERE id=$1")
+        .bind(principal.user_id)
+        .bind(input.locale.as_str())
+        .execute(&state.pool)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?;
+    let user = lookup_user_by_id(&state.pool, principal.user_id, principal.organization_id)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?
+        .ok_or_else(|| unusable_session(&request_id))?;
+    Ok(Json(response_from_user(
+        &user,
+        principal.role,
+        input.locale,
+    )))
+}
+
+async fn lookup_user_by_id(
+    pool: &PgPool,
+    user_id: Uuid,
+    organization_id: Uuid,
+) -> Result<Option<AuthenticatedUser>, sqlx::Error> {
+    sqlx::query_as("SELECT u.id user_id,u.email,u.password_hash,m.organization_id,o.slug organization_slug,o.name organization_name,m.role,u.disabled_at,u.email_verified_at,u.preferred_locale FROM users u JOIN organization_memberships m ON m.user_id=u.id AND m.organization_id=$2 JOIN organizations o ON o.id=m.organization_id WHERE u.id=$1")
+        .bind(user_id).bind(organization_id).fetch_optional(pool).await
+}
+
+fn unusable_session(request_id: &RequestId) -> AuthError {
+    AuthError::new(
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        "authentication required",
+        request_id,
+    )
+}
+
+async fn me(
+    State(state): State<AuthState>,
+    headers: HeaderMap,
+    Extension(request_id): Extension<RequestId>,
+) -> Result<Json<AuthResponse>, AuthError> {
+    let principal = authenticate(&state, &headers, &request_id).await?;
+    let user = lookup_user_by_id(&state.pool, principal.user_id, principal.organization_id)
+        .await
+        .map_err(|error| AuthError::internal(&error, &request_id))?
+        .ok_or_else(|| unusable_session(&request_id))?;
+    let locale = user.preferred_locale.parse().unwrap_or(Locale::En);
+    Ok(Json(response_from_user(&user, principal.role, locale)))
 }
 
 async fn logout(
@@ -527,16 +1001,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn production_and_development_cookie_attributes_are_explicit() {
-        let production = session_cookie("opaque", true, std::time::Duration::from_secs(600));
-        let production = production.to_str().unwrap();
-        assert!(production.contains("HttpOnly"));
-        assert!(production.contains("Secure"));
-        assert!(production.contains("SameSite=Lax"));
-        assert!(production.contains("Max-Age=600"));
+    fn action_tokens_are_canonical_purpose_scoped_and_redacted() {
+        let token = generate_action("verify_email");
+        assert_eq!(
+            action_digest(token.plaintext.as_str(), "verify_email"),
+            Some(token.digest)
+        );
+        assert!(action_digest(token.plaintext.as_str(), "reset_password").is_none());
+    }
 
-        let development = session_cookie("opaque", false, std::time::Duration::from_secs(600));
-        assert!(!development.to_str().unwrap().contains("Secure"));
+    #[test]
+    fn production_and_development_cookie_attributes_are_explicit() {
+        assert!(
+            session_cookie("opaque", true, std::time::Duration::from_secs(600))
+                .to_str()
+                .unwrap()
+                .contains("Secure")
+        );
+        assert!(
+            !session_cookie("opaque", false, std::time::Duration::from_secs(600))
+                .to_str()
+                .unwrap()
+                .contains("Secure")
+        );
         assert!(expired_cookie(true).to_str().unwrap().contains("Max-Age=0"));
     }
 }

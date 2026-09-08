@@ -330,7 +330,7 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/RegisterRequest' } } }
       responses:
-        '201': { $ref: '#/components/responses/AuthResponse' }
+        '202': { $ref: '#/components/responses/AcceptedSecurityAction' }
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
@@ -346,6 +346,77 @@ paths:
         '200': { $ref: '#/components/responses/AuthResponse' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/email-verification-requests:
+    post:
+      operationId: requestEmailVerification
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EmailSecurityRequest' } } }
+      responses:
+        '202': { $ref: '#/components/responses/AcceptedSecurityAction' }
+        '400': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/email-verifications:
+    post:
+      operationId: confirmEmailVerification
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EmailActionRequest' } } }
+      responses:
+        '204': { description: Email verified; the user must sign in }
+        '400': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/password-reset-requests:
+    post:
+      operationId: requestPasswordReset
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/EmailSecurityRequest' } } }
+      responses:
+        '202': { $ref: '#/components/responses/AcceptedSecurityAction' }
+        '400': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/password-resets:
+    post:
+      operationId: completePasswordReset
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PasswordResetRequest' } } }
+      responses:
+        '204': { description: Password changed and all sessions revoked; the user must sign in }
+        '400': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/password:
+    put:
+      operationId: changePassword
+      description: Requires a trusted Origin. Rotates the current session and revokes every other session.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PasswordChangeRequest' } } }
+      responses:
+        '200': { $ref: '#/components/responses/AuthResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/preferences:
+    put:
+      operationId: updateUserPreferences
+      description: Requires a trusted Origin.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UserPreferencesRequest' } } }
+      responses:
+        '200': { $ref: '#/components/responses/AuthResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /api/v1/auth/me:
     get:
@@ -2476,12 +2547,52 @@ components:
     RegisterRequest:
       type: object
       additionalProperties: false
-      required: [email, password, organization_slug, organization_name]
+      required: [email, password, organization_slug, organization_name, locale]
       properties:
         email: { type: string, format: email, minLength: 3, maxLength: 254 }
         password: { type: string, format: password, minLength: 12, maxLength: 256, writeOnly: true }
         organization_slug: { type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$', maxLength: 63 }
         organization_name: { type: string, minLength: 1, maxLength: 120 }
+        locale: { $ref: '#/components/schemas/SupportedLocale' }
+    SupportedLocale: { type: string, enum: [en, ru] }
+    EmailSecurityRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { type: string, format: email, minLength: 3, maxLength: 254 }
+    EmailActionRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: { type: string, minLength: 40, maxLength: 128, writeOnly: true }
+    PasswordResetRequest:
+      type: object
+      additionalProperties: false
+      required: [token, new_password]
+      properties:
+        token: { type: string, minLength: 40, maxLength: 128, writeOnly: true }
+        new_password: { type: string, format: password, minLength: 12, maxLength: 256, writeOnly: true }
+    PasswordChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string, format: password, minLength: 1, maxLength: 256, writeOnly: true }
+        new_password: { type: string, format: password, minLength: 12, maxLength: 256, writeOnly: true }
+    UserPreferencesRequest:
+      type: object
+      additionalProperties: false
+      required: [locale]
+      properties:
+        locale: { $ref: '#/components/schemas/SupportedLocale' }
+    AcceptedSecurityAction:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [accepted] }
     LoginRequest:
       type: object
       additionalProperties: false
@@ -2492,10 +2603,12 @@ components:
     AuthenticatedUser:
       type: object
       additionalProperties: false
-      required: [id, email]
+      required: [id, email, email_verified, preferred_locale]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
         email: { type: string, format: email }
+        email_verified: { type: boolean }
+        preferred_locale: { $ref: '#/components/schemas/SupportedLocale' }
     AuthenticatedOrganization:
       type: object
       additionalProperties: false
@@ -5281,6 +5394,14 @@ components:
       required: true
       content: { application/json: { schema: { $ref: '#/components/schemas/BulkRetryFilter' } } }
   responses:
+    AcceptedSecurityAction:
+      description: Accepted without disclosing identity eligibility or delivery state
+      headers:
+        Cache-Control: { schema: { type: string }, description: Always `no-store` }
+        X-Request-Id: { schema: { type: string }, description: Correlated request identifier }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AcceptedSecurityAction' }
     AuthResponse:
       description: Safe authenticated user, Organization, and role context; the opaque session is set only as an HttpOnly cookie.
       headers:

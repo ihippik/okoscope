@@ -48,11 +48,83 @@ address sends browser requests to the Server, add only those exact origins under
 port, but no path or wildcard. The chart safely serializes the derived and explicit
 origins into `OKOSCOPE_CORS_ORIGINS`.
 
-For externally managed internal keys, the referenced Secret must contain `admin-credential`, `webhook-encryption-key`, and `identity-token-key`, or the alternative key names configured below `internalSecret`. Leaving `internalSecret.existingSecret` empty lets Helm generate them once with `lookup`; the Secret has a keep policy and values are reused on upgrades. Offline GitOps rendering must use an externally managed Secret because `lookup` cannot recover live state.
+For externally managed internal keys, the referenced Secret must contain `admin-credential`, `webhook-encryption-key`, `identity-token-key`, and `mail-encryption-key`, or the alternative key names configured below `internalSecret`. The mail key is 32 random bytes encoded as 64 hexadecimal characters and protects queued verification/reset render data; back it up and never rotate it while encrypted outbox rows remain. Leaving `internalSecret.existingSecret` empty lets Helm generate keys once with `lookup`; the retained Secret and existing values are reused on upgrades. An upgrade from a chart that predates mail generates only the missing mail key. Offline GitOps rendering must use an externally managed Secret because `lookup` cannot recover live state.
 
 Set `imagePullSecrets` for a private registry. Resource requests and limits live under `server.resources`, `web.resources`, and, when enabled, `okoscope-agent.resources`. Notifications are disabled by default and are enabled with `notifications.enabled=true`; the webhook encryption key must remain stable and separately recoverable.
 
 The optional local agent uses the same values contract as the standalone chart below `okoscope-agent`. It still requires an existing Application credential Secret and at least one workload mapping.
+
+## Transactional email
+
+Transactional email is provider-neutral authenticated SMTP and is disabled by default. Private setup and `bootstrap-owner` remain mail-free. Public registration cannot be enabled until mail is usable; production validation requires an HTTPS browser origin, certificate-verified STARTTLS or implicit TLS, a sender address, an SMTP credential Secret, and the mail encryption key. Organization creation itself sends no email. Creating an Application queues a localized message for every currently verified owner of its Organization.
+
+Create SMTP credentials without placing them in a values file or shell history:
+
+```bash
+printf 'SMTP username: ' >&2
+IFS= read -r OKOSCOPE_SMTP_USERNAME
+printf 'SMTP password: ' >&2
+IFS= read -rs OKOSCOPE_SMTP_PASSWORD
+printf '\n' >&2
+kubectl -n okoscope-system create secret generic okoscope-smtp \
+  --from-literal=username="$OKOSCOPE_SMTP_USERNAME" \
+  --from-literal=password="$OKOSCOPE_SMTP_PASSWORD"
+unset OKOSCOPE_SMTP_USERNAME OKOSCOPE_SMTP_PASSWORD
+```
+
+Then add non-secret values:
+
+```yaml
+server:
+  registrationEnabled: false # enable only after test delivery succeeds
+mail:
+  enabled: true
+  publicWebUrl: https://okoscope.example.com
+  smtp:
+    host: smtp.example.com
+    port: 587
+    tls: starttls
+    existingSecret: okoscope-smtp
+    usernameKey: username
+    passwordKey: password
+  sender:
+    address: noreply@example.com
+    name: Okoscope
+  defaultLocale: en
+  worker:
+    concurrency: 4
+    claimSize: 25
+```
+
+The chart does not create a network policy that could safely identify an SMTP hostname. Kubernetes normally permits egress; in a default-deny cluster, explicitly allow DNS plus TCP egress from Server Pods to the configured SMTP endpoint and port. Do not open plaintext ports in production. Multiple Server replicas share PostgreSQL claims and may run the worker concurrently.
+
+Roll out with registration still disabled, render manifests locally, upgrade, and request a password-reset email for a dedicated existing test account. The public response is intentionally generic, so confirm enqueueing and SMTP acceptance with metrics rather than response text:
+
+```bash
+helm template okoscope deploy/helm/okoscope -f production-values.yaml >/tmp/okoscope-rendered.yaml
+helm upgrade okoscope oci://ghcr.io/ihippik/charts/okoscope \
+  --version <NEW_OKOSCOPE_VERSION> --namespace okoscope-system \
+  -f production-values.yaml --wait --timeout 10m
+kubectl -n okoscope-system port-forward service/okoscope-server 8080:8080
+curl -fsS http://127.0.0.1:8080/metrics | grep '^okoscope_mail_'
+```
+
+`okoscope_mail_queue_depth` and `okoscope_mail_oldest_due_seconds` describe backlog; claims, attempts, successes, retries, terminal failures, and the last-success timestamp distinguish progress from failure. These metrics and structured logs deliberately omit recipient addresses, subjects, bodies, links, tokens, and provider error text. SMTP acceptance is not proof of inbox delivery.
+
+### Timeweb Cloud example
+
+Create the technical mailbox in Timeweb Cloud and use its full address for both the SMTP username and `mail.sender.address`. The current official settings are `smtp.timeweb.ru`, authenticated TLS on port `587` (`mail.smtp.tls: starttls`); Timeweb also documents SSL on `465`, represented by `implicit`. Okoscope production configuration does not use Timeweb's plaintext ports. See Timeweb's [official SMTP settings](https://timeweb.cloud/docs/cms/otpravka-pochty-cherez-smtp).
+
+If the domain uses external name servers, copy the exact MX, SPF, and DKIM values shown for that domain in the Timeweb panel; do not invent or duplicate SPF records. With Timeweb name servers, verify the automatically managed records. Add a DMARC TXT policy after SPF/DKIM validate, starting with monitoring appropriate to your domain, and keep the visible From domain aligned with the authenticated mailbox domain. Allow DNS propagation before judging delivery. See Timeweb's [domain-mail DNS guide](https://timeweb.cloud/docs/mail/setting-up-domain-mail/dns-settings-for-timeweb-cloud) and [DNS record reference](https://timeweb.cloud/docs/domains/dns-records-management).
+
+### Troubleshooting and rollback
+
+- `okoscope_mail_enabled 0` means the worker is intentionally disabled. Recheck rendered non-secret values; never print Secret data.
+- A Pod stuck before startup usually indicates invalid URL/TLS/bounds or a missing Secret/key. Use `kubectl describe pod` and redacted event reasons. Test TCP/TLS reachability from an approved diagnostic Pod without supplying credentials on its command line.
+- Rising retries with an aging queue indicate connectivity, TLS, authentication, throttling, or transient SMTP rejection. Terminal failures or expired actions require a fresh verification/reset request; do not extract ciphertext or token rows.
+- After SMTP acceptance, check SPF, DKIM, DMARC, sender alignment, provider quotas, recipient spam filtering, and the provider's redacted delivery diagnostics.
+- To pause delivery, first disable public registration, then set `mail.enabled: false`; durable rows remain in PostgreSQL. Re-enable with the same mail encryption key to drain them.
+- Before rolling back to a version that does not enforce verification, disable public registration and keep it disabled. Roll back application workloads without reversing the additive database migration. Restore verification-aware Server and Web versions before enabling registration again.
 
 ## Upgrades and migrations
 

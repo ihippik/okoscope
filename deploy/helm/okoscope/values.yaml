@@ -21,6 +21,7 @@ internalSecret:
   adminCredentialKey: admin-credential
   webhookEncryptionKey: webhook-encryption-key
   identityTokenKey: identity-token-key
+  mailEncryptionKey: mail-encryption-key
 setupAuthorization:
   existingSecret: ""
   tokenKey: setup-token
@@ -45,6 +46,30 @@ notifications:
   concurrency: 8
   leaseSeconds: 30
   drainSeconds: 15
+mail:
+  enabled: false
+  # Browser origin used in verification and password-reset links. Production mail requires HTTPS.
+  publicWebUrl: ""
+  developmentPlaintext: false
+  smtp:
+    host: ""
+    port: 587
+    tls: starttls
+    existingSecret: ""
+    usernameKey: username
+    passwordKey: password
+  sender:
+    address: ""
+    name: Okoscope
+  defaultLocale: en
+  worker:
+    pollMilliseconds: 1000
+    claimSize: 25
+    concurrency: 4
+    leaseSeconds: 60
+    timeoutSeconds: 15
+    maxAttempts: 8
+    retentionDays: 30
 ingress:
   web:
     enabled: false

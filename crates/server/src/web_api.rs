@@ -22,6 +22,7 @@ pub struct WebApiConfig {
     pub cors_origins: Vec<String>,
     pub admin_authenticator: Option<AdminAuthenticator>,
     pub registration_enabled: bool,
+    pub mail: crate::transactional_mail::MailConfig,
     pub secure_session_cookie: bool,
     pub session_lifetime: std::time::Duration,
     pub setup_token_digest: Option<[u8; 32]>,
@@ -35,6 +36,7 @@ impl Default for WebApiConfig {
             cors_origins: Vec::new(),
             admin_authenticator: None,
             registration_enabled: false,
+            mail: crate::transactional_mail::MailConfig::default(),
             secure_session_cookie: true,
             session_lifetime: crate::auth::DEFAULT_SESSION_LIFETIME,
             setup_token_digest: None,
@@ -74,6 +76,7 @@ impl WebApiConfig {
             cors_origins: validated,
             admin_authenticator: None,
             registration_enabled: false,
+            mail: crate::transactional_mail::MailConfig::default(),
             secure_session_cookie: true,
             session_lifetime: crate::auth::DEFAULT_SESSION_LIFETIME,
             setup_token_digest: None,
@@ -123,6 +126,12 @@ impl WebApiConfig {
         self.registration_enabled = registration_enabled;
         self.secure_session_cookie = secure_session_cookie;
         self.session_lifetime = session_lifetime;
+        self
+    }
+
+    #[must_use]
+    pub fn with_mail(mut self, mail: crate::transactional_mail::MailConfig) -> Self {
+        self.mail = mail;
         self
     }
 }
@@ -375,7 +384,7 @@ mod tests {
             service_version: "1",
             git_commit: "unknown",
             api_version: "v1",
-            required_database_migration: 25,
+            required_database_migration: 26,
         };
         let value = serde_json::to_value(info).unwrap();
         assert_eq!(value["git_commit"], "unknown");

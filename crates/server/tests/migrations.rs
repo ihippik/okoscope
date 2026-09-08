@@ -43,6 +43,47 @@ async fn migration_only_is_idempotent_when_current(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrator = "MIGRATOR")]
 #[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn transactional_mail_schema_has_verified_backfill_defaults_and_secret_columns(
+    pool: sqlx::PgPool,
+) {
+    for table in ["user_email_actions", "transactional_mail_outbox"] {
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(exists, "{table} must exist");
+    }
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users(id,email,password_hash,email_verified_at) VALUES($1,'verified@example.com',$2,now())")
+        .bind(user_id).bind("x".repeat(32)).execute(&pool).await.unwrap();
+    let row: (bool, String) = sqlx::query_as(
+        "SELECT email_verified_at IS NOT NULL,preferred_locale FROM users WHERE id=$1",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row, (true, "en".into()));
+    let columns: Vec<String> = sqlx::query_scalar("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='transactional_mail_outbox'")
+        .fetch_all(&pool).await.unwrap();
+    for expected in [
+        "payload_ciphertext",
+        "payload_nonce",
+        "claimed_until",
+        "attempt_count",
+        "retain_until",
+        "ciphertext_erased_at",
+    ] {
+        assert!(
+            columns.iter().any(|column| column == expected),
+            "missing {expected}"
+        );
+    }
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
 async fn navigation_latest_observation_index_exists(pool: sqlx::PgPool) {
     let definition: String = sqlx::query_scalar(
         "SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='runtime_events' AND indexname='runtime_events_application_observed_idx'",

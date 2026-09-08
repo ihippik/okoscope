@@ -63,6 +63,12 @@ const LIVE_OPERATIONS: &[(&str, &str)] = &[
     ),
     ("/api/v1/auth/register", "post"),
     ("/api/v1/auth/login", "post"),
+    ("/api/v1/auth/email-verification-requests", "post"),
+    ("/api/v1/auth/email-verifications", "post"),
+    ("/api/v1/auth/password-reset-requests", "post"),
+    ("/api/v1/auth/password-resets", "post"),
+    ("/api/v1/auth/password", "put"),
+    ("/api/v1/auth/preferences", "put"),
     ("/api/v1/auth/me", "get"),
     ("/api/v1/auth/logout", "post"),
     ("/api/v1/organizations", "post"),
@@ -319,6 +325,10 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
             "/api/v1/build-info"
                 | "/api/v1/auth/register"
                 | "/api/v1/auth/login"
+                | "/api/v1/auth/email-verification-requests"
+                | "/api/v1/auth/email-verifications"
+                | "/api/v1/auth/password-reset-requests"
+                | "/api/v1/auth/password-resets"
                 | "/api/v1/setup/status"
                 | "/api/v1/setup/complete"
         ) {
@@ -381,6 +391,43 @@ fn openapi_is_valid_unique_secure_and_matches_router_inventory() {
     assert_delivery_contract(&document);
     assert_recovery_contract(&document);
     assert_secret_and_runtime_diff_contract(&document);
+    assert_auth_mail_contract(&document);
+}
+
+fn assert_auth_mail_contract(document: &serde_json::Value) {
+    let schemas = &document["components"]["schemas"];
+    for (schema, field) in [
+        ("EmailActionRequest", "token"),
+        ("PasswordResetRequest", "token"),
+        ("PasswordResetRequest", "new_password"),
+        ("PasswordChangeRequest", "current_password"),
+        ("PasswordChangeRequest", "new_password"),
+        ("RegisterRequest", "password"),
+    ] {
+        assert_eq!(schemas[schema]["properties"][field]["writeOnly"], true);
+    }
+    let user = &schemas["AuthenticatedUser"];
+    assert!(
+        user["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "email_verified")
+    );
+    assert!(
+        user["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "preferred_locale")
+    );
+    for forbidden in ["password", "password_hash", "token", "token_digest", "mail"] {
+        assert!(user["properties"].get(forbidden).is_none());
+    }
+    let created = &schemas["CreatedApplicationResponse"];
+    for forbidden in ["recipients", "mail", "delivery", "smtp"] {
+        assert!(created["properties"].get(forbidden).is_none());
+    }
 }
 
 #[test]

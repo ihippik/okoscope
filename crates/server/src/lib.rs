@@ -28,6 +28,7 @@ pub mod repository;
 pub mod resources;
 pub mod session;
 pub mod termination_projection;
+pub mod transactional_mail;
 pub mod transport;
 pub mod user_auth;
 pub mod web_api;

@@ -81,11 +81,23 @@ if helm template rejected "$root/deploy/helm/okoscope" \
   exit 1
 fi
 helm template okoscope "$root/deploy/helm/okoscope" -f "$root/deploy/helm/fixtures/self-hosted-ingress.yaml" \
-  --set server.registrationEnabled=true > "$work/self-hosted-public-registration.yaml"
+  --set server.registrationEnabled=true \
+  --set mail.enabled=true \
+  --set mail.publicWebUrl=https://okoscope.example.com \
+  --set mail.smtp.host=smtp.example.com \
+  --set mail.smtp.existingSecret=okoscope-smtp \
+  --set mail.sender.address=noreply@example.com \
+  > "$work/self-hosted-public-registration.yaml"
 grep -q 'OKOSCOPE_REGISTRATION_ENABLED: "true"' "$work/self-hosted-public-registration.yaml"
+grep -q 'OKOSCOPE_MAIL_ENABLED: "true"' "$work/self-hosted-public-registration.yaml"
 grep -q '^kind: Ingress$' "$work/self-hosted-public-registration.yaml"
 grep -q 'OKOSCOPE_REGISTRATION_ENABLED: "false"' "$work/self-hosted-ingress.yaml"
 grep -q 'OKOSCOPE_REGISTRATION_ENABLED: "false"' "$work/self-hosted.yaml"
+if helm template rejected "$root/deploy/helm/okoscope" \
+  --set server.registrationEnabled=true >/dev/null 2>&1; then
+  echo 'public registration without usable mail must be rejected' >&2
+  exit 1
+fi
 grep -q 'name: OKOSCOPE_SETUP_TOKEN' "$work/self-hosted.yaml"
 grep -A1 'name: OKOSCOPE_API_BASE_URL' "$work/self-hosted.yaml" | grep -q 'value: /'
 grep -A1 'name: OKOSCOPE_API_UPSTREAM' "$work/self-hosted.yaml" | grep -q 'value: http://okoscope-server:8080'

@@ -288,13 +288,15 @@ async fn insert_setup_rows(
     organization_id: Uuid,
     project_id: Uuid,
 ) -> Result<(), ApiError> {
-    sqlx::query("INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)")
-        .bind(user_id)
-        .bind(email)
-        .bind(password_hash)
-        .execute(&mut **tx)
-        .await
-        .map_err(ApiError::database)?;
+    sqlx::query(
+        "INSERT INTO users(id,email,password_hash,email_verified_at) VALUES($1,$2,$3,now())",
+    )
+    .bind(user_id)
+    .bind(email)
+    .bind(password_hash)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::database)?;
     sqlx::query("INSERT INTO organizations(id,slug,name) VALUES($1,$2,$3)")
         .bind(organization_id)
         .bind(&input.organization_slug)

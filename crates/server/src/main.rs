@@ -16,6 +16,7 @@ use server::{
     notification_config::NotificationArgs,
     policy_recompute::{BackfillOptions as PolicyBackfillOptions, backfill as backfill_policy},
     session::AgentSessionService,
+    transactional_mail::{MailArgs, MailService},
     transport::TransportSecurity,
     web_api::WebApiConfig,
 };
@@ -29,6 +30,18 @@ async fn wait_for_shutdown(mut shutdown: tokio::sync::watch::Receiver<bool>) {
         if shutdown.changed().await.is_err() {
             break;
         }
+    }
+}
+
+async fn drain_mail_worker(task: Option<tokio::task::JoinHandle<()>>) {
+    let Some(task) = task else { return };
+    if tokio::time::timeout(std::time::Duration::from_secs(15), task)
+        .await
+        .is_err()
+    {
+        tracing::warn!("transactional mail worker drain timed out");
+    } else {
+        tracing::info!("transactional mail worker drained");
     }
 }
 
@@ -46,6 +59,7 @@ async fn serve(
     options: ServerOptions,
     pool: sqlx::PgPool,
     notifications: Option<NotificationService>,
+    mail: Option<MailService>,
     notification_ready: bool,
     web_api_config: WebApiConfig,
 ) -> Result<()> {
@@ -82,6 +96,13 @@ async fn serve(
                 shutdown_receiver.clone(),
             ))
         });
+    let mail_task = mail.map(|service| {
+        tokio::spawn(server::transactional_mail::run(
+            service,
+            shutdown_receiver.clone(),
+        ))
+    });
+    metrics::configure_mail(mail_task.is_some());
     metrics::configure_notification_retention(options.retention.enabled);
     let runtime_retention_task = tokio::spawn(server::runtime_retention::worker::run(
         pool.clone(),
@@ -135,6 +156,7 @@ async fn serve(
             tracing::warn!("notification worker drain timed out");
         }
     }
+    drain_mail_worker(mail_task).await;
     let _ = retention_task.await;
     let _ = policy_worker_task.await;
     Ok(())
@@ -160,6 +182,8 @@ struct Args {
     admin_credential: Option<String>,
     #[command(flatten)]
     notification: NotificationArgs,
+    #[command(flatten)]
+    mail: MailArgs,
     #[arg(long, env = "OKOSCOPE_CORS_ORIGINS", value_delimiter = ',')]
     cors_origins: Vec<String>,
     #[arg(long, env = "OKOSCOPE_REGISTRATION_ENABLED", default_value_t = false)]
@@ -300,7 +324,10 @@ fn build_installation_metadata(
     Ok(Some(metadata))
 }
 
-fn build_web_api_config(args: &Args) -> Result<WebApiConfig> {
+fn build_web_api_config(
+    args: &Args,
+    mail: server::transactional_mail::MailConfig,
+) -> Result<WebApiConfig> {
     anyhow::ensure!(
         (300..=2_592_000).contains(&args.session_lifetime_seconds),
         "session lifetime must be between 300 and 2592000 seconds"
@@ -316,10 +343,30 @@ fn build_web_api_config(args: &Args) -> Result<WebApiConfig> {
                     !args.development_plaintext,
                     std::time::Duration::from_secs(args.session_lifetime_seconds),
                 )
+                .with_mail(mail)
                 .with_setup_token(args.setup_token.as_deref())
                 .with_setup_token_expiry(args.setup_token_expires_at)
                 .with_agent_installation(metadata)
         })
+}
+
+fn build_mail_config(args: &Args) -> Result<server::transactional_mail::MailConfig> {
+    args.mail
+        .build(args.development_plaintext, args.registration_enabled)
+        .map_err(anyhow::Error::msg)
+        .context("transactional mail configuration")
+}
+
+fn build_mail_service(
+    pool: &sqlx::PgPool,
+    config: server::transactional_mail::MailConfig,
+) -> Result<Option<MailService>> {
+    config
+        .enabled
+        .then(|| MailService::smtp(pool.clone(), config))
+        .transpose()
+        .map_err(anyhow::Error::msg)
+        .context("transactional SMTP transport")
 }
 
 async fn check_notifications(
@@ -478,6 +525,7 @@ async fn main() -> Result<()> {
         .build(args.development_plaintext)
         .map_err(anyhow::Error::msg)
         .context("notification delivery configuration")?;
+    let mail_config = build_mail_config(&args)?;
     let server_options = ServerOptions {
         retention: notification_config.retention,
         grpc_addr: args.grpc_addr,
@@ -486,7 +534,7 @@ async fn main() -> Result<()> {
         tls_certificate: args.tls_certificate.clone(),
         tls_private_key: args.tls_private_key.clone(),
     };
-    let mut web_api_config = build_web_api_config(&args)?;
+    let mut web_api_config = build_web_api_config(&args, mail_config.clone())?;
     let pool = PgPoolOptions::new()
         .max_connections(20)
         .connect(&args.database_url)
@@ -543,6 +591,7 @@ async fn main() -> Result<()> {
     .await
     .context("user access readiness")?;
     let notifications = NotificationService::new(pool.clone(), notification_config);
+    let mail = build_mail_service(&pool, mail_config)?;
     web_api_config = web_api_config.with_admin_authenticator(
         AdminAuthenticator::new(
             args.admin_credential
@@ -557,8 +606,21 @@ async fn main() -> Result<()> {
         server_options,
         pool,
         notifications,
+        mail,
         notification_ready,
         web_api_config,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::Args;
+
+    #[test]
+    fn flattened_command_line_arguments_have_unique_ids() {
+        Args::command().debug_assert();
+    }
 }

@@ -19,6 +19,7 @@ event-model.workspace = true
 futures.workspace = true
 hex.workspace = true
 hmac.workspace = true
+lettre.workspace = true
 protocol.workspace = true
 rand.workspace = true
 reqwest.workspace = true

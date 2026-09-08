@@ -55,6 +55,7 @@ pub fn router(
         .merge(crate::provisioning::router(
             (*pool).clone(),
             web_api_config.admin_authenticator.clone(),
+            web_api_config.mail.clone(),
         ));
     let api_router = if let Some(notifications) = notifications {
         api_router.merge(crate::notification::api::router(

@@ -31,4 +31,21 @@ data:
   OKOSCOPE_NOTIFICATION_CONCURRENCY: {{ .Values.notifications.concurrency | quote }}
   OKOSCOPE_NOTIFICATION_LEASE_SECONDS: {{ .Values.notifications.leaseSeconds | quote }}
   OKOSCOPE_NOTIFICATION_DRAIN_SECONDS: {{ .Values.notifications.drainSeconds | quote }}
+  OKOSCOPE_MAIL_ENABLED: {{ .Values.mail.enabled | quote }}
+  {{- if .Values.mail.enabled }}
+  OKOSCOPE_PUBLIC_WEB_URL: {{ .Values.mail.publicWebUrl | quote }}
+  OKOSCOPE_SMTP_HOST: {{ .Values.mail.smtp.host | quote }}
+  OKOSCOPE_SMTP_PORT: {{ .Values.mail.smtp.port | quote }}
+  OKOSCOPE_SMTP_TLS: {{ .Values.mail.smtp.tls | quote }}
+  OKOSCOPE_MAIL_FROM_ADDRESS: {{ .Values.mail.sender.address | quote }}
+  OKOSCOPE_MAIL_FROM_NAME: {{ .Values.mail.sender.name | quote }}
+  OKOSCOPE_MAIL_DEFAULT_LOCALE: {{ .Values.mail.defaultLocale | quote }}
+  OKOSCOPE_MAIL_POLL_MS: {{ .Values.mail.worker.pollMilliseconds | quote }}
+  OKOSCOPE_MAIL_CLAIM_SIZE: {{ .Values.mail.worker.claimSize | quote }}
+  OKOSCOPE_MAIL_CONCURRENCY: {{ .Values.mail.worker.concurrency | quote }}
+  OKOSCOPE_MAIL_LEASE_SECONDS: {{ .Values.mail.worker.leaseSeconds | quote }}
+  OKOSCOPE_SMTP_TIMEOUT_SECONDS: {{ .Values.mail.worker.timeoutSeconds | quote }}
+  OKOSCOPE_MAIL_MAX_ATTEMPTS: {{ .Values.mail.worker.maxAttempts | quote }}
+  OKOSCOPE_MAIL_RETENTION_DAYS: {{ .Values.mail.worker.retentionDays | quote }}
+  {{- end }}
   RUST_LOG: info
