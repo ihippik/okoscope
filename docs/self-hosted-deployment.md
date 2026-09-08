@@ -98,6 +98,18 @@ mail:
 
 The chart does not create a network policy that could safely identify an SMTP hostname. Kubernetes normally permits egress; in a default-deny cluster, explicitly allow DNS plus TCP egress from Server Pods to the configured SMTP endpoint and port. Do not open plaintext ports in production. Multiple Server replicas share PostgreSQL claims and may run the worker concurrently.
 
+All transactional messages use one reusable Console template implemented in
+`crates/server/src/transactional_mail.rs`. Its email-safe structure is a dark
+Okoscope header, monospaced `EVENT`/`STATUS` metadata, an optional scope row, a
+bordered light content card, and a cyan safety note. Verification and password
+reset messages add one prominent action button and repeat the full link in the
+HTML and plain-text alternatives. Password-change and Application-created
+messages are informational and deliberately contain no action. Keep layout CSS
+inline and table-based, preserve both English and Russian copy, HTML-escape every
+dynamic value, and do not add scripts, forms, remote images, fonts, or stylesheets.
+SMTP and sender settings above affect transport headers only; they do not alter
+the template branding.
+
 Roll out with registration still disabled, render manifests locally, upgrade, and request a password-reset email for a dedicated existing test account. The public response is intentionally generic, so confirm enqueueing and SMTP acceptance with metrics rather than response text:
 
 ```bash

@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{fmt::Write as _, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
@@ -521,113 +521,255 @@ pub fn render(locale: Locale, data: &TemplateData) -> RenderedMail {
 }
 
 fn render_en(data: &TemplateData) -> RenderedMail {
-    let e = |value: &str| escape_html(value);
     match data {
         TemplateData::VerifyEmail {
             action_url,
             organization_name,
             expires_minutes,
-        } => rendered(
-            "Confirm your Okoscope email",
-            &format!(
-                "Welcome to Okoscope. Confirm your email for {organization_name}: {action_url}\nThis link expires in {expires_minutes} minutes. If you did not register, ignore this message."
+        } => render_console(&ConsoleTemplate {
+            subject: "Confirm your Okoscope email",
+            language: "en",
+            event: "identity.verify",
+            status: "ACTION REQUIRED",
+            heading: "Confirm your email",
+            message: &format!(
+                "Welcome to Okoscope. Confirm your email address to activate access to {organization_name}."
             ),
-            &format!(
-                "<h1>Welcome to Okoscope</h1><p>Confirm your email for <strong>{}</strong>.</p><p><a href=\"{}\">Confirm email</a></p><p>This link expires in {expires_minutes} minutes. If you did not register, ignore this message.</p>",
-                e(organization_name),
-                e(action_url)
+            action: Some(("Confirm email", action_url)),
+            note: &format!(
+                "This one-time link expires in {}. If you did not create this account, you can safely ignore this message.",
+                format_duration(Locale::En, *expires_minutes)
             ),
-        ),
+            scope: Some(("ORGANIZATION", organization_name)),
+        }),
         TemplateData::ResetPassword {
             action_url,
             expires_minutes,
-        } => rendered(
-            "Reset your Okoscope password",
-            &format!(
-                "Reset your password: {action_url}\nThis one-time link expires in {expires_minutes} minutes. If you did not request it, ignore this message."
+        } => render_console(&ConsoleTemplate {
+            subject: "Reset your Okoscope password",
+            language: "en",
+            event: "auth.password_reset",
+            status: "ACTION REQUIRED",
+            heading: "Reset your password",
+            message: "A password reset was requested for your Okoscope account.",
+            action: Some(("Choose a new password", action_url)),
+            note: &format!(
+                "This one-time link expires in {}. If you did not request it, you can safely ignore this message.",
+                format_duration(Locale::En, *expires_minutes)
             ),
-            &format!(
-                "<h1>Reset your password</h1><p><a href=\"{}\">Choose a new password</a></p><p>This one-time link expires in {expires_minutes} minutes. If you did not request it, ignore this message.</p>",
-                e(action_url)
-            ),
-        ),
-        TemplateData::PasswordChanged => rendered(
-            "Your Okoscope password changed",
-            "Your Okoscope password was changed. If this was not you, contact your administrator.",
-            "<h1>Password changed</h1><p>Your Okoscope password was changed. If this was not you, contact your administrator.</p>",
-        ),
+            scope: None,
+        }),
+        TemplateData::PasswordChanged => render_console(&ConsoleTemplate {
+            subject: "Your Okoscope password changed",
+            language: "en",
+            event: "auth.password_changed",
+            status: "COMPLETED",
+            heading: "Password changed",
+            message: "Your Okoscope password was changed successfully.",
+            action: None,
+            note: "If this was not you, contact your administrator immediately.",
+            scope: None,
+        }),
         TemplateData::ApplicationCreated {
             application_name,
             project_name,
-        } => rendered(
-            "Okoscope Application created",
-            &format!("Application {application_name} was created in Project {project_name}."),
-            &format!(
-                "<h1>Application created</h1><p><strong>{}</strong> was created in Project <strong>{}</strong>.</p>",
-                e(application_name),
-                e(project_name)
+        } => render_console(&ConsoleTemplate {
+            subject: "Okoscope Application created",
+            language: "en",
+            event: "application.created",
+            status: "RECORDED",
+            heading: "Application created",
+            message: &format!(
+                "Application {application_name} was created in Project {project_name}."
             ),
-        ),
+            action: None,
+            note: "This is an informational notification; no action is required.",
+            scope: Some(("PROJECT", project_name)),
+        }),
     }
 }
 
 fn render_ru(data: &TemplateData) -> RenderedMail {
-    let e = |value: &str| escape_html(value);
     match data {
         TemplateData::VerifyEmail {
             action_url,
             organization_name,
             expires_minutes,
-        } => rendered(
-            "Подтвердите почту Okoscope",
-            &format!(
-                "Добро пожаловать в Okoscope. Подтвердите почту для {organization_name}: {action_url}\nСсылка действует {expires_minutes} минут. Если вы не регистрировались, проигнорируйте письмо."
+        } => render_console(&ConsoleTemplate {
+            subject: "Подтвердите почту Okoscope",
+            language: "ru",
+            event: "identity.verify",
+            status: "ТРЕБУЕТСЯ ДЕЙСТВИЕ",
+            heading: "Подтвердите почту",
+            message: &format!(
+                "Добро пожаловать в Okoscope. Подтвердите адрес почты, чтобы активировать доступ к {organization_name}."
             ),
-            &format!(
-                "<h1>Добро пожаловать в Okoscope</h1><p>Подтвердите почту для <strong>{}</strong>.</p><p><a href=\"{}\">Подтвердить почту</a></p><p>Ссылка действует {expires_minutes} минут. Если вы не регистрировались, проигнорируйте письмо.</p>",
-                e(organization_name),
-                e(action_url)
+            action: Some(("Подтвердить почту", action_url)),
+            note: &format!(
+                "Одноразовая ссылка действует {}. Если вы не создавали эту учётную запись, просто проигнорируйте письмо.",
+                format_duration(Locale::Ru, *expires_minutes)
             ),
-        ),
+            scope: Some(("ОРГАНИЗАЦИЯ", organization_name)),
+        }),
         TemplateData::ResetPassword {
             action_url,
             expires_minutes,
-        } => rendered(
-            "Сброс пароля Okoscope",
-            &format!(
-                "Задайте новый пароль: {action_url}\nОдноразовая ссылка действует {expires_minutes} минут. Если вы не запрашивали сброс, проигнорируйте письмо."
+        } => render_console(&ConsoleTemplate {
+            subject: "Сброс пароля Okoscope",
+            language: "ru",
+            event: "auth.password_reset",
+            status: "ТРЕБУЕТСЯ ДЕЙСТВИЕ",
+            heading: "Сброс пароля",
+            message: "Для вашей учётной записи Okoscope запрошен сброс пароля.",
+            action: Some(("Задать новый пароль", action_url)),
+            note: &format!(
+                "Одноразовая ссылка действует {}. Если вы не запрашивали сброс, просто проигнорируйте письмо.",
+                format_duration(Locale::Ru, *expires_minutes)
             ),
-            &format!(
-                "<h1>Сброс пароля</h1><p><a href=\"{}\">Задать новый пароль</a></p><p>Одноразовая ссылка действует {expires_minutes} минут. Если вы не запрашивали сброс, проигнорируйте письмо.</p>",
-                e(action_url)
-            ),
-        ),
-        TemplateData::PasswordChanged => rendered(
-            "Пароль Okoscope изменён",
-            "Ваш пароль Okoscope изменён. Если это были не вы, обратитесь к администратору.",
-            "<h1>Пароль изменён</h1><p>Ваш пароль Okoscope изменён. Если это были не вы, обратитесь к администратору.</p>",
-        ),
+            scope: None,
+        }),
+        TemplateData::PasswordChanged => render_console(&ConsoleTemplate {
+            subject: "Пароль Okoscope изменён",
+            language: "ru",
+            event: "auth.password_changed",
+            status: "ЗАВЕРШЕНО",
+            heading: "Пароль изменён",
+            message: "Пароль вашей учётной записи Okoscope успешно изменён.",
+            action: None,
+            note: "Если это были не вы, немедленно обратитесь к администратору.",
+            scope: None,
+        }),
         TemplateData::ApplicationCreated {
             application_name,
             project_name,
-        } => rendered(
-            "Создано приложение Okoscope",
-            &format!("Приложение {application_name} создано в проекте {project_name}."),
-            &format!(
-                "<h1>Создано приложение</h1><p><strong>{}</strong> создано в проекте <strong>{}</strong>.</p>",
-                e(application_name),
-                e(project_name)
-            ),
-        ),
+        } => render_console(&ConsoleTemplate {
+            subject: "Создано приложение Okoscope",
+            language: "ru",
+            event: "application.created",
+            status: "ЗАПИСАНО",
+            heading: "Создано приложение",
+            message: &format!("Приложение {application_name} создано в проекте {project_name}."),
+            action: None,
+            note: "Это информационное уведомление, никаких действий не требуется.",
+            scope: Some(("ПРОЕКТ", project_name)),
+        }),
     }
 }
 
-fn rendered(subject: &str, text: &str, html: &str) -> RenderedMail {
+struct ConsoleTemplate<'a> {
+    subject: &'a str,
+    language: &'a str,
+    event: &'a str,
+    status: &'a str,
+    heading: &'a str,
+    message: &'a str,
+    action: Option<(&'a str, &'a str)>,
+    note: &'a str,
+    scope: Option<(&'a str, &'a str)>,
+}
+
+fn render_console(template: &ConsoleTemplate<'_>) -> RenderedMail {
+    let text = console_text(template);
+    let html = console_html(template);
     RenderedMail {
-        subject: subject.to_owned(),
-        text: text.to_owned(),
-        html: html.to_owned(),
+        subject: template.subject.to_owned(),
+        text,
+        html,
     }
+}
+
+fn format_duration(locale: Locale, minutes: i64) -> String {
+    let (value, unit) = if minutes % 60 == 0 {
+        let hours = minutes / 60;
+        (hours, duration_unit(locale, hours, "hour"))
+    } else {
+        (minutes, duration_unit(locale, minutes, "minute"))
+    };
+    format!("{value} {unit}")
+}
+
+fn duration_unit(locale: Locale, value: i64, kind: &str) -> &'static str {
+    match (locale, kind) {
+        (Locale::En, "hour") => {
+            if value == 1 {
+                "hour"
+            } else {
+                "hours"
+            }
+        }
+        (Locale::En, _) => {
+            if value == 1 {
+                "minute"
+            } else {
+                "minutes"
+            }
+        }
+        (Locale::Ru, "hour") => russian_unit(value, "час", "часа", "часов"),
+        (Locale::Ru, _) => russian_unit(value, "минута", "минуты", "минут"),
+    }
+}
+
+fn russian_unit(
+    value: i64,
+    one: &'static str,
+    few: &'static str,
+    many: &'static str,
+) -> &'static str {
+    let remainder_100 = value.abs() % 100;
+    let remainder_10 = value.abs() % 10;
+    if remainder_10 == 1 && remainder_100 != 11 {
+        one
+    } else if (2..=4).contains(&remainder_10) && !(12..=14).contains(&remainder_100) {
+        few
+    } else {
+        many
+    }
+}
+
+fn console_text(template: &ConsoleTemplate<'_>) -> String {
+    let mut text = format!(
+        "OKOSCOPE / TRANSACTIONAL EVENT\nEVENT  {}\nSTATUS {}\n",
+        template.event, template.status
+    );
+    if let Some((label, value)) = template.scope {
+        let _ = writeln!(text, "{label} {value}");
+    }
+    let _ = write!(text, "\n{}\n{}\n", template.heading, template.message);
+    if let Some((label, url)) = template.action {
+        let _ = writeln!(text, "\n{label}: {url}");
+    }
+    let _ = write!(text, "\n{}\n\n-- Okoscope\n", template.note);
+    text
+}
+
+fn console_html(template: &ConsoleTemplate<'_>) -> String {
+    let scope = template.scope.map_or_else(String::new, |(label, value)| {
+        format!(
+            "<tr><td style=\"padding:4px 16px 4px 0;color:#64748b;font:600 11px/16px monospace;letter-spacing:1px\">{}</td><td style=\"padding:4px 0;color:#0f172a;font:600 12px/16px monospace\">{}</td></tr>",
+            escape_html(label), escape_html(value)
+        )
+    });
+    let action = template.action.map_or_else(String::new, |(label, url)| {
+        format!(
+            "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:24px 0 12px\"><tr><td bgcolor=\"#2563eb\" style=\"border-radius:4px\"><a href=\"{}\" style=\"display:inline-block;padding:13px 20px;color:#ffffff;font:700 14px/20px Arial,sans-serif;text-decoration:none\">{}</a></td></tr></table><p style=\"margin:12px 0 0;color:#64748b;font:12px/18px monospace;word-break:break-all\">{}</p>",
+            escape_html(url), escape_html(label), escape_html(url)
+        )
+    });
+    console_document(template, &scope, &action)
+}
+
+fn console_document(template: &ConsoleTemplate<'_>, scope: &str, action: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"{}\"><body style=\"margin:0;padding:0;background:#f1f5f9\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"background:#f1f5f9\"><tr><td align=\"center\" style=\"padding:32px 12px\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #cbd5e1\"><tr><td style=\"padding:20px 24px;background:#0f172a;border-bottom:3px solid #22d3ee;color:#ffffff;font:700 20px/24px Arial,sans-serif\">OKOSCOPE <span style=\"color:#5eead4;font:400 12px/18px monospace\">// TRANSACTIONAL EVENT</span></td></tr><tr><td style=\"padding:20px 24px;background:#f8fafc;border-bottom:1px solid #cbd5e1\"><table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td style=\"padding:4px 16px 4px 0;color:#64748b;font:600 11px/16px monospace;letter-spacing:1px\">EVENT</td><td style=\"padding:4px 0;color:#0f172a;font:600 12px/16px monospace\">{}</td></tr><tr><td style=\"padding:4px 16px 4px 0;color:#64748b;font:600 11px/16px monospace;letter-spacing:1px\">STATUS</td><td style=\"padding:4px 0;color:#047857;font:700 12px/16px monospace\">● {}</td></tr>{}</table></td></tr><tr><td style=\"padding:28px 24px\"><h1 style=\"margin:0 0 14px;color:#0f172a;font:700 24px/30px Arial,sans-serif\">{}</h1><p style=\"margin:0;color:#334155;font:15px/24px Arial,sans-serif\">{}</p>{}<div style=\"margin-top:24px;padding:14px 16px;border-left:3px solid #22d3ee;background:#ecfeff;color:#334155;font:13px/20px Arial,sans-serif\">{}</div></td></tr><tr><td style=\"padding:16px 24px;border-top:1px solid #e2e8f0;color:#64748b;font:11px/17px monospace\">OKOSCOPE // AUTOMATED TRANSACTIONAL MESSAGE</td></tr></table></td></tr></table></body></html>",
+        escape_html(template.language),
+        escape_html(template.event),
+        escape_html(template.status),
+        scope,
+        escape_html(template.heading),
+        escape_html(template.message),
+        action,
+        escape_html(template.note),
+    )
 }
 
 fn escape_html(value: &str) -> String {
@@ -972,6 +1114,111 @@ mod tests {
             assert!(mail.html.contains("A&amp;B"));
             assert!(!mail.text.is_empty());
         }
+    }
+
+    #[test]
+    fn console_templates_share_email_safe_visual_structure() {
+        for locale in [Locale::En, Locale::Ru] {
+            for data in representative_templates() {
+                let mail = render(locale, &data);
+                assert!(mail.html.starts_with("<!doctype html>"));
+                assert!(mail.html.contains("OKOSCOPE"));
+                assert!(mail.html.contains("// TRANSACTIONAL EVENT"));
+                assert!(mail.html.contains("role=\"presentation\""));
+                assert!(mail.html.contains("EVENT"));
+                assert!(mail.html.contains("STATUS"));
+                assert!(mail.html.contains("border-left:3px solid #22d3ee"));
+                assert!(!mail.html.contains("<style"));
+                assert!(!mail.html.contains("<script"));
+                assert!(!mail.html.contains("<img"));
+                assert!(!mail.html.contains("<link"));
+                assert!(!mail.html.contains("onload="));
+                assert!(!mail.html.contains("javascript:"));
+            }
+        }
+    }
+
+    #[test]
+    fn console_templates_distinguish_action_and_informational_events() {
+        let verification = render(Locale::En, &representative_templates()[0]);
+        assert!(verification.html.contains("identity.verify"));
+        assert!(verification.html.contains("ACTION REQUIRED"));
+        assert!(
+            verification
+                .html
+                .contains("href=\"https://example.com/verify#sample\"")
+        );
+        assert!(
+            verification
+                .text
+                .contains("Confirm email: https://example.com/verify#sample")
+        );
+
+        let application = render(Locale::Ru, &representative_templates()[3]);
+        assert!(application.html.contains("application.created"));
+        assert!(application.html.contains("ЗАПИСАНО"));
+        assert!(application.html.contains("ПРОЕКТ"));
+        assert!(!application.html.contains("<a href="));
+        assert!(application.text.contains("никаких действий не требуется"));
+    }
+
+    #[test]
+    fn console_templates_localize_and_escape_every_dynamic_context() {
+        let malicious = TemplateData::VerifyEmail {
+            action_url: "https://example.com/verify#sample\" onclick=\"alert(1)".into(),
+            organization_name: "<Acme & Partners>".into(),
+            expires_minutes: 42,
+        };
+        for (locale, expected) in [
+            (Locale::En, "Confirm your email"),
+            (Locale::Ru, "Подтвердите почту"),
+        ] {
+            let mail = render(locale, &malicious);
+            assert!(mail.html.contains(expected));
+            assert!(mail.html.contains("&lt;Acme &amp; Partners&gt;"));
+            assert!(mail.html.contains("#sample&quot; onclick=&quot;alert(1)"));
+            assert!(!mail.html.contains(" onclick=\"alert(1)"));
+            assert!(mail.text.contains("42"));
+            assert!(!mail.text.is_empty());
+        }
+    }
+
+    #[test]
+    fn durations_use_localized_hour_and_minute_forms() {
+        for (minutes, english, russian) in [
+            (1, "1 minute", "1 минута"),
+            (2, "2 minutes", "2 минуты"),
+            (5, "5 minutes", "5 минут"),
+            (30, "30 minutes", "30 минут"),
+            (60, "1 hour", "1 час"),
+            (120, "2 hours", "2 часа"),
+            (300, "5 hours", "5 часов"),
+            (1_260, "21 hours", "21 час"),
+            (1_320, "22 hours", "22 часа"),
+            (1_440, "24 hours", "24 часа"),
+        ] {
+            assert_eq!(format_duration(Locale::En, minutes), english);
+            assert_eq!(format_duration(Locale::Ru, minutes), russian);
+        }
+    }
+
+    fn representative_templates() -> [TemplateData; 4] {
+        [
+            TemplateData::VerifyEmail {
+                action_url: "https://example.com/verify#sample".into(),
+                organization_name: "Northstar".into(),
+                expires_minutes: 1_440,
+            },
+            TemplateData::ResetPassword {
+                action_url: "https://example.com/reset#sample".into(),
+                expires_minutes: 30,
+            },
+            TemplateData::PasswordChanged,
+            TemplateData::ApplicationCreated {
+                application_name: "Payments API".into(),
+                project_name: "Production".into(),
+            },
+        ]
     }
 
     #[test]
