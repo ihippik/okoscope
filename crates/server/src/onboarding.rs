@@ -84,6 +84,7 @@ impl AgentInstallationMetadata {
 struct OnboardingState {
     pool: PgPool,
     auth: UserSessionAuthenticator,
+    registration_enabled: bool,
     setup_digest: Option<[u8; 32]>,
     setup_expires_at: Option<DateTime<Utc>>,
     secure_cookie: bool,
@@ -97,6 +98,7 @@ pub fn router(pool: PgPool, config: &WebApiConfig) -> Router {
     let state = OnboardingState {
         auth: UserSessionAuthenticator::new(pool.clone()),
         pool,
+        registration_enabled: config.registration_enabled,
         setup_digest: config.setup_token_digest,
         setup_expires_at: config.setup_token_expires_at,
         secure_cookie: config.secure_session_cookie,
@@ -135,7 +137,7 @@ async fn setup_status(State(state): State<OnboardingState>) -> Result<Json<Setup
         .setup_expires_at
         .is_some_and(|value| value <= Utc::now());
     Ok(Json(SetupStatus {
-        state: if exists {
+        state: if exists || state.registration_enabled {
             "ready"
         } else if expired {
             "setup_unavailable"

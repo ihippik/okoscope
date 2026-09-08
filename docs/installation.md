@@ -217,7 +217,7 @@ For browser entry points not represented by that ingress (for example an externa
 reverse proxy or a separate local UI), list each exact `http://` or `https://`
 origin under `server.corsOrigins`; do not include paths or wildcards.
 
-Ordinary registration is disabled by default, including when Web ingress is enabled. For a public service where users create their own Organizations, first configure and test transactional email, an HTTPS `mail.publicWebUrl`, its SMTP credential Secret, and sender DNS as described in the [production guide](self-hosted-deployment.md#transactional-email). Then enable both `mail.enabled=true` and `server.registrationEnabled=true`. Registration creates an unverified owner and no session; the user must explicitly confirm the emailed link and sign in. Organization creation sends no separate email.
+Ordinary registration is disabled by default, including when Web ingress is enabled. For a public service where users create their own Organizations, first configure and test transactional email, an HTTPS `mail.publicWebUrl`, its SMTP credential Secret, and sender DNS as described in the [production guide](self-hosted-deployment.md#transactional-email). Then enable both `mail.enabled=true` and `server.registrationEnabled=true`. On an empty database, enabled public registration takes precedence over the private first-owner setup screen. Registration creates an unverified owner and no session; the user must explicitly confirm the emailed link and sign in. Organization creation sends no separate email.
 
 For a private installation with registration disabled, retrieve the one-time setup authorization from its Kubernetes Secret, paste it into `/setup`, and create the first owner, Organization, and explicitly named Project:
 

@@ -41,6 +41,13 @@ fn expired_app(pool: sqlx::PgPool) -> axum::Router {
     health::router(pool, true, None, &config)
 }
 
+fn public_registration_app(pool: sqlx::PgPool) -> axum::Router {
+    let config = WebApiConfig::default()
+        .with_setup_token(Some(SETUP_TOKEN))
+        .with_user_auth(true, false, std::time::Duration::from_secs(3600));
+    health::router(pool, true, None, &config)
+}
+
 fn setup_body(token: &str, suffix: &str) -> String {
     format!(
         r#"{{"setup_token":"{token}","email":"owner{suffix}@example.com","password":"correct horse battery staple","organization_slug":"org{suffix}","organization_name":"Org {suffix}","project_slug":"default","project_name":"Default"}}"#
@@ -142,6 +149,23 @@ async fn setup_is_atomic_single_use_and_secret_safe(pool: sqlx::PgPool) {
             .unwrap(),
     )
     .await;
+    assert_eq!(json(status).await["state"], "ready");
+}
+
+#[sqlx::test(migrator = "server::database::MIGRATOR")]
+#[ignore = "requires a PostgreSQL server with DATABASE_URL"]
+async fn public_registration_skips_private_first_owner_gate(pool: sqlx::PgPool) {
+    let app = public_registration_app(pool);
+    let status = call(
+        &app,
+        Request::builder()
+            .uri("/api/v1/setup/status")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(status.status(), StatusCode::OK);
     assert_eq!(json(status).await["state"], "ready");
 }
 
