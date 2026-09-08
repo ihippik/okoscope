@@ -35,7 +35,8 @@ grep -A2 'name: OKOSCOPE_SMTP_USERNAME' "$work/enabled.yaml" | grep -q 'name: ok
 grep -A2 'name: OKOSCOPE_SMTP_PASSWORD' "$work/enabled.yaml" | grep -q 'name: okoscope-smtp'
 grep -A2 'name: OKOSCOPE_MAIL_ENCRYPTION_KEY' "$work/enabled.yaml" | grep -q 'key: mail-encryption-key'
 grep -q 'mail-encryption-key:' "$work/enabled.yaml"
-[[ $(grep -c 'name: OKOSCOPE_SMTP_PASSWORD' "$work/enabled.yaml") -eq 2 ]]
+[[ $(grep -c 'name: OKOSCOPE_SMTP_PASSWORD' "$work/enabled.yaml") -eq 1 ]]
+! sed -n '/component: migration/,/kind: Service/p' "$work/enabled.yaml" | grep -q 'OKOSCOPE_SMTP_PASSWORD'
 
 helm template external-secrets "$chart" \
   --set mail.enabled=true \

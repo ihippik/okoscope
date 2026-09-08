@@ -29,16 +29,6 @@ spec:
             - {name: RUST_LOG, value: info}
             - name: OKOSCOPE_DATABASE_URL
               valueFrom: {secretKeyRef: {name: {{ .Values.database.existingSecret }}, key: {{ .Values.database.urlKey }}}}
-            {{- if .Values.mail.enabled }}
-            - name: OKOSCOPE_MAIL_ENCRYPTION_KEY
-              valueFrom: {secretKeyRef: {name: {{ include "okoscope.internalSecret" . }}, key: {{ .Values.internalSecret.mailEncryptionKey }}}}
-            - name: OKOSCOPE_SMTP_USERNAME
-              valueFrom:
-                secretKeyRef: {name: {{ .Values.mail.smtp.existingSecret }}, key: {{ .Values.mail.smtp.usernameKey }}}
-            - name: OKOSCOPE_SMTP_PASSWORD
-              valueFrom:
-                secretKeyRef: {name: {{ .Values.mail.smtp.existingSecret }}, key: {{ .Values.mail.smtp.passwordKey }}}
-            {{- end }}
           resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 500m, memory: 256Mi}}
           volumeMounts: [{name: tmp, mountPath: /tmp}]
       volumes: [{name: tmp, emptyDir: {}}]
