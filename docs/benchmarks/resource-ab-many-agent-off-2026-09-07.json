@@ -25735,7 +25735,7 @@
                       "value": "info"
                     }
                   ],
-                  "image": "ghcr.io/ihippik/okoscope-agent@sha256:05128c2390dfbd516029174064afe788ccaa2997884c87d3f3724e1836a7364b",
+                  "image": "ghcr.io/okoscope/okoscope-agent@sha256:05128c2390dfbd516029174064afe788ccaa2997884c87d3f3724e1836a7364b",
                   "imagePullPolicy": "IfNotPresent",
                   "name": "agent",
                   "resources": {

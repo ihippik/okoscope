@@ -114,7 +114,7 @@ Roll out with registration still disabled, render manifests locally, upgrade, an
 
 ```bash
 helm template okoscope deploy/helm/okoscope -f production-values.yaml >/tmp/okoscope-rendered.yaml
-helm upgrade okoscope oci://ghcr.io/ihippik/charts/okoscope \
+helm upgrade okoscope oci://ghcr.io/okoscope/charts/okoscope \
   --version <NEW_OKOSCOPE_VERSION> --namespace okoscope-system \
   -f production-values.yaml --wait --timeout 10m
 kubectl -n okoscope-system port-forward service/okoscope-server 8080:8080
@@ -143,7 +143,7 @@ If the domain uses external name servers, copy the exact MX, SPF, and DKIM value
 Pin the same semantic version for both charts:
 
 ```bash
-helm upgrade okoscope oci://ghcr.io/ihippik/charts/okoscope \
+helm upgrade okoscope oci://ghcr.io/okoscope/charts/okoscope \
   --version <NEW_OKOSCOPE_VERSION> \
   --namespace okoscope-system \
   -f production-values.yaml \
@@ -178,7 +178,7 @@ The `deploy/kubernetes` Kustomize roots and bundled PostgreSQL manifests are int
 
 ## Release and cluster verification
 
-Charts are published as `oci://ghcr.io/ihippik/charts/okoscope` and `oci://ghcr.io/ihippik/charts/okoscope-agent` with shared semantic versions. A release supplies verified immutable server, agent, and Web inputs and records the server's required migration. Publication must wait for chart policy tests and component availability.
+Charts are published as `oci://ghcr.io/okoscope/charts/okoscope` and `oci://ghcr.io/okoscope/charts/okoscope-agent` with shared semantic versions. A release supplies verified immutable server, agent, and Web inputs and records the server's required migration. Publication must wait for chart policy tests and component availability.
 
 Chart publication is an explicit operator action; creating a Git tag is not required
 and does not trigger it. After CI has published verified server, agent, and Web images,

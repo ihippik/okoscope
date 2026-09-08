@@ -12,7 +12,7 @@ The checklist is an internal self-assessment, not CNCF approval.
 | Area | Status | Evidence or action |
 | --- | --- | --- |
 | Reusable cloud-native project | Ready to explain | [README](../README.md) and [architecture](../ARCHITECTURE.md) describe a self-hosted observability system rather than a reference architecture. |
-| Public source repository | Ready | The source is public at <https://github.com/ihippik/okoscope>. |
+| Public source repository | Ready | The source is public at <https://github.com/okoscope/okoscope>. |
 | Project description and use cases | Ready | [README](../README.md), [architecture](../ARCHITECTURE.md), and capability documentation under `docs/`. |
 | Website | Ready | <https://okoscope.com> is configured as the GitHub repository homepage. |
 | Roadmap | Ready | [ROADMAP.md](../ROADMAP.md). |

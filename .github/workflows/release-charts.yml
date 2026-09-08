@@ -68,9 +68,9 @@ jobs:
           AGENT_DIGEST: ${{ steps.release.outputs.agent }}
           WEB_DIGEST: ${{ steps.release.outputs.web }}
         run: |
-          docker buildx imagetools inspect "ghcr.io/ihippik/okoscope-server@$SERVER_DIGEST"
-          docker buildx imagetools inspect "ghcr.io/ihippik/okoscope-agent@$AGENT_DIGEST"
-          docker buildx imagetools inspect "ghcr.io/ihippik/okoscope-web@$WEB_DIGEST"
+          docker buildx imagetools inspect "ghcr.io/okoscope/okoscope-server@$SERVER_DIGEST"
+          docker buildx imagetools inspect "ghcr.io/okoscope/okoscope-agent@$AGENT_DIGEST"
+          docker buildx imagetools inspect "ghcr.io/okoscope/okoscope-web@$WEB_DIGEST"
       - name: Verify and package charts
         env:
           VERSION: ${{ steps.release.outputs.version }}
@@ -92,8 +92,8 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io --username '${{ github.actor }}' --password-stdin
-          if ! helm push "dist/okoscope-agent-$VERSION.tgz" oci://ghcr.io/ihippik/charts; then
+          if ! helm push "dist/okoscope-agent-$VERSION.tgz" oci://ghcr.io/okoscope/charts; then
             echo "agent chart publication failed; if GHCR rejected the existing version after a partial release, publish a new patch version" >&2
             exit 1
           fi
-          helm push "dist/okoscope-$VERSION.tgz" oci://ghcr.io/ihippik/charts
+          helm push "dist/okoscope-$VERSION.tgz" oci://ghcr.io/okoscope/charts

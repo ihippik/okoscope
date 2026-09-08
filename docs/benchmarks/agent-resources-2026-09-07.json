@@ -55,7 +55,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -180,7 +180,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -305,7 +305,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -6375,7 +6375,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -6500,7 +6500,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -6625,7 +6625,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -6759,7 +6759,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -6884,7 +6884,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -7009,7 +7009,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -14866,7 +14866,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -14991,7 +14991,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -15116,7 +15116,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -15250,7 +15250,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -15375,7 +15375,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -15500,7 +15500,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -23357,7 +23357,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -23482,7 +23482,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -23607,7 +23607,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -23741,7 +23741,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -23866,7 +23866,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -23991,7 +23991,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -31848,7 +31848,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -31973,7 +31973,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -32098,7 +32098,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -32232,7 +32232,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -32357,7 +32357,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -32482,7 +32482,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -38552,7 +38552,7 @@
                 },
                 "containerID": "containerd://ac22791b4763b63858d476aafa3d6730fa980bef6adc11ec035e24fab2373c14",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -38677,7 +38677,7 @@
                 },
                 "containerID": "containerd://827f01abd00a049e642191a78f23f4c7f18f576644e600aeb625b1b7314e617a",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -38802,7 +38802,7 @@
                 },
                 "containerID": "containerd://26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02",
                 "image": "sha256:ec1baab7c3f9d8feaa4791108ddf69fdc8170812fc9db8489d574296d490ced6",
-                "imageID": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                "imageID": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                 "lastState": {},
                 "name": "agent",
                 "ready": true,
@@ -38950,7 +38950,7 @@
                       "value": "info"
                     }
                   ],
-                  "image": "ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
+                  "image": "ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1",
                   "imagePullPolicy": "IfNotPresent",
                   "name": "agent",
                   "resources": {
@@ -39123,209 +39123,209 @@
     {
       "epoch": 1788751996.3841379,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 398562 1788751980999",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 398562 1788751980999",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 5766 1788751981276",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 51 1788751980999",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 51 1788751980999",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 4 1788751981276",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.26769 1788751980999",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.26769 1788751980999",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 0.090262 1788751981276"
       ]
     },
     {
       "epoch": 1788752027.120984,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 398887 1788752013512",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 398887 1788752013512",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 5846 1788752014907",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752013512",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752013512",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 6 1788752014907",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752013512",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752013512",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 0.113055 1788752014907"
       ]
     },
     {
       "epoch": 1788752058.016735,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 399246 1788752049433",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 399246 1788752049433",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 6261 1788752056449",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752049433",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752049433",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 10 1788752056449",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752049433",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752049433",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 0.297655 1788752056449"
       ]
     },
     {
       "epoch": 1788752088.821973,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 399560 1788752080864",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 399560 1788752080864",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 6576 1788752087908",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752080864",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752080864",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 11 1788752087908",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752080864",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752080864",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 0.303307 1788752087908"
       ]
     },
     {
       "epoch": 1788752119.584617,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 399900 1788752114855",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 399900 1788752114855",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 6776 1788752107884",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752114855",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752114855",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 16 1788752107884",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752114855",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752114855",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 0.577682 1788752107884"
       ]
     },
     {
       "epoch": 1788752150.233258,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 400089 1788752133766",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 400089 1788752133766",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 7082 1788752144948",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752133766",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 52 1788752133766",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 143 1788752144948",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752133766",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.284467 1788752133766",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 5.471965 1788752144948"
       ]
     },
     {
       "epoch": 1788752180.99943,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 400380 1788752162808",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 400380 1788752162808",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 7422 1788752178973",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752162808",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752162808",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 482 1788752178973",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752162808",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752162808",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 23.781276 1788752178973"
       ]
     },
     {
       "epoch": 1788752211.693894,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 400730 1788752197868",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 400730 1788752197868",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 7680 1788752204700",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752197868",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752197868",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 740 1788752204700",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752197868",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752197868",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 45.951731 1788752204700"
       ]
     },
     {
       "epoch": 1788752242.381291,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 401044 1788752229271",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 401044 1788752229271",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 8029 1788752239593",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752229271",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752229271",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 1089 1788752239593",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752229271",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752229271",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 60.669834 1788752239593"
       ]
     },
     {
       "epoch": 1788752273.5232651,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 401337 1788752258570",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 401337 1788752258570",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 8269 1788752270238",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752258570",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752258570",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 1312 1788752270238",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752258570",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752258570",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 68.900148 1788752270238"
       ]
     },
     {
       "epoch": 1788752304.289346,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 401673 1788752292133",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 401673 1788752292133",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 8451 1788752288423",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752292133",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752292133",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 1481 1788752288423",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752292133",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752292133",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 74.791532 1788752288423"
       ]
     },
     {
       "epoch": 1788752335.035748,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 401980 1788752322861",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 401980 1788752322861",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 8826 1788752325877",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752322861",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752322861",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 1854 1788752325877",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752322861",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752322861",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 88.777109 1788752325877"
       ]
     },
     {
       "epoch": 1788752365.75936,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 402312 1788752356015",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 402312 1788752356015",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 9068 1788752350152",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752356015",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752356015",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 2096 1788752350152",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752356015",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752356015",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 98.135927 1788752350152"
       ]
     },
     {
       "epoch": 1788752396.5118442,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 402586 1788752383483",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 402586 1788752383483",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 9369 1788752380181",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752383483",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752383483",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 2374 1788752380181",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752383483",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752383483",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 108.721947 1788752380181"
       ]
     },
     {
       "epoch": 1788752427.331743,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 403017 1788752426524",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 403017 1788752426524",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 9380 1788752417532",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752426524",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752426524",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 2376 1788752417532",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752426524",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752426524",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 108.780368 1788752417532"
       ]
     },
     {
       "epoch": 1788752458.033226,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 403155 1788752440392",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 403155 1788752440392",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 9384 1788752443493",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752440392",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752440392",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 2376 1788752443493",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752440392",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752440392",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 108.780368 1788752443493"
       ]
     },
     {
       "epoch": 1788752488.759486,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 403493 1788752474187",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 403493 1788752474187",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 9392 1788752478970",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752474187",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752474187",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 2376 1788752478970",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752474187",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752474187",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 108.780368 1788752478970"
       ]
     },
     {
       "epoch": 1788752519.652666,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 403922 1788752517090",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 403922 1788752517090",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 9398 1788752511365",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752517090",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752517090",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 2376 1788752511365",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752517090",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752517090",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 108.780368 1788752511365"
       ]
     },
     {
       "epoch": 1788752539.93906,
       "metrics": [
-        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 404100 1788752534864",
+        "container_cpu_cfs_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 404100 1788752534864",
         "container_cpu_cfs_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 9400 1788752526504",
-        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752534864",
+        "container_cpu_cfs_throttled_periods_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 53 1788752534864",
         "container_cpu_cfs_throttled_periods_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 2376 1788752526504",
-        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752534864",
+        "container_cpu_cfs_throttled_seconds_total{container=\"agent\",id=\"/kubepods/burstable/pod13d98b06-010c-40b5-aefe-edcc3f6f3f6e/26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",image=\"ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1\",name=\"26c8d3c71753de7521b177b7a346a44cf80fae4e1954c4180cc07f6c63091a02\",namespace=\"okoscope-system\",pod=\"okoscope-agent-okoscope-agent-wltxq\"} 1.299964 1788752534864",
         "container_cpu_cfs_throttled_seconds_total{container=\"demo\",id=\"/kubepods/burstable/pod345240b1-f2df-4334-94ce-ffdb88d54ec4/6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",image=\"docker.io/library/busybox:1.37\",name=\"6da2742580c5302f18a8d77f872258a78b4ea3043ac1424cf291656872d89099\",namespace=\"okoscope-quickstart\",pod=\"quickstart-demo-5b77fbf895-dnsfz\"} 108.780368 1788752526504"
       ]
     }

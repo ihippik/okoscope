@@ -2,13 +2,13 @@
 
 Okoscope publishes two charts with the same semantic release version:
 
-- `oci://ghcr.io/ihippik/charts/okoscope-agent` connects a cluster to an existing hosted or self-hosted server.
-- `oci://ghcr.io/ihippik/charts/okoscope` installs server, Web, migrations, and optionally the local agent. It never installs PostgreSQL.
+- `oci://ghcr.io/okoscope/charts/okoscope-agent` connects a cluster to an existing hosted or self-hosted server.
+- `oci://ghcr.io/okoscope/charts/okoscope` installs server, Web, migrations, and optionally the local agent. It never installs PostgreSQL.
 
 Production commands should always include `--version <OKOSCOPE_VERSION>`. This is a
 placeholder, not a predefined shell variable: replace it with the exact published
 semantic version shown by the authenticated Okoscope onboarding page, for example
-`--version 0.2.1`. If onboarding reports `installation_metadata_unavailable`, the
+`--version 0.1.0`. If onboarding reports `installation_metadata_unavailable`, the
 Okoscope operator has not yet published/configured an installable agent release;
 do not guess a version. Component images are pinned by the chart release. Never put
 a database URL or Application credential in a Helm values file or `--set` argument.
@@ -117,7 +117,7 @@ Install and verify:
 
 ```bash
 helm upgrade --install okoscope-agent \
-  oci://ghcr.io/ihippik/charts/okoscope-agent \
+  oci://ghcr.io/okoscope/charts/okoscope-agent \
   --version <OKOSCOPE_VERSION> \
   --namespace okoscope-system \
   -f agent-values.yaml
@@ -197,7 +197,7 @@ Install and verify:
 
 ```bash
 helm upgrade --install okoscope \
-  oci://ghcr.io/ihippik/charts/okoscope \
+  oci://ghcr.io/okoscope/charts/okoscope \
   --version <OKOSCOPE_VERSION> \
   --namespace okoscope-system \
   --set agentInstallation.publicGrpcEndpoint=grpc.example.com:443

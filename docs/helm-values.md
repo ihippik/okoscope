@@ -5,8 +5,8 @@ Both charts accept a YAML overrides file with `-f values.yaml`. Keep credentials
 Inspect defaults for the exact published version you install:
 
 ```bash
-helm show values oci://ghcr.io/ihippik/charts/okoscope --version <OKOSCOPE_VERSION>
-helm show values oci://ghcr.io/ihippik/charts/okoscope-agent --version <OKOSCOPE_VERSION>
+helm show values oci://ghcr.io/okoscope/charts/okoscope --version <OKOSCOPE_VERSION>
+helm show values oci://ghcr.io/okoscope/charts/okoscope-agent --version <OKOSCOPE_VERSION>
 ```
 
 The tables describe the checked-in [server chart values](../deploy/helm/okoscope/values.yaml) and [agent chart values](../deploy/helm/okoscope-agent/values.yaml). Published releases replace image/version metadata. The source image tag `0000000000000000000000000000000000000000` is a placeholder, not a runnable release. Use a published, pinned chart version or explicitly supply verified image references when rendering local sources.
@@ -17,7 +17,7 @@ These fields live below `server.image` and `web.image` in `okoscope`, and below 
 
 | Suffix | Default | Meaning |
 | --- | --- | --- |
-| `repository` | `ghcr.io/ihippik/okoscope-server`, `ghcr.io/ihippik/okoscope-web`, or `ghcr.io/ihippik/okoscope-agent` | Component image repository. |
+| `repository` | `ghcr.io/okoscope/okoscope-server`, `ghcr.io/okoscope/okoscope-web`, or `ghcr.io/okoscope/okoscope-agent` | Component image repository. |
 | `tag` | Release-pinned; source placeholder above | A 40-character lowercase Git SHA or semantic version; mutable tags such as `latest` are rejected. |
 | `digest` | `""` | Optional `sha256:` plus 64 lowercase hex characters. Overrides the tag for the rendered image; the tag must still satisfy schema validation. |
 | `pullPolicy` | `IfNotPresent` | `IfNotPresent`, `Always`, or `Never`. |
@@ -85,9 +85,9 @@ These values describe what the Server advertises to remote agents; they do not c
 | Value | Default | Meaning / constraints |
 | --- | --- | --- |
 | `agentInstallation.publicGrpcEndpoint` | `""` | Public TLS gRPC endpoint reachable from agent clusters, e.g. `https://grpc.okoscope.example.com:443`. Empty omits all agent-installation metadata from the Server environment. |
-| `agentInstallation.chartReference` | `oci://ghcr.io/ihippik/charts/okoscope-agent` | Agent OCI chart reference. |
-| `agentInstallation.chartVersion` | `0.2.1` in source | Chart version offered by the installation wizard. |
-| `agentInstallation.recommendedAgentVersion` | `0.2.1` in source | Recommended agent version. |
+| `agentInstallation.chartReference` | `oci://ghcr.io/okoscope/charts/okoscope-agent` | Agent OCI chart reference. |
+| `agentInstallation.chartVersion` | `0.1.0` in source | Chart version offered by the installation wizard. |
+| `agentInstallation.recommendedAgentVersion` | `0.1.0` in source | Recommended agent version. |
 | `agentInstallation.minimumAgentVersion` | `0.1.0` in source | Minimum supported agent version. |
 | `agentInstallation.tlsMode` | `system` | `system` for system certificate trust, or `custom_ca` for a private CA. |
 | `agentInstallation.caSecret.name` | `""` | Required for `custom_ca`, must be empty for `system`. Names a CA Secret to create in the agent namespace; the server chart does not create it. |

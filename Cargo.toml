@@ -17,10 +17,10 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/ihippik/okoscope"
+repository = "https://github.com/okoscope/okoscope"
 rust-version = "1.91"
 
 [workspace.dependencies]

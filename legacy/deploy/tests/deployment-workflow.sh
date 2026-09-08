@@ -6,7 +6,7 @@ work=$(mktemp -d /tmp/okoscope-workflow-test.XXXXXX)
 trap 'rm -rf "$work"' EXIT
 commit=3333333333333333333333333333333333333333
 previous=1111111111111111111111111111111111111111
-web=ghcr.io/ihippik/okoscope-web:2222222222222222222222222222222222222222
+web=ghcr.io/okoscope/okoscope-web:2222222222222222222222222222222222222222
 
 cd "$root"
 deploy/scripts/render-release.sh "$work/release" "$commit" "$commit" "$web" disabled
@@ -73,8 +73,8 @@ unset TEST_CHECK_FAIL
 
 export PATH="$real_path"
 deploy/scripts/render-release.sh "$work/rollback" "$previous" "$previous" "$web" disabled
-grep -Fq "ghcr.io/ihippik/okoscope-server:$previous" "$work/rollback/03-upgrade.yaml"
-grep -Fq "ghcr.io/ihippik/okoscope-agent:$previous" "$work/rollback/03-upgrade.yaml"
+grep -Fq "ghcr.io/okoscope/okoscope-server:$previous" "$work/rollback/03-upgrade.yaml"
+grep -Fq "ghcr.io/okoscope/okoscope-agent:$previous" "$work/rollback/03-upgrade.yaml"
 ! grep -Eq '^kind: (Secret|StatefulSet)$' "$work/rollback/03-upgrade.yaml"
 
 echo "deployment workflow tests passed"

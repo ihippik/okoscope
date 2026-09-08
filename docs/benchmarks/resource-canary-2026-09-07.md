@@ -7,9 +7,9 @@ configuration are in `resource-canary-2026-09-07.json`.
 
 ## Deployed versions
 
-- Server: `ghcr.io/ihippik/okoscope-server@sha256:e429ed8ff5a05ceb4b69ec6a39c986748afcd0725b599c68bcb55fe3797ea159`
-- Web: `ghcr.io/ihippik/okoscope-web@sha256:45465ee3cfd86d059911809c2c11f6c2deb615ad98137121860ac306eaab348c`
-- Agent after the canary fix: `ghcr.io/ihippik/okoscope-agent@sha256:05128c2390dfbd516029174064afe788ccaa2997884c87d3f3724e1836a7364b`
+- Server: `ghcr.io/okoscope/okoscope-server@sha256:e429ed8ff5a05ceb4b69ec6a39c986748afcd0725b599c68bcb55fe3797ea159`
+- Web: `ghcr.io/okoscope/okoscope-web@sha256:45465ee3cfd86d059911809c2c11f6c2deb615ad98137121860ac306eaab348c`
+- Agent after the canary fix: `ghcr.io/okoscope/okoscope-agent@sha256:05128c2390dfbd516029174064afe788ccaa2997884c87d3f3724e1836a7364b`
 - Server schema migration: 25
 - Resource configuration: 15-second sampling, one-minute aggregation, 4,096
   cgroup states, 1,024 open aggregates, queue capacity 256, batch size 64.

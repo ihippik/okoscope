@@ -119,9 +119,9 @@ kubectl kustomize deploy/kubernetes/check \
 # The legacy bundle renderer starts from the neutral base. The tracked
 # production overlay is the GitOps source of truth and owns its image tags.
 kubectl kustomize deploy/kubernetes/base \
-  | sed -e "s#ghcr.io/ihippik/okoscope-server:0000000000000000000000000000000000000000#ghcr.io/ihippik/okoscope-server:$server_tag#g" \
-        -e "s#ghcr.io/ihippik/okoscope-agent:0000000000000000000000000000000000000000#ghcr.io/ihippik/okoscope-agent:$agent_tag#g" \
-        -e "s#ghcr.io/ihippik/okoscope-web:0000000000000000000000000000000000000000#$web_image#g" \
+  | sed -e "s#ghcr.io/okoscope/okoscope-server:0000000000000000000000000000000000000000#ghcr.io/okoscope/okoscope-server:$server_tag#g" \
+        -e "s#ghcr.io/okoscope/okoscope-agent:0000000000000000000000000000000000000000#ghcr.io/okoscope/okoscope-agent:$agent_tag#g" \
+        -e "s#ghcr.io/okoscope/okoscope-web:0000000000000000000000000000000000000000#$web_image#g" \
   | notification_substitutions \
   >"$output_dir/03-upgrade.yaml"
 
@@ -151,8 +151,8 @@ if [[ $routing == enabled ]]; then
 fi
 
 cat >"$output_dir/PROVENANCE.txt" <<EOF
-server_image=ghcr.io/ihippik/okoscope-server:$server_tag
-agent_image=ghcr.io/ihippik/okoscope-agent:$agent_tag
+server_image=ghcr.io/okoscope/okoscope-server:$server_tag
+agent_image=ghcr.io/okoscope/okoscope-agent:$agent_tag
 web_image=$web_image
 required_migration=$required_migration
 routing=$routing

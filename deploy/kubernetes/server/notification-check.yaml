@@ -20,7 +20,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: notification-check
-          image: ghcr.io/ihippik/okoscope-server:0000000000000000000000000000000000000000
+          image: ghcr.io/okoscope/okoscope-server:0000000000000000000000000000000000000000
           args: [notification-check]
           securityContext:
             allowPrivilegeEscalation: false

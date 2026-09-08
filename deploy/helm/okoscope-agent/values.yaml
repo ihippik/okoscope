@@ -1,6 +1,6 @@
 enabled: true
 image:
-  repository: ghcr.io/ihippik/okoscope-agent
+  repository: ghcr.io/okoscope/okoscope-agent
   tag: "0000000000000000000000000000000000000000"
   digest: ""
   pullPolicy: IfNotPresent

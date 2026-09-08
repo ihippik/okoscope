@@ -7,7 +7,7 @@ The raw samples and configuration are in `agent-resources-2026-09-07.json`; the 
 ## Configuration and method
 
 - Three workers, each with one CPU and approximately 1.8 GiB allocatable memory. The loaded worker runs Linux 6.8.0-137-generic; controls run 5.15.0-138/139-generic; all use containerd 1.7.30. Only `worker-192.168.0.9` runs the observed demo; the other two agents provide background controls.
-- Agent image: `ghcr.io/ihippik/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1`.
+- Agent image: `ghcr.io/okoscope/okoscope-agent@sha256:35e3d167e332085043cd0126b77a57531dbf95a0428b219c12b0a6641baf3dc1`.
 - Agent requests: 100m CPU / 96 MiB RAM; limits: 500m / 512 MiB.
 - Process exec/exit and TCP connect/listen/accept enabled. DNS and file observation disabled; syscall allowlist empty. One observed Deployment and Application.
 - Queue capacity 4096, batch size 256, maximum event rate 1000/s, accepted-connection cap 25/s.

@@ -11,12 +11,12 @@ Reviewed artifacts:
 - `openapi/okoscope-v1.yaml`: SHA-256 `4020645d961320aaa38d78b46332b69abac9088d977dd046466f439e35c95dc5`;
 - `docs/fixtures/runtime-inventory.json`: SHA-256 `e70e83d22bb755a8eedd848b011d1b32fb44f7458e52f5f0e80d9be2b4a1f5ea`.
 
-The frontend workflow was inspected read-only at `/Users/ihippik/WebstormProjects/okoscope-web`. Its pinned snapshot and generated declarations were clean, but their OpenAPI checksum differed from the reviewed backend artifact, so synchronization remains mandatory. From the frontend repository, run:
+The frontend's pinned snapshot and generated declarations must match the authoritative backend artifact. From the frontend repository, run:
 
 ```bash
-cp /Users/ihippik/RustroverProjects/okoscope/openapi/okoscope-v1.yaml openapi/okoscope-v1.yaml
+cp ../okoscope/openapi/okoscope-v1.yaml openapi/okoscope-v1.yaml
 mkdir -p docs/fixtures
-cp /Users/ihippik/RustroverProjects/okoscope/docs/fixtures/runtime-inventory.json docs/fixtures/runtime-inventory.json
+cp ../okoscope/docs/fixtures/runtime-inventory.json docs/fixtures/runtime-inventory.json
 npm run api:generate
 npm run api:check
 npm run typecheck

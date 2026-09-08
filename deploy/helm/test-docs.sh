@@ -5,8 +5,8 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 docs=("$root/README.md" "$root/docs/installation.md" "$root/docs/self-hosted-deployment.md")
 
 for expected in \
-  'oci://ghcr.io/ihippik/charts/okoscope-agent' \
-  'oci://ghcr.io/ihippik/charts/okoscope' \
+  'oci://ghcr.io/okoscope/charts/okoscope-agent' \
+  'oci://ghcr.io/okoscope/charts/okoscope' \
   'database-url' \
   'credentialSecret' \
   'database.existingSecret' \

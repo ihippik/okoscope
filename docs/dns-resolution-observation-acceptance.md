@@ -5,9 +5,9 @@ Linux 5.15 amd64 nodes.
 
 ## Immutable rollout
 
-- Server: `ghcr.io/ihippik/okoscope-server:9f55b5485b62fbfe242cc41ec2f59af01e997e74`
-- Agent: `ghcr.io/ihippik/okoscope-agent:719f1fa7eb2ed1e09dad0dc8018670e9e3bb5b90`
-- Web: `ghcr.io/ihippik/okoscope-web:ebf251e5be915eec1be5398b55879a3a70d6b54e`
+- Server: `ghcr.io/okoscope/okoscope-server:9f55b5485b62fbfe242cc41ec2f59af01e997e74`
+- Agent: `ghcr.io/okoscope/okoscope-agent:719f1fa7eb2ed1e09dad0dc8018670e9e3bb5b90`
+- Web: `ghcr.io/okoscope/okoscope-web:ebf251e5be915eec1be5398b55879a3a70d6b54e`
 - Server and Web were rolled out before DNS was enabled.
 - The DNS eBPF object passed the Linux verifier and attached ingress and egress
   probes to the Kubernetes cgroup v2 subtree on all three nodes. `NET_ADMIN` is

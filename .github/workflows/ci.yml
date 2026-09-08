@@ -183,9 +183,9 @@ jobs:
             echo "main advanced while the image was building; the newer run will promote its own image"
             exit 0
           fi
-          sed -i "/name: ghcr.io\/ihippik\/okoscope-server/{n;s/newTag:.*/newTag: \"$IMAGE_TAG\"/;}" \
+          sed -i "/name: ghcr.io\/okoscope\/okoscope-server/{n;s/newTag:.*/newTag: \"$IMAGE_TAG\"/;}" \
             "$PRODUCTION_KUSTOMIZATION/kustomization.yaml"
-          sed -i "/name: ghcr.io\/ihippik\/okoscope-agent/{n;s/newTag:.*/newTag: \"$IMAGE_TAG\"/;}" \
+          sed -i "/name: ghcr.io\/okoscope\/okoscope-agent/{n;s/newTag:.*/newTag: \"$IMAGE_TAG\"/;}" \
             "$PRODUCTION_KUSTOMIZATION/kustomization.yaml"
           changed=$(git diff --name-only)
           test "$changed" = "$PRODUCTION_KUSTOMIZATION/kustomization.yaml"

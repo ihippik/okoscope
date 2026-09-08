@@ -4,8 +4,8 @@ Acceptance was completed on 2026-08-18 in the `aliens` Kubernetes context agains
 
 ## Immutable rollout
 
-- Server and agent: `ghcr.io/ihippik/okoscope-{server,agent}:42c160e3f55029fa927c36b95cb87bca25e72be6`
-- Web: `ghcr.io/ihippik/okoscope-web:7f3c1465b5aa995f241636d67d720b1f6b631fec`
+- Server and agent: `ghcr.io/okoscope/okoscope-{server,agent}:42c160e3f55029fa927c36b95cb87bca25e72be6`
+- Web: `ghcr.io/okoscope/okoscope-web:7f3c1465b5aa995f241636d67d720b1f6b631fec`
 - Server and Web were available before network observation was enabled.
 - The agent DaemonSet completed rollout with 3/3 Ready pods and successfully attached both connect tracepoints.
 

@@ -27,7 +27,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: server
-          image: ghcr.io/ihippik/okoscope-server:0000000000000000000000000000000000000000
+          image: ghcr.io/okoscope/okoscope-server:0000000000000000000000000000000000000000
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

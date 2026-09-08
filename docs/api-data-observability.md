@@ -1,6 +1,6 @@
 # API data observability contract and handoff
 
-The frontend snapshot at `/Users/ihippik/WebstormProjects/okoscope-web/openapi/okoscope-v1.yaml` was compared with the backend contract on 2026-08-20. The frontend contract already defined `identity_token`, Runtime Inventory Distribution, Runtime Diff Summary, their concrete response schemas, `limit` bounds, and standard responses. The backend copy lacked those additions. The backend `openapi/okoscope-v1.yaml` is now synchronized to that source shape, with explicit identity-token error-code documentation.
+The Web UI consumes the authoritative backend contract from `openapi/okoscope-v1.yaml`. The contract defines `identity_token`, Runtime Inventory Distribution, Runtime Diff Summary, their concrete response schemas, `limit` bounds, standard responses, and explicit identity-token error codes.
 
 ## Runtime Inventory Distribution example
 

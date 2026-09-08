@@ -1,6 +1,6 @@
 # Aggregate high-cardinality verification — 2026-09-03
 
-This report supports frontend OpenSpec `data-visualizations`, task 5.4. The executable harness is [benchmark_visualizations.py](../tools/benchmark_visualizations.py). It requires an empty, migrated, isolated local PostgreSQL database, `psql`, Python 3, and a current `target/debug/server` built with `cargo build -p server --bin server`.
+This report records high-cardinality verification for the data visualization API. The executable harness is [benchmark_visualizations.py](../tools/benchmark_visualizations.py). It requires an empty, migrated, isolated local PostgreSQL database, `psql`, Python 3, and a current `target/debug/server` built with `cargo build -p server --bin server`.
 
 ```sh
 python3 tools/benchmark_visualizations.py \
@@ -60,4 +60,4 @@ These are the actual aggregate SQL statements extracted from the current handler
 
 The separate oversized-label probe stores 131,072-byte process labels and requests ten entries. The real HTTP endpoint returns **200 with 1,321,222 JSON bytes**. This directly disproves treating the normal-fixture maximum of 11,752 bytes, or the old benchmark's 1 MiB body-read limit, as a guaranteed API response cap. This probe seeds stored summaries directly; it demonstrates response behavior, not acceptance through every agent/transport ingestion path. Event-model and projection code independently show no process executable length constraint.
 
-Task 5.4 remains open specifically for a contract-wide response-byte bound (and deployment representativeness if production acceptance is required). Backend follow-up must select and document a byte/identity-field budget, enforce it consistently without changing opaque identity selection semantics or silently losing evidence, cover existing oversized stored values, and rerun the oversized-label and high-cardinality checks. Frontend workarounds are unnecessary. Do not archive the frontend change until this remaining acceptance condition is resolved.
+A contract-wide response-byte bound remains open (along with deployment representativeness if production acceptance is required). Backend follow-up must select and document a byte/identity-field budget, enforce it consistently without changing opaque identity selection semantics or silently losing evidence, cover existing oversized stored values, and rerun the oversized-label and high-cardinality checks. Frontend workarounds are unnecessary.

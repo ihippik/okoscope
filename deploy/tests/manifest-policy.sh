@@ -19,21 +19,21 @@ test -s "$work/production.yaml"
 ! grep -Eq '__[A-Z0-9_]+__|:0{40}([[:space:]]|$)' "$work/production.yaml"
 ! grep -q '^kind: Secret$' "$work/production.yaml"
 ! grep -q '^kind: StatefulSet$' "$work/production.yaml"
-[[ $(grep -Ec 'image: ghcr.io/ihippik/okoscope-server:[0-9a-f]{40}$' "$work/production.yaml") -eq 1 ]]
-[[ $(grep -Ec 'image: ghcr.io/ihippik/okoscope-agent:[0-9a-f]{40}$' "$work/production.yaml") -eq 1 ]]
-[[ $(grep -Ec 'image: ghcr.io/ihippik/okoscope-web:[0-9a-f]{40}$' "$work/production.yaml") -eq 1 ]]
+[[ $(grep -Ec 'image: ghcr.io/okoscope/okoscope-server:[0-9a-f]{40}$' "$work/production.yaml") -eq 1 ]]
+[[ $(grep -Ec 'image: ghcr.io/okoscope/okoscope-agent:[0-9a-f]{40}$' "$work/production.yaml") -eq 1 ]]
+[[ $(grep -Ec 'image: ghcr.io/okoscope/okoscope-web:[0-9a-f]{40}$' "$work/production.yaml") -eq 1 ]]
 grep -q 'OKOSCOPE_MIGRATE: "false"' "$work/production.yaml"
 grep -q 'OKOSCOPE_NOTIFICATION_DELIVERY_ENABLED: "false"' "$work/production.yaml"
 grep -Eq 'okoscope.io/notification-config: [0-9a-f]{12}' "$work/production.yaml"
 
 cp -R deploy/kubernetes "$work/kubernetes"
 candidate="$work/kubernetes/common/kustomization.yaml"
-sed -i.bak "/name: ghcr.io\/ihippik\/okoscope-server/{n;s/newTag:.*/newTag: \"$next_tag\"/;}" "$candidate"
+sed -i.bak "/name: ghcr.io\/okoscope\/okoscope-server/{n;s/newTag:.*/newTag: \"$next_tag\"/;}" "$candidate"
 rm "$candidate.bak"
 diff_output=$(diff -u "$overlay/kustomization.yaml" "$candidate" || true)
 [[ $(printf '%s\n' "$diff_output" | grep -Ec '^[+-]    newTag: "[0-9a-f]{40}"$') -eq 2 ]]
 [[ $(printf '%s\n' "$diff_output" | grep -Ev '^(---|\+\+\+|@@|[-+]    newTag: "[0-9a-f]{40}"$|[[:space:]])' | wc -l | tr -d ' ') -eq 0 ]]
 "${build[@]}" "$work/kubernetes/common" >"$work/promoted.yaml"
-grep -q "image: ghcr.io/ihippik/okoscope-server:$next_tag" "$work/promoted.yaml"
+grep -q "image: ghcr.io/okoscope/okoscope-server:$next_tag" "$work/promoted.yaml"
 
 echo "GitOps manifest policy tests passed"

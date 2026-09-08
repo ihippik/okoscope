@@ -8,11 +8,11 @@ resources:
 # This is the GitOps deployment state. CI updates only the server newTag after
 # the corresponding immutable image has been published successfully.
 images:
-  - name: ghcr.io/ihippik/okoscope-server
-    newTag: "64b4606970126ea725a64f6892620ea405fdeb64"
-  - name: ghcr.io/ihippik/okoscope-agent
-    newTag: "64b4606970126ea725a64f6892620ea405fdeb64"
-  - name: ghcr.io/ihippik/okoscope-web
+  - name: ghcr.io/okoscope/okoscope-server
+    newTag: "cd2e3651c1d21b91b5e75f633fa1af167bda8915"
+  - name: ghcr.io/okoscope/okoscope-agent
+    newTag: "cd2e3651c1d21b91b5e75f633fa1af167bda8915"
+  - name: ghcr.io/okoscope/okoscope-web
     newTag: "4bfa5a880ee3be8089f64260366ac728fc5fee33"
 
 patches:

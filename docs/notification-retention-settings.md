@@ -15,7 +15,7 @@ All endpoints use user-session authentication and existing trusted-Origin requir
 
 PUT replaces the entire policy. DELETE on the Project endpoint restores inheritance and returns the new effective policy. Reads are tenant scoped; member writes return 403 and cross-tenant resources return 404. The generated contract is in `openapi/okoscope-v1.yaml`.
 
-The Web UI checkout is `/Users/ihippik/WebstormProjects/okoscope-web`. Organization controls appear in Profile; Project controls appear in Notifications. Both English and Russian labels are supported. The UI explains that enabling cleanup, shortening retention or returning to an enabled inherited policy can delete existing expired history.
+In the Web UI, Organization controls appear in Profile and Project controls appear in Notifications. Both English and Russian labels are supported. The UI explains that enabling cleanup, shortening retention or returning to an enabled inherited policy can delete existing expired history.
 
 ## What expires
 

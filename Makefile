@@ -1,7 +1,7 @@
 KUBE_CONTEXT ?= aliens
 KUBE_NAMESPACE ?= okoscope
 HELM_RELEASE ?= okoscope
-HELM_CHART ?= oci://ghcr.io/ihippik/charts/okoscope
+HELM_CHART ?= oci://ghcr.io/okoscope/charts/okoscope
 DEPLOY_TIMEOUT ?= 10m
 VERSION ?=
 VALUES ?=

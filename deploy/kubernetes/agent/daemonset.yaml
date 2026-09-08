@@ -20,7 +20,7 @@ spec:
       terminationGracePeriodSeconds: 20
       containers:
         - name: agent
-          image: ghcr.io/ihippik/okoscope-agent:0000000000000000000000000000000000000000
+          image: ghcr.io/okoscope/okoscope-agent:0000000000000000000000000000000000000000
           securityContext:
             privileged: false
             allowPrivilegeEscalation: false

@@ -18,7 +18,7 @@ This table will be updated when the support policy changes.
 ## Reporting a vulnerability
 
 Do not open a public issue. Use
-[GitHub's private vulnerability reporting](https://github.com/ihippik/okoscope/security/advisories/new)
+[GitHub's private vulnerability reporting](https://github.com/okoscope/okoscope/security/advisories/new)
 and include:
 
 - the affected component and version or commit;
