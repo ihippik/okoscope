@@ -75,11 +75,10 @@ jobs:
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
-          sed -i "s/^version: 0.1.0/version: $VERSION/" deploy/helm/okoscope-agent/Chart.yaml
-          sed -i "s/version: 0.1.0/version: $VERSION/" deploy/helm/okoscope/Chart.yaml
-          sed -i "s/0.1.0/$VERSION/g" deploy/helm/release-metadata.yaml
-          sed -i "s/chartVersion: \"0.1.0\"/chartVersion: \"$VERSION\"/" deploy/helm/okoscope/values.yaml
-          sed -i "s/recommendedAgentVersion: \"0.1.0\"/recommendedAgentVersion: \"$VERSION\"/" deploy/helm/okoscope/values.yaml
+          sed -Ei "s/^version: .*/version: $VERSION/; s/^appVersion: .*/appVersion: \"$VERSION\"/" deploy/helm/okoscope-agent/Chart.yaml
+          sed -Ei "s/^version: .*/version: $VERSION/; s/^appVersion: .*/appVersion: \"$VERSION\"/; s/^    version: .*/    version: $VERSION/" deploy/helm/okoscope/Chart.yaml
+          sed -Ei "s/^version: .*/version: $VERSION/; s/^(  (okoscope|okoscope-agent|server|agent|web):) .*/\1 $VERSION/" deploy/helm/release-metadata.yaml
+          sed -Ei "s/^(  (chartVersion|recommendedAgentVersion):) .*/\1 \"$VERSION\"/" deploy/helm/okoscope/values.yaml
           helm dependency update deploy/helm/okoscope --skip-refresh
           deploy/helm/test-charts.sh
           deploy/helm/test-onboarding-contract.sh
